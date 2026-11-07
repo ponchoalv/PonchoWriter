@@ -1,4 +1,6 @@
 #include <QtTest>
+#include <QThread>
+#include <atomic>
 #include <QQmlEngine>
 #include <QQmlComponent>
 #include <QQuickItem>
@@ -22,6 +24,7 @@
 #include "../../src/mermaidrenderer.h"
 #include "../../src/livepreview.h"
 #include "../../src/codehighlighter.h"
+#include "../../src/markdownhighlighter.h"
 
 class ImageResolver : public QObject {
     Q_OBJECT
@@ -81,6 +84,119 @@ private slots:
         flush();
     }
     void cleanup() { controller.reset(); root.reset(); }
+    void richImageRestylesCoalesceLayoutNotifications() {
+        QTemporaryDir directory;
+        QImage image(160, 100, QImage::Format_ARGB32_Premultiplied);
+        image.fill(Qt::darkCyan);
+        QVERIFY(image.save(directory.filePath("image.png")));
+        ImageResolver resolver;
+        resolver.root = directory.path();
+        controller->setResolver(&resolver);
+        QString text = QStringLiteral("![Picture](image.png)\n\n");
+        for (int i = 0; i < 1000; ++i)
+            text += QStringLiteral("# Heading %1\n\n").arg(i);
+        text += QStringLiteral("After.\n");
+        source->setPlainText(text);
+        select(sourceItem, text.size(), text.size());
+        controller->refresh();
+        flush();
+        auto *highlighter = viewItem->findChild<MarkdownHighlighter *>();
+        QVERIFY(highlighter);
+        QSignalSpy updates(view->documentLayout(), &QAbstractTextDocumentLayout::update);
+        QElapsedTimer elapsed;
+        elapsed.start();
+        highlighter->setTheme(true, "#111111", "#eeeeee", "#5584aa", "#252525");
+        qInfo() << "1000-heading rich restyle:" << elapsed.elapsed() << "ms; layout updates:" << updates.count();
+        // TextEdit must not synchronously relayout the document per heading.
+        QVERIFY(updates.count() > 0);
+        QVERIFY(updates.count() < 20);
+        QCOMPARE(source->toPlainText(), text);
+    }
+
+    void imageLayoutsAreCompleteWhenProjectionIsPublished() {
+        QTemporaryDir directory;
+        QImage image(640, 400, QImage::Format_ARGB32_Premultiplied);
+        image.fill(Qt::darkCyan);
+        QVERIFY(image.save(directory.filePath("image.png")));
+        ImageResolver resolver;
+        resolver.root = directory.path();
+        controller->setResolver(&resolver);
+        const QString text = QStringLiteral("# Heading\n\n![Picture](image.png)\n\n| A | B |\n| --- | --- |\n| one | two |\n\n```cpp\n/* open\nclose */\n```\n\nAfter.\n");
+        source->setPlainText(text);
+        select(sourceItem, text.size(), text.size());
+        int checked = 0;
+        const auto connection = connect(controller.get(), &LivePreview::projectionChanged, this, [&] {
+            int imageCount = 0;
+            for (QTextBlock block = view->begin(); block.isValid(); block = block.next()) {
+                for (auto it = block.begin(); !it.atEnd(); ++it) {
+                    const QTextFragment fragment = it.fragment();
+                    if (!fragment.isValid() || !fragment.charFormat().isImageFormat()) continue;
+                    QVERIFY(block.layout());
+                    // Do not force layout here: it must already be ready when published.
+                    QVERIFY(block.layout()->lineForTextPosition(fragment.position() - block.position()).isValid());
+                    ++checked;
+                    ++imageCount;
+                }
+            }
+            QCOMPARE(imageCount, controller->readMode() ? 1 : 2);
+        });
+        const auto disconnect = qScopeGuard([connection] { QObject::disconnect(connection); });
+        for (int i = 0; i < 12; ++i) {
+            viewItem->setProperty("width", 320 + (i % 3) * 110);
+            controller->setReadMode(i % 2 == 0);
+            controller->refresh();
+            flush();
+            QCOMPARE(source->toPlainText(), text);
+        }
+        QVERIFY(checked >= 12);
+    }
+
+    void sceneGraphModeSwitchWithImages() {
+        if (QGuiApplication::platformName() == QStringLiteral("offscreen"))
+            QSKIP("Run this rendered-window regression with QT_QPA_PLATFORM=cocoa (or the native desktop platform).");
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        QImage image(160, 100, QImage::Format_ARGB32_Premultiplied);
+        image.fill(Qt::darkCyan);
+        QVERIFY(image.save(directory.filePath("image.png")));
+        ImageResolver resolver;
+        resolver.root = directory.path();
+        controller->setResolver(&resolver);
+        const QString text = QStringLiteral("# Heading\n\n![First](image.png)\n\nBefore **bold**.\n\n| A | B |\n| --- | --- |\n| one | two |\n\n```cpp\n/* comment\n still comment */\nint value = 42;\n```\n\n![Last](image.png)\n\nAfter.\n");
+        source->setPlainText(text);
+        select(sourceItem, text.size(), text.size());
+        controller->refresh();
+        flush();
+        QQuickWindow window;
+        auto threaded = std::make_shared<std::atomic_bool>(false);
+        connect(&window, &QQuickWindow::beforeRendering, &window, [threaded] {
+            if (QThread::currentThread() != QCoreApplication::instance()->thread())
+                threaded->store(true);
+        }, Qt::DirectConnection);
+        window.resize(600, 800);
+        auto *item = qobject_cast<QQuickItem *>(root.get());
+        item->setParentItem(window.contentItem());
+        const auto detach = qScopeGuard([item] { item->setParentItem(nullptr); });
+        window.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&window));
+        QSignalSpy frames(&window, &QQuickWindow::frameSwapped);
+        for (int i = 0; i < 40; ++i) {
+            const bool read = i % 2 == 0;
+            viewItem->setProperty("readOnly", read);
+            controller->setReadMode(read);
+            if (!read) {
+                const int at = i % 4 ? text.indexOf("Before") : text.size();
+                select(sourceItem, at, at);
+            }
+            window.requestUpdate();
+            QTRY_VERIFY_WITH_TIMEOUT(frames.count() > 0, 5000);
+            frames.clear();
+            QVERIFY(!window.grabWindow().isNull());
+            QCOMPARE(source->toPlainText(), text);
+        }
+        QVERIFY2(threaded->load(), "Use QSG_RENDER_LOOP=threaded and a native hardware rendering backend.");
+    }
+
     void languageCodeTokensSurviveReadImportAndModeSwitches() {
         const QList<QPair<QString, QStringList>> fences = {
             {QStringLiteral("python"), {QStringLiteral("def greet(name):"), QStringLiteral("    return 'hello' # comment")}},

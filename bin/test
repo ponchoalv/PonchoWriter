@@ -4,6 +4,11 @@ set -eu
 ROOT="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
 BUILD_DIR="$ROOT/build-tests"
 
+case "${1:-}" in
+  ""|--rendered) ;;
+  *) echo "Usage: bin/test [--rendered]" >&2; exit 2 ;;
+esac
+
 if command -v qmake6 >/dev/null 2>&1; then
   QMAKE=qmake6
 else
@@ -28,8 +33,21 @@ run_suite() (
   if [ -x "./$target.app/Contents/MacOS/$target" ]; then
     executable="./$target.app/Contents/MacOS/$target"
   fi
-  QT_QPA_PLATFORM=offscreen "$executable"
+  if [ "$#" -eq 4 ]; then
+    QSG_RENDER_LOOP=threaded "$executable" "$4"
+  else
+    QT_QPA_PLATFORM=offscreen "$executable"
+  fi
 )
+
+if [ "${1:-}" = --rendered ]; then
+  case "${QT_QPA_PLATFORM:-}" in
+    offscreen|minimal) echo "Rendered tests require a native desktop platform, not $QT_QPA_PLATFORM." >&2; exit 2 ;;
+  esac
+  run_suite tests/tests.pro tst_omawrite "$BUILD_DIR" rendersModeSwitchesWithDocumentImages
+  run_suite tests/livepreview/livepreview.pro tst_livepreview "$BUILD_DIR/livepreview" sceneGraphModeSwitchWithImages
+  exit 0
+fi
 
 run_suite tests/tests.pro tst_omawrite "$BUILD_DIR"
 run_suite tests/shortcutlabels.pro tst_shortcutlabels "$BUILD_DIR/shortcutlabels"

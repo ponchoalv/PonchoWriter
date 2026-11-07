@@ -4,14 +4,28 @@
 #include <QColor>
 #include <QFont>
 #include <QFontMetricsF>
+#include <QSignalBlocker>
 #include <QTextBlock>
 #include <QTextDocument>
+#include <QTextFrame>
 
 #include <algorithm>
+#include <optional>
 #include <utility>
 #include <vector>
 
 namespace {
+// Zero-sized pages are a useful optimization for plain source, but Qt can
+// leave inline-object lines without a QTextLine when restoring a rich layout.
+// QQuickTextNodeEngine assumes that line exists when rendering an image.
+bool canSuspendLayout(QTextDocument *document) {
+    if (!document || !document->rootFrame()->childFrames().isEmpty())
+        return false;
+    for (const QTextFormat &format : document->allFormats())
+        if (format.objectType() != QTextFormat::NoObject)
+            return false;
+    return true;
+}
 struct CodeBlockData : QTextBlockUserData {
     KSyntaxHighlighting::Definition language;
     KSyntaxHighlighting::State state;
@@ -28,18 +42,27 @@ MarkdownHighlighter::MarkdownHighlighter(QTextDocument *document)
 }
 
 void MarkdownHighlighter::propagateCodeState() {
-    if (m_propagatingCodeState || !m_pendingCodeBlock.isValid())
+    if (m_propagatingCodeState || !m_pendingCodeBlock.isValid() || !document())
         return;
     m_propagatingCodeState = true;
-    const QSizeF pageSize = document()->pageSize();
-    document()->setPageSize(QSizeF(0, 0));
+    QTextDocument *doc = document();
+    const QSizeF pageSize = doc->pageSize();
+    const bool suspend = canSuspendLayout(doc);
+    // Coalesce TextEdit's synchronous size/repaint callbacks too. For rich
+    // documents this avoids quadratic relayout without invalid page geometry.
+    QSignalBlocker layoutSignals(doc->documentLayout());
+    if (suspend)
+        doc->setPageSize(QSizeF(0, 0));
     while (m_pendingCodeBlock.isValid()) {
         const QTextBlock block = m_pendingCodeBlock;
         m_pendingCodeBlock = QTextBlock();
         rehighlightBlock(block);
     }
-    document()->setPageSize(pageSize);
-    if (QAbstractTextDocumentLayout *layout = document()->documentLayout())
+    if (suspend)
+        doc->setPageSize(pageSize);
+    layoutSignals.unblock();
+    doc->markContentsDirty(0, doc->characterCount());
+    if (QAbstractTextDocumentLayout *layout = doc->documentLayout())
         layout->documentSize();
     m_propagatingCodeState = false;
 }
@@ -106,6 +129,7 @@ void MarkdownHighlighter::setSearch(const QString &query, int currentMatchStart)
 // file. A null page size makes the layout skip that work, so restyle under one
 // and lay the document out once when the real size comes back.
 //
+// Never do this for rich objects/frames (see canSuspendLayout()).
 // That layout has to finish here. Restoring the size only starts a lazy one,
 // and Qt Quick's render thread would lay out whatever it reaches first,
 // starting the layout's timers from the wrong thread.
@@ -116,10 +140,16 @@ void MarkdownHighlighter::rehighlightAll() {
         return;
     }
     const QSizeF pageSize = doc->pageSize();
-    doc->setPageSize(QSizeF(0, 0));
+    const bool suspend = canSuspendLayout(doc);
+    QSignalBlocker layoutSignals(doc->documentLayout());
+    if (suspend)
+        doc->setPageSize(QSizeF(0, 0));
     rehighlight();
     m_pendingCodeBlock = QTextBlock();
-    doc->setPageSize(pageSize);
+    if (suspend)
+        doc->setPageSize(pageSize);
+    layoutSignals.unblock();
+    doc->markContentsDirty(0, doc->characterCount());
     if (QAbstractTextDocumentLayout *layout = doc->documentLayout())
         layout->documentSize();
 }
@@ -186,15 +216,22 @@ void MarkdownHighlighter::setSelection(int start, int end) {
     const QSizeF pageSize = doc->pageSize();
     // As in rehighlightAll(), suppress quadratic downstream relayout for a
     // large selection, then complete layout once on the GUI thread.
+    const bool suspend = count > 8 && canSuspendLayout(doc);
+    std::optional<QSignalBlocker> layoutSignals;
     if (count > 8)
+        layoutSignals.emplace(doc->documentLayout());
+    if (suspend)
         doc->setPageSize(QSizeF(0, 0));
     for (const auto &interval : changed) {
         for (QTextBlock block = doc->findBlockByNumber(interval.first);
              block.isValid() && block.blockNumber() <= interval.second; block = block.next())
             rehighlightBlock(block);
     }
-    if (count > 8) {
+    if (suspend)
         doc->setPageSize(pageSize);
+    if (layoutSignals) {
+        layoutSignals->unblock();
+        doc->markContentsDirty(0, doc->characterCount());
         if (QAbstractTextDocumentLayout *layout = doc->documentLayout())
             layout->documentSize();
     }

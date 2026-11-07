@@ -21,7 +21,7 @@ The relative-file-path regression canonicalizes an existing parent directory, no
 
 ## Verified development run
 
-On 2026-11-07, macOS arm64 with Homebrew Qt 6.12.0 and Apple Clang: **208 passed, 0 failed** across eight suites (111 / 16 / 22 / 12 / 7 / 22 / 6 / 12, including per-suite setup/cleanup). The macOS app built successfully. Its bundled icon resource matches the committed ICNS; Windows/Linux compilation was not tested. The automated renderer process tests use a fake CLI that rejects the obsolete `-w`/`--width` switches. Separately, the installed real Mermaid CLI 12.2.0/Node/Chrome stack was exercised through `MermaidRenderer`: the example flowchart produced a 552×77 PNG in about 1.15 seconds after removing `-w`. This is a single real-render smoke check, not exhaustive browser/platform validation.
+On 2026-11-07, macOS arm64 with Homebrew Qt 6.12.0 and Apple Clang: **211 passed, 0 failed, 2 native-render tests skipped** in the offscreen run across eight suites (111 / 16 / 23 / 12 / 7 / 24 / 6 / 12, including per-suite setup/cleanup). The two skipped tests were also run separately with real macOS windows and the threaded scene graph: both passed (100 rendered mode switches). The macOS app built successfully. Its bundled icon resource matches the committed ICNS; Windows/Linux compilation was not tested. The automated renderer process tests use a fake CLI that rejects the obsolete `-w`/`--width` switches. Separately, the installed real Mermaid CLI 12.2.0/Node/Chrome stack was exercised through `MermaidRenderer`: the example flowchart produced a 552×77 PNG in about 1.15 seconds after removing `-w`. This is a single real-render smoke check, not exhaustive browser/platform validation.
 
 Raster caches/projections are byte- and count-bounded (32 MiB per cache/projection; up to 64 visual objects per projection). Additional blocks fall back rather than making source inaccessible. These are not a whole-process memory cap: source documents, transient rasterization and the external renderer have separate costs.
 
@@ -36,6 +36,28 @@ Read/Edit appearance regressions compare actual paragraph and heading gaps, nest
 Code-color regressions compare actual Read character formats with the shared tokenizer in both themes for Python, C++, JavaScript, JSON, YAML and shell aliases. They include quoted/list code, adjacent same-language fences, multiline comments, unclosed/empty fences and unknown/untagged plain fallback. An indented literal fence cannot claim the prefix of a later real fence. Read import validates the full sequence before applying source metadata; ambiguous syntax falls back to plain code. Source text and undo stay unchanged. The macOS app statically links the engine; upstream notices/inventory are included in its resources, but binary redistribution remains blocked pending the [resource-license/source audit](../third_party/ksyntaxhighlighting/README.md).
 
 The Windows kit-dispatch shell paths were checked with fake qmake/compiler/CMake tools (MinGW, MSVC and rejected unsupported kit). This is not a Windows compiler or runtime test.
+
+## Native scene-graph regression tests
+
+Offscreen text/document tests do **not** establish that Qt Quick can paint a projection safely. Run this separately on an interactive desktop:
+
+```sh
+JOBS=4 ./bin/test --rendered
+```
+
+This opens real windows and forces `QSG_RENDER_LOOP=threaded`. Both tests assert that `beforeRendering` actually runs off the GUI thread; software/basic rendering is not a substitute. They capture rendered frames while switching Edit/Read, with local image objects, tables and fenced code. The full-window test also scrolls, resizes and changes zoom. It invokes the same QML handler as the mode button, rather than depending on OS keyboard focus during resizing. Existing physical-shortcut tests remain separate.
+
+To inspect a particular note without attaching auto-save to it:
+
+```sh
+OMAWRITE_RENDER_FIXTURE="/absolute/path/to/note.md" JOBS=4 ./bin/test --rendered
+```
+
+The fixture is read only; its contents and sibling `img/` files are copied into a temporary profile. No original document, image or recovery file is written.
+
+The 2026-11-07 user crash was in `QTextLine::ascent()` while Qt Quick painted an image after Edit → Read → Edit. The hardening prevents zero-page-size highlighter batching on rich objects/frames, detaches the highlighter until the replacement Edit projection is complete, and completes/checks image-line layout before publication. An invalid object becomes a one-character placeholder instead of reaching the renderer. Valid-image counts are asserted so this fallback cannot silently hide valid fixtures. A zero-page invariant test fails on the previous code and passes with the fix. Layout notifications are coalesced without invalidating rich page geometry (1,000-heading/image restyle: one notification, about 155 ms in a focused local run).
+
+The exact original crash was not reproduced in the native stress tests, including before the fix. These checks validate the suspected layout-invalidation mechanism and exercise the real renderer; they are not proof that every Qt/rendering crash is eliminated. Native Windows/Linux rendering remains untested.
 
 ## Manual release checks
 

@@ -4,6 +4,7 @@
 #include "readcodehighlighting.h"
 
 #include <QClipboard>
+#include <QAbstractTextDocumentLayout>
 #include <QGuiApplication>
 #include <QInputMethodEvent>
 #include <QInputMethod>
@@ -449,12 +450,51 @@ void LivePreview::buildReadDocument(const QString &source) {
     }
     m_view->markContentsDirty(0, m_view->characterCount());
 }
+void LivePreview::completeProjectionLayout() {
+    if (!m_view)
+        return;
+    QAbstractTextDocumentLayout *layout = m_view->documentLayout();
+    layout->documentSize();
+    QList<int> invalidImages;
+    for (QTextBlock block = m_view->begin(); block.isValid(); block = block.next()) {
+        for (auto it = block.begin(); !it.atEnd(); ++it) {
+            const QTextFragment fragment = it.fragment();
+            if (!fragment.isValid() || !fragment.charFormat().isImageFormat())
+                continue;
+            // documentSize() alone can leave later blocks lazily laid out.
+            // Complete each object-containing block on the GUI thread before
+            // Qt Quick's render thread calls QTextLine::ascent() for it.
+            layout->blockBoundingRect(block);
+            const QTextLayout *textLayout = block.layout();
+            const QString text = fragment.text();
+            for (int i = 0; i < text.size(); ++i) {
+                if (text.at(i) != QChar::ObjectReplacementCharacter)
+                    continue;
+                const int position = fragment.position() + i;
+                if (!textLayout || !textLayout->lineForTextPosition(position - block.position()).isValid())
+                    invalidImages.append(position);
+            }
+        }
+    }
+    // Invalid layout must not reach QQuickTextNodeEngine. Keep a one-character
+    // placeholder so the source/view mapping remains unchanged and recoverable.
+    for (int position : invalidImages) {
+        QTextCursor cursor(m_view);
+        cursor.setPosition(position);
+        cursor.setPosition(position + 1, QTextCursor::KeepAnchor);
+        cursor.insertText(QString(QChar(0x25a1)), QTextCharFormat());
+    }
+    if (!invalidImages.isEmpty())
+        layout->documentSize();
+    m_viewText = documentText(m_view);
+}
 void LivePreview::rebuild() {
     if (!m_source || !m_view || m_guard || m_composing)
         return;
     emit projectionAboutToChange();
     const auto notify = qScopeGuard([this] { emit projectionChanged(); });
     QScopedValueRollback<bool> guard(m_guard, true);
+    const auto finishLayout = qScopeGuard([this] { completeProjectionLayout(); });
     m_pending = false;
     const QString source = documentText(m_source);
     m_anchor = qBound(0, m_anchor, int(source.size()));
@@ -469,13 +509,7 @@ void LivePreview::rebuild() {
         m_viewText = documentText(m_view);
         return;
     }
-    if (m_highlighter->document() != m_view)
-        m_highlighter->setDocument(m_view);
     const bool dark = m_viewItem->property("previewDark").toBool();
-    m_highlighter->setTheme(dark, m_viewItem->property("previewBackground").value<QColor>().name(),
-                            strongForeground(m_viewItem).name(),
-                            m_viewItem->property("previewAccent").value<QColor>().name(),
-                            dark ? QStringLiteral("#252525") : QStringLiteral("#eeeeee"));
     struct Replacement { PreviewBlocks::Block block; QImage image; };
     QList<Replacement> replacements;
     const int low = qMin(m_anchor, m_caret), high = qMax(m_anchor, m_caret);
@@ -515,18 +549,33 @@ void LivePreview::rebuild() {
         if (segment.object)
             key += QStringLiteral("/%1:%2").arg(segment.sourceStart).arg(segment.sourceEnd);
     m_segments = segments;
-    m_highlighter->setSearch(m_searchQuery, m_currentMatch < 0 ? -1 : viewPosition(m_currentMatch));
-    if (key == m_projectionKey) {
+    const auto styleProjection = [this, dark](bool refreshFont) {
+        if (m_highlighter->document() != m_view)
+            m_highlighter->setDocument(m_view);
+        m_highlighter->setTheme(dark, m_viewItem->property("previewBackground").value<QColor>().name(),
+                                strongForeground(m_viewItem).name(),
+                                m_viewItem->property("previewAccent").value<QColor>().name(),
+                                dark ? QStringLiteral("#252525") : QStringLiteral("#eeeeee"));
+        m_highlighter->setSearch(m_searchQuery, m_currentMatch < 0 ? -1 : viewPosition(m_currentMatch));
         m_highlighter->setCaret(viewPosition(m_caret));
         m_highlighter->setSelection(viewPosition(m_anchor), viewPosition(m_caret));
+        if (refreshFont)
+            m_highlighter->refreshFont();
+    };
+    if (key == m_projectionKey) {
+        styleProjection(false);
         select(m_viewItem, viewPosition(m_anchor), viewPosition(m_caret));
         return;
     }
     m_projectionKey = key;
+    // Never attach the Markdown highlighter to the old Read HTML, or let it
+    // restyle a partially rebuilt document containing inline image objects.
+    m_highlighter->setDocument(nullptr);
     // Native rich-text image objects, never hidden multiline source overlays.
     clearViewResources();
     m_view->clear();
     QTextCursor cursor(m_view);
+    cursor.beginEditBlock();
     sourceAt = 0;
     int index = 0;
     for (const auto &replacement : replacements) {
@@ -543,10 +592,9 @@ void LivePreview::rebuild() {
         sourceAt = b.end;
     }
     cursor.insertText(source.mid(sourceAt));
+    cursor.endEditBlock();
     m_viewText = documentText(m_view);
-    m_highlighter->setCaret(viewPosition(m_caret));
-    m_highlighter->setSelection(viewPosition(m_anchor), viewPosition(m_caret));
-    m_highlighter->refreshFont();
+    styleProjection(true);
     select(m_viewItem, viewPosition(m_anchor), viewPosition(m_caret));
 }
 void LivePreview::prepareEdit() {

@@ -54,6 +54,7 @@ private:
     QImage imageFor(const PreviewBlocks::Block &block);
     void buildReadDocument(const QString &source);
     void clearViewResources();
+    void completeProjectionLayout();
     QPointer<QObject> m_sourceItem, m_viewItem, m_resolver;
     QPointer<QTextDocument> m_source, m_view;
     MarkdownHighlighter *m_highlighter = nullptr;

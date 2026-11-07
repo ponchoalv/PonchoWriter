@@ -1,9 +1,12 @@
 #include <QtTest>
+#include <QThread>
+#include <atomic>
 #include <QScopeGuard>
 #include <QThreadPool>
 #include <QSignalSpy>
 #include <QSemaphore>
 #include <QFont>
+#include <QFontDatabase>
 #include <QAbstractTextDocumentLayout>
 #include <QTextBlock>
 #include <QTextDocument>
@@ -87,6 +90,85 @@ private slots:
 
     void cleanupTestCase() {
         QDir(QStandardPaths::writableLocation(QStandardPaths::AppDataLocation)).removeRecursively();
+    }
+
+    void rendersModeSwitchesWithDocumentImages() {
+        if (QGuiApplication::platformName() == QStringLiteral("offscreen"))
+            QSKIP("Run with the native window-system platform and threaded scene graph.");
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        for (const char *name : {"Regular", "Italic", "Bold", "BoldItalic"}) {
+            const QString path = QStringLiteral("../fonts/IBMPlexMono-%1.ttf").arg(QLatin1String(name));
+            const QString absolute = QTest::qFindTestData(path.toUtf8().constData(), __FILE__, __LINE__);
+            QVERIFY(QFontDatabase::addApplicationFont(absolute) >= 0);
+        }
+        QVERIFY(QDir(directory.path()).mkdir(QStringLiteral("img")));
+        QString text = QStringLiteral("# Render regression\n\nBefore **bold**, *italic* and `code`.\n\n| A | B |\n| --- | --- |\n| one | two |\n\n```cpp\n/* open\nclose */\nint value = 42;\n```\n\n```mermaid\nflowchart LR\n A[Source] --> B[Preview]\n```\n\n![Large](img/image.png)\n\nAfter.\n");
+        const QString fixturePath = qEnvironmentVariable("OMAWRITE_RENDER_FIXTURE");
+        if (!fixturePath.isEmpty()) {
+            // Optional real-world fixture: read/copy only. Auto-save and recovery
+            // are attached exclusively to this temporary directory.
+            QFile fixture(fixturePath);
+            QVERIFY(fixture.open(QIODevice::ReadOnly));
+            text = QString::fromUtf8(fixture.readAll());
+            const QDir images(QFileInfo(fixturePath).dir().filePath(QStringLiteral("img")));
+            for (const QString &name : images.entryList(QDir::Files))
+                QVERIFY(QFile::copy(images.filePath(name), directory.filePath(QStringLiteral("img/") + name)));
+        } else {
+            QImage image(1600, 1000, QImage::Format_ARGB32_Premultiplied);
+            image.fill(Qt::darkCyan);
+            QVERIFY(image.save(directory.filePath(QStringLiteral("img/image.png"))));
+        }
+        Backend backend;
+        backend.m_recoveryPath = directory.filePath(QStringLiteral("recovery.json"));
+        backend.m_fileUrl = QUrl::fromLocalFile(directory.filePath(QStringLiteral("fixture.md")));
+        backend.holdAutoSave(true);
+        QQmlEngine engine;
+        engine.rootContext()->setContextProperty(QStringLiteral("backend"), &backend);
+        QQmlComponent component(&engine, QUrl::fromLocalFile(QFINDTESTDATA("../src/Main.qml")));
+        QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+        QScopedPointer<QObject> object(component.create());
+        auto *window = qobject_cast<QQuickWindow *>(object.data());
+        QVERIFY(window);
+        auto threaded = std::make_shared<std::atomic_bool>(false);
+        connect(window, &QQuickWindow::beforeRendering, window, [threaded] {
+            if (QThread::currentThread() != QCoreApplication::instance()->thread())
+                threaded->store(true);
+        }, Qt::DirectConnection);
+        window->show();
+        QVERIFY(QTest::qWaitForWindowExposed(window));
+        auto *source = window->findChild<QObject *>(QStringLiteral("sourceEditor"));
+        auto *scroll = window->findChild<QObject *>(QStringLiteral("editorScroll"));
+        QVERIFY(source && scroll);
+        source->setProperty("text", text);
+        source->setProperty("cursorPosition", text.size());
+        QSignalSpy frames(window, &QQuickWindow::frameSwapped);
+        for (int i = 0; i < 60; ++i) {
+            frames.clear();
+            // Exercise the same handler as the button/shortcut without relying
+            // on OS keyboard focus while the native window is being resized.
+            QVERIFY(QMetaObject::invokeMethod(window, "toggleReadMode"));
+            QCOMPARE(window->property("readMode").toBool(), i % 2 == 0);
+            if (i % 10 == 9)
+                backend.increaseTextSize();
+            window->resize(680 + (i % 3) * 120, 700 + (i % 2) * 80);
+            const qreal range = qMax<qreal>(0, scroll->property("contentHeight").toReal() - scroll->property("height").toReal());
+            scroll->setProperty("contentY", (i % 5) * range / 4);
+            window->requestUpdate();
+            QTRY_VERIFY_WITH_TIMEOUT(frames.count() > 0, 5000);
+            frames.clear();
+            QVERIFY(!window->grabWindow().isNull());
+            QTest::qWait(20); // Include asynchronous diagram/layout updates.
+            const QString actual = source->property("text").toString();
+            if (actual != text) {
+                int first = 0;
+                while (first < qMin(actual.size(), text.size()) && actual.at(first) == text.at(first)) ++first;
+                qWarning() << "mode iteration" << i << "lengths" << actual.size() << text.size()
+                           << "first diff" << first << actual.mid(first, 100) << text.mid(first, 100);
+            }
+            QCOMPARE(actual, text);
+        }
+        QVERIFY2(threaded->load(), "Use QSG_RENDER_LOOP=threaded and a native hardware rendering backend.");
     }
 
     void resumesEditingAtTheReadingViewport() {

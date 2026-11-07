@@ -1,6 +1,9 @@
 #include "markdownhighlighter.h"
 
 #include <QFont>
+#include <QImage>
+#include <QTextCursor>
+#include <QTextImageFormat>
 #include <QTextBlock>
 #include <QTextDocument>
 #include <QTextLayout>
@@ -24,6 +27,42 @@ class HeadingTests : public QObject {
     }
 
 private slots:
+    void richObjectHighlightingNeverZerosThePage() {
+        class Observer : public MarkdownHighlighter {
+        public:
+            using MarkdownHighlighter::MarkdownHighlighter;
+            bool sawZeroPage = false;
+            void highlightBlock(const QString &text) override {
+                sawZeroPage |= document()->pageSize() == QSizeF(0, 0);
+                MarkdownHighlighter::highlightBlock(text);
+            }
+        };
+        QTextDocument document;
+        document.setTextWidth(400);
+        QTextCursor cursor(&document);
+        QImage image(160, 100, QImage::Format_ARGB32_Premultiplied);
+        image.fill(Qt::darkCyan);
+        document.addResource(QTextDocument::ImageResource, QUrl("preview:test"), image);
+        QTextImageFormat imageFormat;
+        imageFormat.setName("preview:test");
+        cursor.insertImage(imageFormat);
+        cursor.insertText("\n");
+        for (int i = 0; i < 20; ++i)
+            cursor.insertText(QStringLiteral("# Heading %1\n").arg(i));
+        cursor.insertText("```cpp\nint value;\n/* open\nclose */\n```\n");
+        Observer highlighter(&document);
+        highlighter.setTheme(true, "#111111", "#eeeeee", "#5584aa", "#252525");
+        highlighter.refreshFont();
+        QVERIFY(!highlighter.sawZeroPage);
+        highlighter.setSelection(0, document.characterCount() - 1);
+        QVERIFY(!highlighter.sawZeroPage);
+        cursor.setPosition(document.toPlainText().indexOf("/* open"));
+        cursor.deleteChar();
+        cursor.deleteChar();
+        QVERIFY(!highlighter.sawZeroPage);
+        QCOMPARE(document.textWidth(), 400.0);
+    }
+
     void headingSizesMatchReadAndActiveMarkersAreMuted() {
         for (bool pixels : {false, true}) {
             for (int size : {12, 24}) {

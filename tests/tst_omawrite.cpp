@@ -89,6 +89,53 @@ private slots:
         QDir(QStandardPaths::writableLocation(QStandardPaths::AppDataLocation)).removeRecursively();
     }
 
+    void resumesEditingAtTheReadingViewport() {
+        QTemporaryDir recovery;
+        Backend backend;
+        backend.m_recoveryPath = recovery.filePath(QStringLiteral("recovery.json"));
+        QQmlEngine engine;
+        engine.rootContext()->setContextProperty(QStringLiteral("backend"), &backend);
+        QQmlComponent component(&engine, QUrl::fromLocalFile(QFINDTESTDATA("../src/Main.qml")));
+        QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+        QScopedPointer<QObject> object(component.create());
+        auto *window = qobject_cast<QQuickWindow *>(object.data());
+        QVERIFY(window);
+        window->show();
+        QVERIFY(QTest::qWaitForWindowExposed(window));
+        auto *source = window->findChild<QObject *>(QStringLiteral("sourceEditor"));
+        auto *view = window->findChild<QQuickItem *>(QStringLiteral("previewEditor"));
+        auto *scroll = window->findChild<QObject *>(QStringLiteral("editorScroll"));
+        QVERIFY(source && view && scroll);
+        QString text;
+        for (int i = 0; i < 80; ++i)
+            text += QStringLiteral("## Section %1\n\nA paragraph for reading and editing at this location.\n\n").arg(i);
+        source->setProperty("text", text);
+        for (qreal ratio : {0.25, 0.65}) {
+            source->setProperty("cursorPosition", text.size());
+            editorKeyClick(window, Qt::Key_M, Qt::ControlModifier | Qt::ShiftModifier);
+            QTRY_VERIFY(window->property("readMode").toBool());
+            const auto range = [&] {
+                return scroll->property("contentHeight").toReal() - scroll->property("height").toReal();
+            };
+            QVERIFY(range() > 1000);
+            scroll->setProperty("contentY", ratio * range());
+            QCoreApplication::processEvents();
+            const qreal readingRatio = scroll->property("contentY").toReal() / range();
+            editorKeyClick(window, Qt::Key_M, Qt::ControlModifier | Qt::ShiftModifier);
+            QTRY_VERIFY(!window->property("readMode").toBool());
+            QTRY_VERIFY(!window->property("restoringReadingPosition").toBool());
+            QTest::qWait(50); // include queued projection/cursor-rectangle updates
+            const qreal editingRatio = scroll->property("contentY").toReal() / range();
+            QVERIFY(qAbs(editingRatio - readingRatio) < 0.03);
+            const QRectF caret = view->property("cursorRectangle").toRectF();
+            const qreal caretY = view->y() + caret.center().y() - scroll->property("contentY").toReal();
+            const qreal height = scroll->property("height").toReal();
+            QVERIFY(caretY > height * 0.25 && caretY < height * 0.75);
+            QVERIFY(source->property("cursorPosition").toInt() < text.size() - 100);
+            QCOMPARE(source->property("text").toString(), text);
+        }
+    }
+
     void pastesScreenshotThroughVisibleEditorAndPreservesSourceInReadMode() {
         const QString mainQmlPath = QFINDTESTDATA("../src/Main.qml");
         QVERIFY(!mainQmlPath.isEmpty());

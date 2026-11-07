@@ -51,6 +51,7 @@ ApplicationWindow {
     property bool awaitingPendingSave: false
     property alias readMode: livePreview.readMode
     property bool projectionChanging: false
+    property bool restoringReadingPosition: false
     property int scrollSourceAnchor: 0
     property real scrollAnchorOffset: 0
     property bool lastProjectionReadMode: false
@@ -113,8 +114,20 @@ ApplicationWindow {
     }
 
     function toggleReadMode() {
-        livePreview.readMode = !livePreview.readMode;
-        presentation.forceActiveFocus();
+        if (livePreview.readMode) {
+            // Restore the reading scroll first, then choose a NEW caret in
+            // the visible text. Focusing the old off-screen caret must not
+            // pull the Flickable back to where editing last stopped.
+            win.restoringReadingPosition = true;
+            livePreview.readMode = false;
+            var centerY = editorFlick.contentY + editorFlick.height / 2 - presentation.y;
+            presentation.cursorPosition = presentation.positionAt(presentation.width / 2, Math.max(0, centerY));
+            presentation.forceActiveFocus();
+            Qt.callLater(function() { win.restoringReadingPosition = false; });
+        } else {
+            livePreview.readMode = true;
+            presentation.forceActiveFocus();
+        }
     }
 
     Shortcut {
@@ -1128,7 +1141,7 @@ ApplicationWindow {
                 property color previewForeground: win.textColor
                 property bool previewDark: win.darkMode
                 onFontChanged: livePreview.refresh()
-                onCursorRectangleChanged: if (!win.projectionChanging && !livePreview.readMode) editorFlick.ensureCursorVisible()
+                onCursorRectangleChanged: if (!win.projectionChanging && !win.restoringReadingPosition && !livePreview.readMode) editorFlick.ensureCursorVisible()
                 onLinkActivated: function(link) { Qt.openUrlExternally(link); }
 
                 Text {

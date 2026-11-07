@@ -344,6 +344,24 @@ OmaWrite is a native Markdown editor with Edit/Read views, not a browser, whiteb
 - Check `command -v mmdc` in the launching terminal. On macOS, start the app via its executable to inherit this PATH; Finder launches can have a different environment. Restart after changing renderer availability.
 - Missing CLI, invalid/unsupported syntax, rejected configuration or render failure leave usable source. Document-provided configuration, click actions/HTML and remote-resource syntax are constrained. Remote images are not automatically fetched.
 
+### macOS: install the optional renderer
+
+With a supported Node/npm installed (for example `brew install node` if missing):
+
+```sh
+npm install -g @mermaid-js/mermaid-cli
+mmdc --version
+command -v mmdc
+```
+
+The official npm package uses Puppeteer/Chrome and may download a browser during installation. Do not use the old unsupported Homebrew `mermaid-cli` formula. Quit OmaWrite, then, from your source checkout, launch the executable directly so it inherits this terminal's PATH:
+
+```sh
+./build/omawrite.app/Contents/MacOS/omawrite "$PWD/docs/preview-example.md"
+```
+
+Move the caret outside the Mermaid block or switch to Read. A version check alone does not verify browser availability or successful rendering; if the CLI fails, inspect its terminal error rather than assuming the app can render it.
+
 Mermaid is optional: do the first installation and smoke checks without it.
 
 ## 5. First-run smoke checks (all platforms)

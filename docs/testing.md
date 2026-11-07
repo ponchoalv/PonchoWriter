@@ -20,11 +20,13 @@ The relative-file-path regression canonicalizes an existing parent directory, no
 
 ## Verified development run
 
-On 2026-11-07, macOS arm64 with Homebrew Qt 6.12.0 and Apple Clang: **194 passed, 0 failed** across seven suites (110 / 16 / 22 / 12 / 7 / 21 / 6, including per-suite setup/cleanup). The macOS app built successfully. Its bundled icon resource matches the committed ICNS; Windows/Linux compilation and a real Mermaid/Chromium installation were not tested. The renderer process tests use a fake CLI.
+On 2026-11-07, macOS arm64 with Homebrew Qt 6.12.0 and Apple Clang: **195 passed, 0 failed** across seven suites (111 / 16 / 22 / 12 / 7 / 21 / 6, including per-suite setup/cleanup). The macOS app built successfully. Its bundled icon resource matches the committed ICNS; Windows/Linux compilation and a real Mermaid/Chromium installation were not tested. The renderer process tests use a fake CLI.
 
 Raster caches/projections are byte- and count-bounded (32 MiB per cache/projection; up to 64 visual objects per projection). Additional blocks fall back rather than making source inaccessible. These are not a whole-process memory cap: source documents, transient rasterization and the external renderer have separate costs.
 
 Heading regressions compare actual glyph sizes for levels 1–6 against Qt Markdown across pixel/point fonts, light/dark themes and zoom sizes; they also check original muted active-marker colors and Edit/Read toggle parity, including Qt's smallest-heading HTML round-trip.
+
+The long-document mode-switch regression starts with the caret at the end, scrolls Read to two different positions, then uses the actual shortcut to return to Edit. It checks that the viewport stays at the reading height, the new caret is near the visible center, and Markdown is unchanged.
 
 Body-style regressions check softer prose versus stronger headings in both themes, regular/nonitalic paragraph fonts through repeated mode toggles, unchanged Markdown and the full window's theme bindings.
 

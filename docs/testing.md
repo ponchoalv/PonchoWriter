@@ -2,7 +2,7 @@
 
 ## Automated suites
 
-Run `./bin/test` with Qt 6.7+, a C++17 compiler and CMake 3.24+ for the first syntax-dependency bootstrap. The runner builds separate QtTest targets, uses the offscreen Qt platform, and recognizes macOS bundles and Unix binaries.
+Run `./bin/test` with Qt 6.7+, a C++17 compiler and CMake 3.24+ for the first syntax/spelling-dependency bootstrap. The runner builds separate QtTest targets, uses the offscreen Qt platform, and recognizes macOS bundles and Unix binaries.
 
 | Suite | Purpose |
 | --- | --- |
@@ -14,6 +14,9 @@ Run `./bin/test` with Qt 6.7+, a C++17 compiler and CMake 3.24+ for the first sy
 | `tests/livepreview/livepreview.pro` | UTF-16 mappings, source/view separation, native input/selection/IME, object boundaries, source preservation, local/remote resources, cumulative raster budgets/stale-resource release and read links |
 | `tests/mermaid/mermaid.pro` | Optional-renderer fallback, constrained syntax and asynchronous process/cache behavior using a fake local CLI |
 | `tests/codehighlighting/codehighlighting.pro` | Language/alias resolution, plain fallback, multiline state and per-fence reset, incremental versus full rehighlight, language-only edits, theme/font/search/source/undo preservation |
+| `tests/spellchecking/spellchecking.pro` | Spelling prose classification, cached diagnostics, stale-result/menu-token validation and dictionary/controller behavior |
+| `tests/spellchecking/integration.pro` | Spelling projection/object mapping, asynchronous styling, source/undo preservation and IME |
+| `tests/spellchecking/main.pro` | Backend and Main.qml spelling controls/actions using an isolated deterministic dictionary |
 
 The main QML suite registers the same `Omawrite.LivePreview` type as the application. It uses a unique application-data identity per run, so a failed test's recovery snapshot cannot be restored by the next run. Tests must send physical text input to **`previewEditor`**, not the hidden canonical **`sourceEditor`**. When a test changes source directly, allow the queued projection update before sending input.
 
@@ -21,7 +24,7 @@ The relative-file-path regression canonicalizes an existing parent directory, no
 
 ## Verified development run
 
-On 2026-11-07, macOS arm64 with Homebrew Qt 6.12.0 and Apple Clang: **211 passed, 0 failed, 2 native-render tests skipped** in the offscreen run across eight suites (111 / 16 / 23 / 12 / 7 / 24 / 6 / 12, including per-suite setup/cleanup). The two skipped tests were also run separately with real macOS windows and the threaded scene graph: both passed (100 rendered mode switches). The macOS app built successfully. Its bundled icon resource matches the committed ICNS; Windows/Linux compilation was not tested. The automated renderer process tests use a fake CLI that rejects the obsolete `-w`/`--width` switches. Separately, the installed real Mermaid CLI 12.2.0/Node/Chrome stack was exercised through `MermaidRenderer`: the example flowchart produced a 552×77 PNG in about 1.15 seconds after removing `-w`. This is a single real-render smoke check, not exhaustive browser/platform validation.
+On 2026-11-07, macOS arm64 with Homebrew Qt 6.12.0 and Apple Clang: **275 passed, 0 failed, 2 native-render tests skipped** in the offscreen run across eleven suites (113 / 16 / 23 / 12 / 7 / 24 / 6 / 12 / 48 / 9 / 5, including per-suite setup/cleanup). The two skipped tests were also run separately with real macOS windows and the threaded scene graph: both passed (100 rendered mode switches). The macOS app built successfully. Its bundled icon resource matches the committed ICNS; Windows/Linux compilation was not tested. The automated renderer process tests use a fake CLI that rejects the obsolete `-w`/`--width` switches. Separately, the installed real Mermaid CLI 12.2.0/Node/Chrome stack was exercised through `MermaidRenderer`: the example flowchart produced a 552×77 PNG in about 1.15 seconds after removing `-w`. This is a single real-render smoke check, not exhaustive browser/platform validation.
 
 Raster caches/projections are byte- and count-bounded (32 MiB per cache/projection; up to 64 visual objects per projection). Additional blocks fall back rather than making source inaccessible. These are not a whole-process memory cap: source documents, transient rasterization and the external renderer have separate costs.
 
@@ -36,6 +39,20 @@ Read/Edit appearance regressions compare actual paragraph and heading gaps, nest
 Code-color regressions compare actual Read character formats with the shared tokenizer in both themes for Python, C++, JavaScript, JSON, YAML and shell aliases. They include quoted/list code, adjacent same-language fences, multiline comments, unclosed/empty fences and unknown/untagged plain fallback. An indented literal fence cannot claim the prefix of a later real fence. Read import validates the full sequence before applying source metadata; ambiguous syntax falls back to plain code. Source text and undo stay unchanged. The macOS app statically links the engine; upstream notices/inventory are included in its resources, but binary redistribution remains blocked pending the [resource-license/source audit](../third_party/ksyntaxhighlighting/README.md).
 
 The Windows kit-dispatch shell paths were checked with fake qmake/compiler/CMake tools (MinGW, MSVC and rejected unsupported kit). This is not a Windows compiler or runtime test.
+
+Spelling checks cover UTF-16 prose masks, container-relative indented code and
+paragraph continuations, malformed-bracket linearity, installed-language fallback,
+cache/generation safety, one publication per completed snapshot, missing dictionaries,
+IME deferral, session Ignore and fake Learn failures/success. Projection checks assert
+no async rebuild, preserved styling/undo, clean Read, and exact pointer glyph hits
+including wrapping and bidi text. Main/QML tests cover native suggestions, one-undo
+correction, stale actions, settings and attachment-menu priority. Clipboard image
+paste is tested through both keyboard and context menu. Native Learn is deliberately
+not exercised: no personal dictionary changes are needed. Native Mac spelling/UI
+checks passed separately. If Cocoa declines OS activation after synthetic attachment
+popups, that fixture invokes the actual mode-button handler; separate focused tests
+retain physical mode-shortcut coverage. This is not a claim of exhaustive native
+keyboard/clipboard/IME testing.
 
 ## Native scene-graph regression tests
 
@@ -59,6 +76,18 @@ The 2026-11-07 user crash was in `QTextLine::ascent()` while Qt Quick painted an
 
 The exact original crash was not reproduced in the native stress tests, including before the fix. These checks validate the suspected layout-invalidation mechanism and exercise the real renderer; they are not proof that every Qt/rendering crash is eliminated. Native Windows/Linux rendering remains untested.
 
+## Optional macOS dictionary smoke check
+
+```sh
+./bin/test --native-spelling
+```
+
+This uses the installed NSSpellChecker English dictionary, not a fake backend.
+It checks correct/misspelled words and suggestions without calling Learn or
+changing the personal dictionary. It is separate from the deterministic suites;
+it may skip if English is unavailable. The optional target currently supports
+macOS only. Windows/Linux still need real-desktop dictionary and UI verification.
+
 ## Manual release checks
 
 Use [preview-example.md](preview-example.md), plus a disposable document and image directory.
@@ -73,5 +102,7 @@ Use [preview-example.md](preview-example.md), plus a disposable document and ima
 - If you explicitly install/use Mermaid CLI, check a real successful diagram, an invalid diagram and renderer failure/timeout. Fake-CLI tests do not establish compatibility with a particular Node/Puppeteer/Chromium installation.
 - Check high-DPI and light/dark appearance, clickable Read links and local image scaling.
 - Use [code-highlighting-example.md](code-highlighting-example.md) to check real font/zoom/search/selection/undo behavior in tagged fences and across mode toggles. These are not autocomplete or LSP features.
+- Use [spellchecking-example.md](spellchecking-example.md) with an installed dictionary. Check Edit-only underlines, suggestions, undo, session Ignore, language/on-off changes, code/URL exclusion, emoji offsets and image-menu priority. Test Learn only with a word you actually want in that backend's personal dictionary; ordinary tests must not alter the user's dictionary.
+- On Windows/Linux, verify the native backend/dictionary enumeration and correction workflow on a real desktop before claiming platform support is runtime-tested. Linux needs system Hunspell dictionaries, not just its development library.
 
 No renderer or external runtime is installed by the test runner. Do not describe tests of the fake CLI as an end-to-end Mermaid/browser test.

@@ -5,8 +5,8 @@ ROOT="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
 BUILD_DIR="$ROOT/build-tests"
 
 case "${1:-}" in
-  ""|--rendered) ;;
-  *) echo "Usage: bin/test [--rendered]" >&2; exit 2 ;;
+  ""|--rendered|--native-spelling) ;;
+  *) echo "Usage: bin/test [--rendered|--native-spelling]" >&2; exit 2 ;;
 esac
 
 if command -v qmake6 >/dev/null 2>&1; then
@@ -15,7 +15,8 @@ else
   QMAKE=qmake
 fi
 
-if [ -z "${OMAWRITE_SYNTAX_PREFIX:-}" ] && [ ! -f "$ROOT/.deps/install/include/KF6/KSyntaxHighlighting/KSyntaxHighlighting/Repository" ]; then
+if { [ -z "${OMAWRITE_SYNTAX_PREFIX:-}" ] && [ ! -f "$ROOT/.deps/install/include/KF6/KSyntaxHighlighting/KSyntaxHighlighting/Repository" ]; } ||
+   { [ -z "${OMAWRITE_SPELL_PREFIX:-}" ] && [ ! -f "$ROOT/.deps/install/include/KF6/SonnetCore/Sonnet/Speller" ]; }; then
   "$ROOT/bin/build-dependencies"
 fi
 
@@ -40,6 +41,15 @@ run_suite() (
   fi
 )
 
+if [ "${1:-}" = --native-spelling ]; then
+  case "$(uname -s)" in
+    Darwin) ;;
+    *) echo "The optional native spelling smoke test currently supports macOS only." >&2; exit 2 ;;
+  esac
+  OMAWRITE_NATIVE_SPELLCHECK=1 run_suite tests/spellchecking/native.pro tst_native_spellchecking "$BUILD_DIR/spellchecking-native" osDictionarySmoke
+  exit 0
+fi
+
 if [ "${1:-}" = --rendered ]; then
   case "${QT_QPA_PLATFORM:-}" in
     offscreen|minimal) echo "Rendered tests require a native desktop platform, not $QT_QPA_PLATFORM." >&2; exit 2 ;;
@@ -57,3 +67,6 @@ run_suite tests/previewblocks/previewblocks.pro tst_previewblocks "$BUILD_DIR/pr
 run_suite tests/livepreview/livepreview.pro tst_livepreview "$BUILD_DIR/livepreview"
 run_suite tests/mermaid/mermaid.pro tst_mermaid "$BUILD_DIR/mermaid"
 run_suite tests/codehighlighting/codehighlighting.pro tst_codehighlighting "$BUILD_DIR/codehighlighting"
+run_suite tests/spellchecking/spellchecking.pro tst_spellchecking "$BUILD_DIR/spellchecking"
+run_suite tests/spellchecking/integration.pro tst_spellingintegration "$BUILD_DIR/spellchecking-integration"
+run_suite tests/spellchecking/main.pro tst_spelling_main "$BUILD_DIR/spellchecking-main"

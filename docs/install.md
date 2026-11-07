@@ -6,7 +6,7 @@ This guide builds the **[ponchoalv/omawrite fork](https://github.com/ponchoalv/o
 
 - **macOS:** development/testing host is Apple Silicon with Homebrew **Qt 6.12.0**. This guide does not claim every GUI/deployment scenario has been tested.
 - **Windows and Linux:** commands are source-inspected instructions, **not built or runtime-tested on those platforms**. Validate on the target machine before relying on the app for important notes.
-- Install **CMake 3.24+ before the first build** for the syntax-highlighting bootstrap, plus a matching compiler/build tool.
+- Install **CMake 3.24+ before the first build** for the syntax-highlighting and spelling bootstrap, plus a matching compiler/build tool.
 - Requires **Qt 6.7 or newer**, a matching desktop C++17 compiler, and Qt Core, GUI, **Network**, QML/Quick, Quick Controls, Quick Dialogs, Widgets, PrintSupport and Concurrent. Tests require Qt Test. These normally come from Qt Base and Qt Declarative plus their development tools/runtime modules.
 - **QtDBus and XDG portal integration are Linux-only** in the portability changes accompanying this guide. Windows/macOS do not need QtDBus. If your checkout still unconditionally requests `dbus` or includes `QDBus` on those systems, obtain the updated feature branch before building; do not work around it by installing Linux integration on Windows/macOS.
 - **No Qt WebEngine dependency.** Mermaid rendering is optional, external and Unix-only; see below.
@@ -18,18 +18,18 @@ Keep personal notes outside the source/build tree. Back up existing `.md` files 
 
 Language-tagged backtick/tilde fences now have native token colors in Edit and Read; see [syntax highlighting](syntax-highlighting.md) for examples and boundaries. This uses standalone **KSyntaxHighlighting 6.13.0**, not Kate/KTextEditor or WebEngine. No Node or runtime downloads are needed for code highlighting.
 
-The first developer build downloads pinned official KDE archives, builds a **static Release** library with embedded definitions/themes (`QRC_SYNTAX=ON`), and installs privately under `.deps/install`. `bin/build` and `bin/test` call `bin/build-dependencies` **only when the private dependency header is missing**; they do not detect stale kits. On macOS/Linux, after selecting the matching Qt/compiler environment, you can bootstrap explicitly from the repository root:
+The first developer build downloads pinned official KDE archives, builds **static Release** KSyntaxHighlighting with embedded definitions/themes (`QRC_SYNTAX=ON`) and **Sonnet Core 6.13.0** with one system spelling backend, and installs privately under `.deps/install`. Sonnet's Widgets/QML components are disabled; macOS uses NSSpellChecker, Windows ISpellChecker, Linux system Hunspell. No spelling dictionaries are bundled or downloaded. See [spell-checking](spellchecking.md). `bin/build` and `bin/test` call `bin/build-dependencies` **when either private dependency header is missing**; they do not detect stale kits. On macOS/Linux, after selecting the matching Qt/compiler environment, you can bootstrap explicitly from the repository root:
 
 ```sh
 cmake --version
 JOBS=4 ./bin/build-dependencies
 ```
 
-CMake defaults to Unix Makefiles on these Unix instructions; Ninja is optional. `.deps` is ignored by Git. When changing Qt kit, compiler or architecture, **delete `.deps` and the generated app/test build directories**, then rebuild; never delete personal notes or attachments. Alternatively, set `OMAWRITE_SYNTAX_PREFIX` to an existing static installation prefix matching exactly the same Qt kit/compiler/architecture. The dependency and qmake app/tests must all use **Release**, to match the Windows CRT; **Debug is currently unsupported**.
+CMake defaults to Unix Makefiles on these Unix instructions; Ninja is optional. `.deps` is ignored by Git. When changing Qt kit, compiler or architecture, **delete `.deps` and the generated app/test build directories**, then rebuild; never delete personal notes or attachments. Alternatively, set `OMAWRITE_SYNTAX_PREFIX` and/or `OMAWRITE_SPELL_PREFIX` to existing static installation prefixes matching exactly the same Qt kit/compiler/architecture. The dependency and qmake app/tests must all use **Release**, to match the Windows CRT; **Debug is currently unsupported**.
 
-The engine is MIT-licensed, but embedded definition data has mixed GPL/LGPL/other licenses: **not everything bundled is MIT**. See `third_party/ksyntaxhighlighting/README.md` and its `LICENSES/` files for upstream notices. A local build is **not a redistribution-ready release**; resource/license/source auditing remains required. Historical Arch packaging is disabled pending that audit. Deployment commands below describe local deployment mechanics, not permission or readiness to redistribute binaries.
+The engine is MIT-licensed, but embedded definition data has mixed GPL/LGPL/other licenses: **not everything bundled is MIT**. See `third_party/ksyntaxhighlighting/README.md` and its `LICENSES/` files for upstream notices. A local build is **not a redistribution-ready release**; resource/license/source auditing remains required. Sonnet adds LGPL obligations, including static-library relinking requirements; see `third_party/sonnet/README.md`. Historical Arch packaging is disabled pending that audit. Deployment commands below describe local deployment mechanics, not permission or readiness to redistribute binaries.
 
-Verified on macOS arm64 / Qt 6.12.0 on 2026-11-07: **208 checks passed, 0 failed across eight suites**, and the app rebuilt with embedded syntax resources and upstream notices. See [test details](testing.md). Windows/Linux remain unverified.
+Verified on macOS arm64 / Qt 6.12.0 on 2026-11-07: **275 checks passed, 0 failed across eleven suites**, with 2 native-render bodies skipped offscreen. Separate native Mac runs passed OS-dictionary smoke, spelling suggestions/correction/undo, keyboard/menu image paste and 100 threaded rendered mode switches. The app rebuilt with static syntax/Sonnet resources and upstream notices. No native Learn or personal-dictionary changes were performed. See [test details](testing.md). Windows/Linux remain unverified.
 
 ## 1. Windows (first-time installation)
 
@@ -171,7 +171,7 @@ If the EXE is at the build root, replace the copy command with `copy omawrite.ex
 windeployqt --release --compiler-runtime --qmldir <repository>/src dist/omawrite.exe
 ```
 
-- KSyntaxHighlighting is statically linked with embedded resources; there is no extra KDE DLL to deploy. This does not remove the license/resource/source audit requirement above.
+- KSyntaxHighlighting and Sonnet Core plus the native Windows spelling backend are statically linked; there is no extra KDE DLL/plugin to deploy. Windows must provide a supported installed spelling language; an OS display-language pack alone is not a guarantee. This does not remove the license/resource/source and LGPL relinking requirements above.
 - `--qmldir` scans QML imports; copying only the EXE or only a few Qt DLLs is insufficient.
 - Keep **the entire `dist` folder**, including `platforms`, QML imports, styles and compiler runtime dependencies. Zip/share the folder, not the EXE alone. This is a folder deployment, not a fork installer.
 - `windeployqt` must come from the same Qt kit. Qt's kit command prompt or its `qtenv2.bat` can establish the Qt environment; compiler tools must also be available.
@@ -215,8 +215,11 @@ If the executable is at the build root, use `tst_omawrite.exe` instead. For MSVC
 | `tests/livepreview/livepreview.pro` | `tst_livepreview` |
 | `tests/mermaid/mermaid.pro` | `tst_mermaid` |
 | `tests/codehighlighting/codehighlighting.pro` | `tst_codehighlighting` |
+| `tests/spellchecking/spellchecking.pro` | `tst_spellchecking` |
+| `tests/spellchecking/integration.pro` | `tst_spellingintegration` |
+| `tests/spellchecking/main.pro` | `tst_spelling_main` |
 
-For the eighth suite specifically, from the repository root in the same configured CMD environment:
+The last three suites cover spelling classification/controller, projection and Main.qml integration; build each project in another fresh directory with the same pattern. For the eighth (code-highlighting) suite specifically, from the repository root in the same configured CMD environment:
 
 ```bat
 set "REPO=%CD%"
@@ -324,7 +327,7 @@ These are source-based instructions, **not a Linux build/runtime test report**.
 ### 3.1 Recommended: official Qt desktop kit
 
 1. Use a distribution supported by the chosen [Qt release](https://doc.qt.io/qt-6/supported-platforms.html) and install Git, **CMake 3.24+**, a C++17 compiler and `make` with its package manager (Ninja is optional).
-2. Use the [Qt Online Installer](https://doc.qt.io/qt-6/qt-online-installation.html) to install a **Qt 6.7+ Linux desktop kit**, including Base, Declarative/Quick Controls/Quick Dialogs and development tools/Qt Test. Linux additionally needs QtDBus. Follow that kit's documented system-library requirements.
+2. Install **pkg-config and Hunspell development files**, plus the dictionaries you need, using your distribution (examples below). These are required even with an official Qt kit; check `pkg-config --modversion hunspell` before bootstrapping. Then use the [Qt Online Installer](https://doc.qt.io/qt-6/qt-online-installation.html) to install a **Qt 6.7+ Linux desktop kit**, including Base, Declarative/Quick Controls/Quick Dialogs and development tools/Qt Test. Linux additionally needs QtDBus. Follow that kit's documented system-library requirements.
 3. Add the actual kit's `bin` directory to PATH (replace placeholders):
 
    ```sh
@@ -341,12 +344,12 @@ Package names and available Qt versions vary. **Ubuntu 24.04's Qt 6.4 is too old
 
 Examples to look for on a distribution whose repositories already provide Qt 6.7+:
 
-- Debian/Ubuntu: `build-essential`, `git`, `cmake`, `qmake6`, `qt6-base-dev`, `qt6-declarative-dev`, `qt6-tools-dev-tools`. QML runtime packages commonly include `qml6-module-qtquick`, `qml6-module-qtquick-controls`, `qml6-module-qtquick-dialogs`, `qml6-module-qtquick-layouts`, `qml6-module-qtquick-window`, `qml6-module-qtquick-templates` and `qml6-module-qtqml-workerscript`. Check available names/dependencies for your release.
-- Fedora: `gcc-c++`, `make`, `git`, `cmake`, `qt6-qtbase-devel`, `qt6-qtdeclarative-devel`, `qt6-qttools-devel`; verify the release's Qt version and runtime QML module packaging.
+- Debian/Ubuntu: `build-essential`, `git`, `cmake`, `pkg-config`, `libhunspell-dev`, dictionaries such as `hunspell-en-us` / `hunspell-es`, `qmake6`, `qt6-base-dev`, `qt6-declarative-dev`, `qt6-tools-dev-tools`. QML runtime packages commonly include `qml6-module-qtquick`, `qml6-module-qtquick-controls`, `qml6-module-qtquick-dialogs`, `qml6-module-qtquick-layouts`, `qml6-module-qtquick-window`, `qml6-module-qtquick-templates` and `qml6-module-qtqml-workerscript`. Check available names/dependencies for your release.
+- Fedora: `gcc-c++`, `make`, `git`, `cmake`, `pkgconf-pkg-config`, `hunspell-devel`, dictionaries such as `hunspell-en-US` / `hunspell-es`, `qt6-qtbase-devel`, `qt6-qtdeclarative-devel`, `qt6-qttools-devel`; verify the release's Qt version and runtime QML module packaging.
 - Arch Linux (rolling packages; verify current Qt version):
 
   ```sh
-  sudo pacman -S --needed base-devel git cmake qt6-base qt6-declarative qt6-tools
+  sudo pacman -S --needed base-devel git cmake pkgconf hunspell hunspell-en_us hunspell-es_es qt6-base qt6-declarative qt6-tools
   qmake6 -v
   ```
 
@@ -389,7 +392,7 @@ make -j4
 QT_QPA_PLATFORM=offscreen ./tst_omawrite
 ```
 
-On macOS the test may instead be `./tst_omawrite.app/Contents/MacOS/tst_omawrite`; use the path actually generated. Repeat all eight projects/targets in the Windows test table in separate directories, using absolute project paths if convenient. This manual core test alone is **not** the complete suite. The app output is `build-new-kit/omawrite` on Linux or `build-new-kit/omawrite.app` on macOS.
+On macOS the test may instead be `./tst_omawrite.app/Contents/MacOS/tst_omawrite`; use the path actually generated. Repeat all eleven projects/targets in the Windows test table in separate directories, using absolute project paths if convenient. This manual core test alone is **not** the complete suite. The app output is `build-new-kit/omawrite` on Linux or `build-new-kit/omawrite.app` on macOS.
 
 ## 4. Optional Mermaid rendering and feature boundaries
 

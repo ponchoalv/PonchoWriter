@@ -8,7 +8,8 @@ This is the [ponchoalv fork](https://github.com/ponchoalv/omawrite) of
 [native preview design](docs/live-preview-design.md),
 [example document](docs/preview-example.md), and
 [test guide](docs/testing.md),
-[language highlighting guide](docs/syntax-highlighting.md), and
+[language highlighting guide](docs/syntax-highlighting.md),
+[desktop spelling guide](docs/spellchecking.md), and
 [Windows, macOS and Linux installation guide](docs/install.md).
 
 ## Fork additions
@@ -19,6 +20,7 @@ This is the [ponchoalv fork](https://github.com/ponchoalv/omawrite) of
 - Optional constrained Mermaid rendering through an already-installed external `mmdc`; no embedded WebEngine or automatic runtime downloads.
 - macOS F1 key labels, nonconflicting Replace/fullscreen shortcuts and a bundled app icon.
 - Optional image name/folder and Locate actions in the image context menu; current-document changes are undoable.
+- Minimal Edit-only spelling underlines and suggestions using Sonnet Core with native macOS/Windows dictionaries or system Hunspell on Linux; no autocorrect or dictionary downloads.
 
 The screenshots below are from upstream, before these fork additions.
 
@@ -79,7 +81,8 @@ Omawrite at the size it is designed around; larger and smaller sizes scale from 
 
 - **Qt 6.7 or newer**: `qt6-base` and `qt6-declarative` (including Qt Quick Controls, Quick Dialogs and QtTest for tests).
 - Linux: `xdg-desktop-portal` and a portal backend. macOS and Windows use native dialogs.
-- A matching C++17 compiler/build kit, **CMake 3.24+**, and a native build tool for the first pinned KSyntaxHighlighting dependency build. Code highlighting needs no runtime downloads.
+- A matching C++17 compiler/build kit, **CMake 3.24+**, and a native build tool for the first pinned KSyntaxHighlighting/Sonnet Core dependency build. Code highlighting needs no runtime downloads.
+- Linux spelling: `pkg-config` and Hunspell development files at build time, plus installed language dictionaries at runtime.
 - See [installation instructions](docs/install.md); Windows/Linux builds have not been verified on this Mac.
 
 The IBM Plex Mono font is bundled under the SIL Open Font License 1.1; see
@@ -89,7 +92,7 @@ The IBM Plex Mono font is bundled under the SIL Open Font License 1.1; see
 
 For a local build, install the Qt requirements above, a C++17 compiler such as
 `gcc`, `make`, and CMake 3.24+. The scripts bootstrap the pinned standalone
-syntax engine into `.deps/install` if absent (or run `./bin/build-dependencies`
+syntax engine and Sonnet Core/native spelling backend into `.deps/install` if absent (or run `./bin/build-dependencies`
 explicitly). This downloads checksum-verified KDE source archives at build time.
 The build scripts use `qmake6` (or `qmake`), and the tests use QtTest. All projects
 currently use Release to match the private static library, including Windows' CRT.
@@ -116,7 +119,7 @@ app bundles. To open a file with the local Linux build:
 ### Binary distribution status
 
 Local development builds are supported. **No prebuilt release is being published.**
-The engine is MIT, but embedded language definitions have mixed additional terms.
+The syntax engine is MIT, but embedded language definitions have mixed additional terms. Sonnet adds LGPL obligations, including static-library relinking/source requirements; see [Sonnet notices](third_party/sonnet/README.md).
 See [provenance and license/source audit status](third_party/ksyntaxhighlighting/README.md).
 The historical Arch `pkgbuild/PKGBUILD` / `bin/install` packaging route is disabled
 for this fork until that audit and a maintained fork recipe are complete. Upstream

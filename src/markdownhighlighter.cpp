@@ -5,6 +5,7 @@
 #include <QFont>
 #include <QFontMetricsF>
 #include <QSignalBlocker>
+#include <QSet>
 #include <QTextBlock>
 #include <QTextDocument>
 #include <QTextFrame>
@@ -383,7 +384,69 @@ void MarkdownHighlighter::highlightBlock(const QString &text) {
         // heading markers that should be hidden (or hide active ones).
         highlightHeadingMarkers(text);
     }
+    highlightSpelling(text);
     highlightSearch(text);
+}
+
+void MarkdownHighlighter::setSpellingRanges(const QList<Span> &ranges) {
+    QSet<int> affected;
+    const auto addBlocks = [this, &affected](const Span &range) {
+        if (!document() || range.length <= 0)
+            return;
+        const int end = qMin(range.start + range.length, document()->characterCount() - 1);
+        for (QTextBlock block = document()->findBlock(qMax(0, range.start));
+             block.isValid() && block.position() < end; block = block.next())
+            affected.insert(block.position());
+    };
+    int old = 0, next = 0;
+    while (old < m_spellingRanges.size() || next < ranges.size()) {
+        if (old < m_spellingRanges.size() && next < ranges.size()
+                && m_spellingRanges.at(old).start == ranges.at(next).start
+                && m_spellingRanges.at(old).length == ranges.at(next).length) {
+            ++old;
+            ++next;
+        } else if (next == ranges.size() || (old < m_spellingRanges.size()
+                   && m_spellingRanges.at(old).start <= ranges.at(next).start)) {
+            addBlocks(m_spellingRanges.at(old++));
+        } else {
+            addBlocks(ranges.at(next++));
+        }
+    }
+    m_spellingRanges = ranges;
+    if (affected.isEmpty() || !document())
+        return;
+    QTextDocument *doc = document();
+    // Spelling is paint-only: suppress formatting-only contentsChanged so a
+    // source highlighter reply cannot schedule a LivePreview projection. Also
+    // coalesce Quick's synchronous layout callbacks without changing page size
+    // (in particular, never suspend rich object/frame layout with pageSize 0).
+    QSignalBlocker documentSignals(doc);
+    QAbstractTextDocumentLayout *layout = doc->documentLayout();
+    QSignalBlocker layoutSignals(layout);
+    for (int position : std::as_const(affected)) {
+        const QTextBlock block = doc->findBlock(position);
+        if (block.isValid())
+            rehighlightBlock(block);
+    }
+    layout->documentSize(); // finish rich-object layout on the GUI thread
+    layoutSignals.unblock();
+    emit layout->update();
+}
+
+void MarkdownHighlighter::highlightSpelling(const QString &text) {
+    const int base = currentBlock().position();
+    const auto first = std::lower_bound(m_spellingRanges.cbegin(), m_spellingRanges.cend(), base,
+        [](const Span &range, int position) { return range.start + range.length <= position; });
+    for (auto it = first; it != m_spellingRanges.cend() && it->start < base + text.size(); ++it) {
+        const int start = qMax(0, it->start - base);
+        const int end = qMin(int(text.size()), it->start + it->length - base);
+        for (int i = start; i < end; ++i) {
+            QTextCharFormat merged = format(i);
+            merged.setUnderlineStyle(QTextCharFormat::SpellCheckUnderline);
+            merged.setUnderlineColor(QColor(QStringLiteral("#d74646")));
+            setFormat(i, 1, merged);
+        }
+    }
 }
 
 // Three or more backticks or tildes, indented at most three spaces. An info

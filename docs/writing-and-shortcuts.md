@@ -98,6 +98,26 @@ In **Edit**, right-click a standalone image (or its source paragraph) for:
 
 The keyboard Menu key or **Shift+F10** opens the same menu with the caret in an image paragraph. This is optional after paste; no naming dialog interrupts normal screenshot paste. Inline images inside text/tables are outside this small context menu's scope.
 
+## Minimal spelling assistance
+
+In **Edit**, right-click prose (or use **Shift+F10/Menu** at the caret). The
+context menu's **Spelling** submenu has **Check spelling** and the installed
+language choices. Pick the dictionary for your writing language; missing
+languages must be installed through the OS or Linux package manager.
+
+Flagged words offer suggestions, **Ignore for this session** and **Learn word**.
+Accepting a suggestion is one undoable Markdown edit. Learn changes that
+backend's personal dictionary and may affect other apps using it; it is not
+needed to dismiss a one-off word. There is no autocorrect or automatic language
+selection. Read has no spelling squiggles.
+
+Sonnet Core uses NSSpellChecker on macOS, ISpellChecker on Windows and installed
+Hunspell dictionaries on Linux. Code fences/inline code, Mermaid, URLs and image
+paths are excluded. Rendered objects are never underlined. See the
+[spelling guide](spellchecking.md) and [example](spellchecking-example.md).
+Windows/Linux runtime verification remains pending; macOS uses its installed
+system service, with no dictionary download.
+
 ## Optional Mermaid
 
 Mermaid is not built into Qt. If **`mmdc`** (Mermaid CLI) is already installed and available on the app's **PATH**, the fork can render a constrained set of local diagrams asynchronously. Check from the terminal:

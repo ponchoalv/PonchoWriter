@@ -8,12 +8,14 @@
 
 class MarkdownHighlighter;
 class MermaidRenderer;
+class SpellingController;
 
 // The backend owns source and its undo stack. This document is disposable UI.
 class LivePreview : public QObject {
     Q_OBJECT
     Q_PROPERTY(bool readMode READ readMode WRITE setReadMode NOTIFY readModeChanged)
     Q_PROPERTY(QObject *resolver READ resolver WRITE setResolver)
+    Q_PROPERTY(QObject *spelling READ spelling WRITE setSpelling)
 public:
     struct Segment {
         int sourceStart, sourceEnd, viewStart, viewEnd;
@@ -24,12 +26,16 @@ public:
     void setReadMode(bool read);
     QObject *resolver() const { return m_resolver; }
     void setResolver(QObject *resolver) { m_resolver = resolver; }
+    QObject *spelling() const;
+    void setSpelling(QObject *spelling);
     Q_INVOKABLE void attach(QObject *sourceItem, QObject *viewItem);
     Q_INVOKABLE void refresh();
     Q_INVOKABLE void copySource();
     Q_INVOKABLE void prepareEdit();
     Q_INVOKABLE void setSearchHighlight(const QString &query, int currentMatchStart);
     Q_INVOKABLE QString imagePathAt(int viewPosition) const;
+    Q_INVOKABLE QVariantMap spellingWordAt(int viewPosition);
+    Q_INVOKABLE QVariantMap spellingWordAtPoint(qreal x, qreal y);
     Q_INVOKABLE int sourcePosition(int viewPosition) const;
     Q_INVOKABLE int viewPosition(int sourcePosition) const;
     // Public pure mapping helpers are also used by the isolated tests.
@@ -49,6 +55,7 @@ private:
     bool eventFilter(QObject *object, QEvent *event) override;
     void schedule();
     void rebuild();
+    void refreshSpelling();
     void select(QObject *item, int anchor, int caret);
     QUrl resolve(const QString &path) const;
     QImage imageFor(const PreviewBlocks::Block &block);
@@ -58,6 +65,7 @@ private:
     QPointer<QObject> m_sourceItem, m_viewItem, m_resolver;
     QPointer<QTextDocument> m_source, m_view;
     MarkdownHighlighter *m_highlighter = nullptr;
+    QPointer<SpellingController> m_spelling;
     MermaidRenderer *m_mermaid = nullptr;
     QList<Segment> m_segments;
     QList<QUrl> m_resourceNames;

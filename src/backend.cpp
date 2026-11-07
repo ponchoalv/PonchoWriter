@@ -1,4 +1,5 @@
 #include "backend.h"
+#include "spellingcontroller.h"
 #include "attachmenthelper.h"
 
 #include <QClipboard>
@@ -123,7 +124,21 @@ QString Backend::normalizedLinkUrl(const QString &clipboardText) {
     return url.toString();
 }
 
-Backend::Backend(QObject *parent) : QObject(parent) {
+Backend::Backend(QObject *parent) : Backend(std::unique_ptr<SpellingDictionary>(), parent) {}
+
+Backend::Backend(std::unique_ptr<SpellingDictionary> dictionary, QObject *parent) : QObject(parent) {
+    connect(QGuiApplication::clipboard(), &QClipboard::dataChanged, this, &Backend::clipboardChanged);
+    m_spelling = dictionary ? new SpellingController(std::move(dictionary), this)
+                            : new SpellingController(this);
+    connect(m_spelling, &SpellingController::rangesChanged, this, [this] {
+        if (!m_highlighter)
+            return;
+        QList<MarkdownHighlighter::Span> spans;
+        for (const auto &range : m_spelling->ranges())
+            spans.append({range.start, range.length});
+        m_highlighter->setSpellingRanges(spans);
+    });
+    connect(m_spelling, &SpellingController::operationFailed, this, &Backend::setStatus);
     // A settings file truncated by a crash reads back as an empty value, and
     // both that and a NaN would clamp to the smallest size rather than fall
     // back to the default.
@@ -269,6 +284,16 @@ void Backend::setTextZoom(qreal zoom) {
     emit textScaleChanged();
 }
 
+QObject *Backend::spelling() const { return m_spelling; }
+
+bool Backend::replaceSpelling(const QVariantMap &token, const QString &replacement) {
+    if (!m_spelling->validate(token) || replacement.isEmpty())
+        return false;
+    const int start = token.value(QStringLiteral("start")).toInt();
+    replaceRange(start, start + token.value(QStringLiteral("length")).toInt(), replacement);
+    return true;
+}
+
 void Backend::attachDocument(QObject *textDocument) {
     auto *quickDocument = qobject_cast<QQuickTextDocument *>(textDocument);
     if (!quickDocument || !quickDocument->textDocument()) {
@@ -285,6 +310,7 @@ void Backend::attachDocument(QObject *textDocument) {
     m_highlighter->setTheme(m_darkMode, m_themeBackground, m_themeForeground, m_themeAccent,
                             m_themeCodeBackground);
     m_highlighter->setCaret(m_caretPosition);
+    m_spelling->attach(m_document);
 
     connect(m_document, &QTextDocument::contentsChange, this,
             [this](int position, int, int charsAdded) {
@@ -768,6 +794,12 @@ QString Backend::clipboardUrl() const {
         return {};
 
     return normalizedLinkUrl(mimeData->text());
+}
+
+bool Backend::clipboardImageAvailable() const {
+    const QClipboard *clipboard = QGuiApplication::clipboard();
+    const QMimeData *mime = clipboard ? clipboard->mimeData() : nullptr;
+    return mime && mime->hasImage();
 }
 
 QString Backend::clipboardText() const {

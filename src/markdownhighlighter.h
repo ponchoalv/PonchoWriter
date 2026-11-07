@@ -28,6 +28,10 @@ public:
         int length;
     };
 
+    // Cache-only UTF-16 document ranges. Repaints the symmetric difference's
+    // blocks only; does not mutate document text or its undo history.
+    void setSpellingRanges(const QList<Span> &ranges);
+
     enum class InlineKind { Bold, Italic, Strikethrough, Link };
 
     // Carried from block to block so a fenced run of code knows it is inside
@@ -79,6 +83,8 @@ private:
     void highlightHeadingMarkers(const QString &text);
     void highlightInline(const QString &text);
     void highlightSearch(const QString &text);
+    void highlightSpelling(const QString &text);
+    QList<Span> m_spellingRanges;
 
     bool m_darkMode = true;
     QString m_customBackground;

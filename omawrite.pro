@@ -6,17 +6,22 @@ linux: QT += dbus
 CONFIG += c++17 release
 TARGET = omawrite
 include(syntax-highlighting.pri)
+include(spellchecking.pri)
 
 TEMPLATE = app
 macx {
     ICON = assets/omawrite.icns
     syntaxNotices.files = $$PWD/third_party/ksyntaxhighlighting
     syntaxNotices.path = Contents/Resources/third_party
-    QMAKE_BUNDLE_DATA += syntaxNotices
+    spellNotices.files = $$PWD/third_party/sonnet
+    spellNotices.path = Contents/Resources/third_party
+    QMAKE_BUNDLE_DATA += syntaxNotices spellNotices
 }
 
 HEADERS += \
     src/backend.h \
+    src/spellingcontroller.h \
+    src/spellingprose.h \
     src/cli.h \
     src/livepreview.h \
     src/mermaidrenderer.h \
@@ -27,6 +32,8 @@ HEADERS += \
 SOURCES += \
     src/main.cpp \
     src/backend.cpp \
+    src/spellingcontroller.cpp \
+    src/spellingprose.cpp \
     src/cli.cpp \
     src/livepreview.cpp \
     src/mermaidrenderer.cpp \

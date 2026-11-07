@@ -26,6 +26,7 @@
 #include "backend.h"
 #include "markdownhighlighter.h"
 #include "livepreview.h"
+#include "spellingcontroller.h"
 
 // Counts QML "Binding loop detected" warnings while it is alive, forwarding
 // everything to the previous handler so test output stays intact.
@@ -218,7 +219,108 @@ private slots:
         }
     }
 
+    void spellingMenuUsesTheNativeDictionaryWithoutChangingCodeOrUndo() {
+        const QString mainQmlPath = QFINDTESTDATA("../src/Main.qml");
+        QVERIFY(!mainQmlPath.isEmpty());
+        QTemporaryDir recovery;
+        QVERIFY(recovery.isValid());
+        Backend backend;
+        backend.m_recoveryPath = recovery.filePath(QStringLiteral("recovery.json"));
+        auto *spelling = qobject_cast<SpellingController *>(backend.spelling());
+        QVERIFY(spelling);
+        QString english;
+        for (const QVariant &item : spelling->languages()) {
+            const QString id = item.toMap().value(QStringLiteral("id")).toString();
+            if (id == QLatin1String("en") || id == QLatin1String("en_US")) {
+                english = id;
+                break;
+            }
+        }
+        if (english.isEmpty()) QSKIP("This native integration check needs an installed English spelling dictionary.");
+        spelling->setLanguage(english);
+        spelling->setEnabled(true);
+        QVERIFY(spelling->available());
+        QQmlEngine engine;
+        engine.rootContext()->setContextProperty(QStringLiteral("backend"), &backend);
+        QQmlComponent component(&engine, QUrl::fromLocalFile(mainQmlPath));
+        QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+        QScopedPointer<QObject> object(component.create());
+        auto *window = qobject_cast<QQuickWindow *>(object.data());
+        QVERIFY(window);
+        window->show();
+        QVERIFY(QTest::qWaitForWindowExposed(window));
+        QObject *source = window->findChild<QObject *>(QStringLiteral("sourceEditor"));
+        QObject *view = window->findChild<QObject *>(QStringLiteral("previewEditor"));
+        QVERIFY(source && view);
+        const QString markdown = QString::fromUtf8("dictionnaryy\n\n```python\ndictionnaryy\n```\n\n😀 dictionnaryy\n");
+        source->setProperty("text", markdown);
+        source->setProperty("cursorPosition", 4);
+        QTRY_COMPARE_WITH_TIMEOUT(spelling->ranges().size(), 2, 10000);
+        auto *quick = qvariant_cast<QQuickTextDocument *>(view->property("textDocument"));
+        QVERIFY(quick);
+        auto spelledBlocks = [&]() {
+            int count = 0;
+            for (QTextBlock block = quick->textDocument()->begin(); block.isValid(); block = block.next()) {
+                bool spelled = false;
+                for (const auto &range : block.layout()->formats())
+                    spelled |= range.format.underlineStyle() == QTextCharFormat::SpellCheckUnderline;
+                count += spelled ? 1 : 0;
+            }
+            return count;
+        };
+        QTRY_COMPARE_WITH_TIMEOUT(spelledBlocks(), 2, 10000);
+        QObject *menu = window->findChild<QObject *>(QStringLiteral("editorContextMenu"));
+        QVERIFY(menu);
+        QRectF endOfWord;
+        QVERIFY(QMetaObject::invokeMethod(view, "positionToRectangle", Q_RETURN_ARG(QRectF, endOfWord), Q_ARG(int, 11)));
+        auto *viewItem = qobject_cast<QQuickItem *>(view);
+        QVERIFY(viewItem);
+        const QPointF blank(endOfWord.x() + 50, endOfWord.center().y());
+        QTest::mouseClick(window, Qt::RightButton, Qt::NoModifier, viewItem->mapToScene(blank).toPoint());
+        QTRY_VERIFY(menu->property("visible").toBool());
+        QVERIFY(!menu->property("hasWord").toBool());
+        QVERIFY(QMetaObject::invokeMethod(menu, "close"));
+        QTRY_VERIFY(!menu->property("visible").toBool());
+        view->setProperty("cursorPosition", 4);
+        editorKeyClick(window, Qt::Key_F10, Qt::ShiftModifier);
+        QTRY_VERIFY(menu->property("visible").toBool());
+        QObject *suggestion = nullptr;
+        auto findSuggestion = [&]() {
+            for (QObject *child : menu->findChildren<QObject *>()) {
+                if (child->property("text").toString() == QLatin1String("dictionary")
+                    && child->metaObject()->indexOfSignal("triggered()") >= 0) {
+                    suggestion = child;
+                    return true;
+                }
+            }
+            return false;
+        };
+        QTRY_VERIFY_WITH_TIMEOUT(findSuggestion(), 10000);
+        QVERIFY(QMetaObject::invokeMethod(suggestion, "triggered"));
+        QTRY_VERIFY2(source->property("text").toString().startsWith(QLatin1String("dictionary\n")),
+                     qPrintable(source->property("text").toString()));
+        QVERIFY(source->property("text").toString().contains(QLatin1String("```python\ndictionnaryy\n```")));
+        QVERIFY(QMetaObject::invokeMethod(menu, "close"));
+        QTRY_VERIFY(!menu->property("visible").toBool());
+        editorKeyClick(window, Qt::Key_Z, Qt::ControlModifier);
+        QCOMPARE(source->property("text").toString(), markdown);
+        QVERIFY(QMetaObject::invokeMethod(window, "toggleReadMode"));
+        QVERIFY(window->property("readMode").toBool());
+        for (QTextBlock block = quick->textDocument()->begin(); block.isValid(); block = block.next()) {
+            for (const auto &range : block.layout()->formats())
+                QVERIFY(range.format.underlineStyle() != QTextCharFormat::SpellCheckUnderline);
+        }
+        QCOMPARE(source->property("text").toString(), markdown);
+    }
+
+    void pastesScreenshotThroughVisibleEditorAndPreservesSourceInReadMode_data() {
+        QTest::addColumn<bool>("contextMenu");
+        QTest::newRow("keyboard") << false;
+        QTest::newRow("context-menu") << true;
+    }
+
     void pastesScreenshotThroughVisibleEditorAndPreservesSourceInReadMode() {
+        QFETCH(bool, contextMenu);
         const QString mainQmlPath = QFINDTESTDATA("../src/Main.qml");
         QVERIFY(!mainQmlPath.isEmpty());
         QTemporaryDir recovery;
@@ -255,7 +357,25 @@ private slots:
         QImage image(80, 40, QImage::Format_ARGB32);
         image.fill(Qt::blue);
         QGuiApplication::clipboard()->setImage(image);
-        editorKeyClick(window, Qt::Key_V, Qt::ControlModifier);
+        if (contextMenu) {
+            editorKeyClick(window, Qt::Key_F10, Qt::ShiftModifier);
+            QObject *context = window->findChild<QObject *>(QStringLiteral("editorContextMenu"));
+            QVERIFY(context);
+            QTRY_VERIFY(context->property("visible").toBool());
+            QObject *paste = nullptr;
+            for (QObject *child : context->findChildren<QObject *>()) {
+                if (child->property("text").toString() == QLatin1String("Paste")
+                    && child->metaObject()->indexOfSignal("triggered()") >= 0)
+                    paste = child;
+            }
+            QVERIFY(paste);
+            QVERIFY(paste->property("enabled").toBool());
+            QVERIFY(QMetaObject::invokeMethod(paste, "triggered"));
+            QVERIFY(QMetaObject::invokeMethod(context, "close"));
+            QTRY_VERIFY(!context->property("visible").toBool());
+        } else {
+            editorKeyClick(window, Qt::Key_V, Qt::ControlModifier);
+        }
         QString markdown = source->property("text").toString();
         QVERIFY(markdown.startsWith(QStringLiteral("![Screenshot](img/")));
         QString path = markdown.mid(14, markdown.size() - 15);
@@ -311,17 +431,29 @@ private slots:
             QTest::mouseClick(window, Qt::RightButton, Qt::NoModifier, viewItem->mapToScene(local).toPoint());
             QTRY_VERIFY(menu->property("visible").toBool());
             QCOMPARE(menu->property("imagePath").toString(), path);
+            QSignalSpy closed(menu, SIGNAL(closed()));
+            QVERIFY(closed.isValid());
             QVERIFY(QMetaObject::invokeMethod(menu, "close"));
-            QTRY_VERIFY(!menu->property("visible").toBool());
+            QTRY_VERIFY(!closed.isEmpty()); // Wait until the native popup releases its grab.
+            QVERIFY(!menu->property("visible").toBool());
         }
         viewItem->forceActiveFocus();
         const QString complete = source->property("text").toString();
-        QTest::keyClick(window, Qt::Key_M, Qt::ControlModifier | Qt::ShiftModifier);
+        const auto toggleMode = [&] {
+            // Cocoa may not grant OS activation after synthetic popup dismissal.
+            // This attachment test still exercises the real button handler;
+            // separate focused tests cover the physical mode shortcut.
+            if (!window->isActive() && QGuiApplication::platformName() == QLatin1String("cocoa"))
+                return QMetaObject::invokeMethod(window, "toggleReadMode");
+            QTest::keyClick(window, Qt::Key_M, Qt::ControlModifier | Qt::ShiftModifier);
+            return true;
+        };
+        QVERIFY(toggleMode());
         QTRY_VERIFY(window->property("readMode").toBool());
         QTest::keyClick(window, Qt::Key_X);
         QTest::keyClick(window, Qt::Key_B, Qt::ControlModifier);
         QCOMPARE(source->property("text").toString(), complete);
-        QTest::keyClick(window, Qt::Key_M, Qt::ControlModifier | Qt::ShiftModifier);
+        QVERIFY(toggleMode());
         QTRY_VERIFY(!window->property("readMode").toBool());
         QCOMPARE(source->property("text").toString(), complete);
         QTemporaryDir dir;

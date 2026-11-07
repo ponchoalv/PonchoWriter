@@ -15,6 +15,8 @@
 #include <memory>
 
 class MarkdownHighlighter;
+class SpellingController;
+class SpellingDictionary;
 class QFont;
 class QTextDocument;
 class QWindow;
@@ -36,9 +38,13 @@ class Backend : public QObject {
     Q_PROPERTY(QString themeSelectionForeground READ themeSelectionForeground NOTIFY themeColorsChanged)
     Q_PROPERTY(QString editorFont READ editorFont WRITE setEditorFont NOTIFY editorFontChanged)
     Q_PROPERTY(QStringList availableFonts READ availableFonts CONSTANT)
+    Q_PROPERTY(QObject *spelling READ spelling CONSTANT)
+    Q_PROPERTY(bool clipboardImageAvailable READ clipboardImageAvailable NOTIFY clipboardChanged)
 
 public:
     explicit Backend(QObject *parent = nullptr);
+    // Deterministic dictionary seam for isolated source/action integration tests.
+    explicit Backend(std::unique_ptr<SpellingDictionary> dictionary, QObject *parent = nullptr);
     ~Backend() override;
 
     void setParentWindow(QWindow *window);
@@ -71,6 +77,8 @@ public:
     static QString tomlValue(const QString &text);
     static QFont printFont(const QFont &editorFont, qreal screenDpi);
 
+    QObject *spelling() const;
+    Q_INVOKABLE bool replaceSpelling(const QVariantMap &token, const QString &replacement);
     Q_INVOKABLE void attachDocument(QObject *textDocument);
     Q_INVOKABLE void openDialog();
     Q_INVOKABLE void open(const QUrl &url);
@@ -90,6 +98,7 @@ public:
     Q_INVOKABLE void newWindow();
     Q_INVOKABLE QString clipboardUrl() const;
     Q_INVOKABLE QString clipboardText() const;
+    bool clipboardImageAvailable() const;
     // Returns Markdown for the caller to insert in the editor's undo stack.
     Q_INVOKABLE QString pasteClipboardImage(const QString &proposedRelativePath = QString());
     // Local files only; an empty URL means unavailable or disallowed.
@@ -112,6 +121,7 @@ public:
     Q_INVOKABLE void documentFontChanged();
 
 signals:
+    void clipboardChanged();
     void fileUrlChanged();
     void attachmentUrlsChanged();
     void modifiedChanged();
@@ -191,6 +201,7 @@ private:
     QPointer<QTextDocument> m_document;
     QPointer<QWindow> m_parentWindow;
     QPointer<MarkdownHighlighter> m_highlighter;
+    SpellingController *m_spelling = nullptr;
     int m_caretPosition = 0;
     QString m_lastDocumentText;
     QByteArray m_lastKnownFileContents;

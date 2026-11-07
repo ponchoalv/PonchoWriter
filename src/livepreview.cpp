@@ -1,4 +1,5 @@
 #include "livepreview.h"
+#include "spellingcontroller.h"
 #include "markdownhighlighter.h"
 #include "mermaidrenderer.h"
 #include "readcodehighlighting.h"
@@ -141,6 +142,100 @@ void styleReadDocument(QTextDocument &document, const QString &source,
 
 LivePreview::LivePreview(QObject *parent) : QObject(parent), m_mermaid(new MermaidRenderer(this)) {
     connect(m_mermaid, &MermaidRenderer::ready, this, &LivePreview::refresh);
+}
+
+QObject *LivePreview::spelling() const { return m_spelling; }
+void LivePreview::setSpelling(QObject *spelling) {
+    auto *controller = qobject_cast<SpellingController *>(spelling);
+    if (m_spelling == controller)
+        return;
+    if (m_spelling)
+        disconnect(m_spelling, nullptr, this, nullptr);
+    m_spelling = controller;
+    if (m_spelling)
+        connect(m_spelling, &SpellingController::rangesChanged, this, &LivePreview::refreshSpelling);
+    refreshSpelling();
+}
+QVariantMap LivePreview::spellingWordAt(int position) {
+    if (!m_spelling || m_readMode || m_composing)
+        return {};
+    for (const auto &segment : m_segments) {
+        if (position < segment.viewStart || position >= segment.viewEnd)
+            continue;
+        if (segment.object)
+            return {};
+        const auto token = m_spelling->wordAt(segment.sourceStart + position - segment.viewStart);
+        const int from = token.value(QStringLiteral("start"), -1).toInt();
+        const int to = from + token.value(QStringLiteral("length")).toInt();
+        return from >= segment.sourceStart && to <= segment.sourceEnd ? token : QVariantMap();
+    }
+    // Keyboard menu at the final insertion point is still useful.
+    if (!m_segments.isEmpty() && !m_segments.last().object && position == m_segments.last().viewEnd)
+        return m_spelling->wordAt(m_segments.last().sourceEnd);
+    return {};
+}
+
+QVariantMap LivePreview::spellingWordAtPoint(qreal x, qreal y) {
+    if (!m_view || !m_viewItem || m_readMode || m_composing)
+        return {};
+    const QSizeF size = m_view->documentLayout()->documentSize();
+    const qreal left = m_viewItem->property("leftPadding").toReal();
+    const qreal top = m_viewItem->property("topPadding").toReal();
+    qreal dx = m_viewItem->property("width").toReal() - left
+        - m_viewItem->property("rightPadding").toReal() - size.width();
+    qreal dy = m_viewItem->property("height").toReal() - top
+        - m_viewItem->property("bottomPadding").toReal() - size.height();
+    const int horizontal = m_viewItem->property("effectiveHorizontalAlignment").toInt();
+    const int vertical = m_viewItem->property("verticalAlignment").toInt();
+    dx = horizontal == Qt::AlignHCenter ? dx / 2 : horizontal == Qt::AlignRight ? dx : 0;
+    dy = vertical == Qt::AlignVCenter ? dy / 2 : vertical == Qt::AlignBottom ? dy : 0;
+    const QPointF point(x - left - qMax(qreal(0), dx), y - top - dy);
+    const int hit = m_view->documentLayout()->hitTest(point, Qt::ExactHit);
+    if (hit < 0)
+        return {};
+    const QTextBlock block = m_view->findBlock(hit);
+    const QTextLayout *layout = block.layout();
+    if (!layout)
+        return {};
+    const QPointF local = point - layout->position();
+    for (int i = 0; i < layout->lineCount(); ++i) {
+        const QTextLine line = layout->lineAt(i);
+        if (!line.naturalTextRect().contains(local))
+            continue;
+        const int position = block.position() + line.xToCursor(local.x(), QTextLine::CursorOnCharacter);
+        const QVariantMap token = spellingWordAt(position);
+        const int source = sourcePosition(position);
+        const int start = token.value(QStringLiteral("start"), -1).toInt();
+        return source >= start && source < start + token.value(QStringLiteral("length")).toInt()
+            ? token : QVariantMap();
+    }
+    return {};
+}
+
+void LivePreview::refreshSpelling() {
+    if (!m_highlighter || m_composing)
+        return;
+    QList<MarkdownHighlighter::Span> projected;
+    if (m_spelling && !m_readMode) {
+        int segmentIndex = 0;
+        for (const auto &range : m_spelling->ranges()) {
+            const int end = range.start + range.length;
+            while (segmentIndex < m_segments.size() && m_segments.at(segmentIndex).sourceEnd <= range.start)
+                ++segmentIndex;
+            for (int i = segmentIndex; i < m_segments.size() && m_segments.at(i).sourceStart < end; ++i) {
+                const auto &segment = m_segments.at(i);
+                if (segment.object)
+                    continue; // Never map an endpoint onto a rendered object's glyph.
+                const int from = qMax(range.start, segment.sourceStart);
+                const int to = qMin(end, segment.sourceEnd);
+                if (from < to)
+                    projected.append({segment.viewStart + from - segment.sourceStart, to - from});
+            }
+        }
+    }
+    // Deliberately no schedule(), refresh(), or rebuild(): a spelling reply
+    // changes only the affected highlighter blocks, not the projection.
+    m_highlighter->setSpellingRanges(projected);
 }
 
 int LivePreview::toSource(const QList<Segment> &segments, int p) {
@@ -561,6 +656,7 @@ void LivePreview::rebuild() {
         m_highlighter->setSelection(viewPosition(m_anchor), viewPosition(m_caret));
         if (refreshFont)
             m_highlighter->refreshFont();
+        refreshSpelling();
     };
     if (key == m_projectionKey) {
         styleProjection(false);
@@ -667,8 +763,12 @@ bool LivePreview::eventFilter(QObject *object, QEvent *event) {
         if (!m_composing)
             prepareEdit();
         m_composing = !input->preeditString().isEmpty();
-        if (!m_composing)
+        if (m_spelling)
+            m_spelling->setComposing(m_composing);
+        if (!m_composing) {
+            refreshSpelling();
             schedule();
+        }
     }
     return QObject::eventFilter(object, event);
 }

@@ -62,6 +62,7 @@ ApplicationWindow {
         id: livePreview
         objectName: "livePreviewController"
         resolver: backend
+        spelling: backend.spelling
         onProjectionAboutToChange: {
             win.projectionChanging = true;
             win.useRelativeScrollAnchor = readMode || win.lastProjectionReadMode;
@@ -111,6 +112,116 @@ ApplicationWindow {
         if (!path.length) return false;
         attachmentMenu.openFor(path, px, py);
         return true;
+    }
+
+    // Pointer hit-testing must not turn blank space into the nearest word.
+    // Keyboard menus intentionally use the insertion point instead.
+    function showEditorMenuAt(px, py, token) {
+        if (win.readMode) return false;
+        if (openAttachmentMenuAt(px, py)) return true;
+        editorContextMenu.word = token;
+        editorContextMenu.popup(px, py);
+        return true;
+    }
+    function openEditorMenuAt(px, py) {
+        return showEditorMenuAt(px, py, livePreview.spellingWordAtPoint(px, py));
+    }
+    function openEditorMenuForCaret() {
+        var box = presentation.cursorRectangle;
+        return showEditorMenuAt(box.x, box.y + box.height / 2,
+                                livePreview.spellingWordAt(presentation.cursorPosition));
+    }
+
+    Menu {
+        id: editorContextMenu
+        objectName: "editorContextMenu"
+        parent: presentation
+        property var word: ({})
+        property bool hasWord: word.word !== undefined
+
+        Instantiator {
+            model: editorContextMenu.hasWord ? editorContextMenu.word.suggestions : []
+            delegate: MenuItem {
+                required property string modelData
+                text: modelData
+                onTriggered: backend.replaceSpelling(editorContextMenu.word, modelData)
+            }
+            onObjectAdded: (index, object) => editorContextMenu.insertItem(index, object)
+            onObjectRemoved: (index, object) => editorContextMenu.removeItem(object)
+        }
+        MenuItem {
+            visible: editorContextMenu.hasWord
+            enabled: false
+            height: visible ? implicitHeight : 0
+            text: editorContextMenu.word.pending ? "Finding suggestions…" : "Spelling suggestions"
+        }
+        MenuItem {
+            objectName: "ignoreSpellingAction"
+            visible: editorContextMenu.hasWord
+            height: visible ? implicitHeight : 0
+            text: "Ignore for this session"
+            onTriggered: backend.spelling.ignore(editorContextMenu.word)
+        }
+        MenuItem {
+            objectName: "learnSpellingAction"
+            visible: editorContextMenu.hasWord
+            height: visible ? implicitHeight : 0
+            text: "Learn word"
+            onTriggered: backend.spelling.learn(editorContextMenu.word)
+        }
+        MenuSeparator { visible: editorContextMenu.hasWord; height: visible ? implicitHeight : 0 }
+        MenuItem { text: "Undo"; enabled: editor.canUndo; onTriggered: editor.undo() }
+        MenuItem { text: "Redo"; enabled: editor.canRedo; onTriggered: editor.redo() }
+        MenuSeparator {}
+        MenuItem { text: "Cut"; enabled: presentation.selectedText.length > 0; onTriggered: editor.cut() }
+        MenuItem { text: "Copy"; enabled: presentation.selectedText.length > 0; onTriggered: livePreview.copySource() }
+        MenuItem {
+            text: "Paste"
+            enabled: presentation.canPaste || backend.clipboardImageAvailable
+            onTriggered: { livePreview.prepareEdit(); editor.pasteFromClipboard(); }
+        }
+        MenuItem { text: "Select All"; onTriggered: presentation.selectAll() }
+        MenuSeparator {}
+        Menu {
+            title: "Spelling"
+            objectName: "spellingMenu"
+            MenuItem {
+                objectName: "spellingEnabledAction"
+                text: "Check spelling"
+                checkable: true
+                checked: backend.spelling.enabled
+                onTriggered: backend.spelling.enabled = !backend.spelling.enabled
+            }
+            MenuItem {
+                text: backend.spelling.languages.length ? "Choose dictionary" : "No dictionaries installed"
+                enabled: false
+            }
+            Instantiator {
+                model: backend.spelling.languages
+                delegate: MenuItem {
+                    required property var modelData
+                    text: modelData.label
+                    checkable: true
+                    checked: backend.spelling.language === modelData.id
+                    onTriggered: backend.spelling.language = modelData.id
+                }
+                onObjectAdded: (index, object) => spellingLanguageMenu.insertItem(index + 2, object)
+                onObjectRemoved: (index, object) => spellingLanguageMenu.removeItem(object)
+            }
+            id: spellingLanguageMenu
+        }
+        Connections {
+            target: backend.spelling
+            function onMenuChanged() {
+                if (!editorContextMenu.visible || !editorContextMenu.hasWord) return;
+                if (!backend.spelling.validate(editorContextMenu.word)) {
+                    editorContextMenu.word = ({});
+                    return;
+                }
+                editorContextMenu.word = backend.spelling.wordAt(editorContextMenu.word.start);
+            }
+        }
+        onClosed: presentation.forceActiveFocus()
     }
 
     function toggleReadMode() {
@@ -1029,6 +1140,14 @@ ApplicationWindow {
                     return true;
                 }
 
+                function pasteFromClipboard() {
+                    var imageMarkdown = backend.pasteClipboardImage();
+                    if (imageMarkdown.length > 0)
+                        replaceSelectionWith(imageMarkdown);
+                    else if (!pasteClipboardUrlAsMarkdownLink())
+                        pasteClipboardAsPlainText();
+                }
+
                 function handleKey(event) {
                     var pasteKey = (event.key === Qt.Key_V)
                         && (event.modifiers & Qt.ControlModifier)
@@ -1037,11 +1156,7 @@ ApplicationWindow {
                         && (event.modifiers & Qt.ShiftModifier)
                         && !(event.modifiers & (Qt.ControlModifier | Qt.AltModifier | Qt.MetaModifier));
                     if (pasteKey || shiftInsert) {
-                        var imageMarkdown = backend.pasteClipboardImage();
-                        if (imageMarkdown.length > 0)
-                            replaceSelectionWith(imageMarkdown);
-                        else if (!pasteClipboardUrlAsMarkdownLink())
-                            pasteClipboardAsPlainText();
+                        pasteFromClipboard();
                         event.accepted = true;
                         return;
                     }
@@ -1173,7 +1288,7 @@ ApplicationWindow {
                     anchors.fill: parent
                     acceptedButtons: win.readMode ? Qt.NoButton : Qt.RightButton
                     onPressed: (mouse) => {
-                        mouse.accepted = win.openAttachmentMenuAt(mouse.x, mouse.y);
+                        mouse.accepted = win.openEditorMenuAt(mouse.x, mouse.y);
                     }
                     hoverEnabled: true
                     cursorShape: Qt.IBeamCursor
@@ -1204,8 +1319,7 @@ ApplicationWindow {
                 Keys.onPressed: function(event) {
                     if (!win.readMode && (event.key === Qt.Key_Menu
                             || (event.key === Qt.Key_F10 && (event.modifiers & Qt.ShiftModifier)))) {
-                        var box = presentation.cursorRectangle;
-                        if (win.openAttachmentMenuAt(box.x, box.y + box.height / 2)) {
+                        if (win.openEditorMenuForCaret()) {
                             event.accepted = true;
                             return;
                         }

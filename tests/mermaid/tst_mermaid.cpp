@@ -47,7 +47,11 @@ private slots:
         const QString script = dir.filePath("mmdc");
         QFile file(script);
         QVERIFY(file.open(QIODevice::WriteOnly));
-        file.write("#!/bin/sh\ncp \"$OMAWRITE_TEST_PNG\" \"$4\"\n");
+        // CLI 12 rejects the old viewport-width switches. Fail rather than
+        // let a permissive fake renderer conceal this compatibility bug.
+        file.write("#!/bin/sh\nfor arg in \"$@\"; do\n"
+                   "case \"$arg\" in -w|--width) echo 'unknown option' >&2; exit 1;; esac\n"
+                   "done\ncp \"$OMAWRITE_TEST_PNG\" \"$4\"\n");
         file.close();
         QVERIFY(file.setPermissions(QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner));
         qputenv("PATH", dir.path().toUtf8() + ":" + previousPath);

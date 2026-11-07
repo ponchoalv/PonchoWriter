@@ -130,8 +130,9 @@ void MermaidRenderer::startNext() {
         QStringLiteral("-o"), m_directory->filePath(QStringLiteral("output.png")),
         QStringLiteral("-c"), config.fileName(),
         QStringLiteral("-t"), m_current.dark ? QStringLiteral("dark") : QStringLiteral("default"),
-        QStringLiteral("-b"), QStringLiteral("transparent"),
-        QStringLiteral("-w"), QString::number(m_current.width)});
+        // Do not pass the legacy -w/--width option: Mermaid CLI 12 removed
+        // it. Qt bounds/scales the decoded result to m_current.width below.
+        QStringLiteral("-b"), QStringLiteral("transparent")});
     m_process.start();
     m_timeout.start();
 }

@@ -1,5 +1,7 @@
 QT += core gui concurrent quick testlib
 CONFIG += testcase c++17
+include(../syntax-highlighting.pri)
+
 TEMPLATE = app
 TARGET = tst_omawrite
 

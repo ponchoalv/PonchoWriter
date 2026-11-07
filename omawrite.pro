@@ -5,8 +5,15 @@ linux: QT += dbus
 
 CONFIG += c++17 release
 TARGET = omawrite
+include(syntax-highlighting.pri)
+
 TEMPLATE = app
-macx: ICON = assets/omawrite.icns
+macx {
+    ICON = assets/omawrite.icns
+    syntaxNotices.files = $$PWD/third_party/ksyntaxhighlighting
+    syntaxNotices.path = Contents/Resources/third_party
+    QMAKE_BUNDLE_DATA += syntaxNotices
+}
 
 HEADERS += \
     src/backend.h \

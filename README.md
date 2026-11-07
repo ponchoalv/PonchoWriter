@@ -7,13 +7,15 @@ This is the [ponchoalv fork](https://github.com/ponchoalv/omawrite) of
 [writing and shortcut guide](docs/writing-and-shortcuts.md),
 [native preview design](docs/live-preview-design.md),
 [example document](docs/preview-example.md), and
-[test guide](docs/testing.md), and
+[test guide](docs/testing.md),
+[language highlighting guide](docs/syntax-highlighting.md), and
 [Windows, macOS and Linux installation guide](docs/install.md).
 
 ## Fork additions
 
 - Native Edit/Read toggle with inactive table/local-image previews and caret-aware heading markers. Markdown stays the source of truth with one undo history.
 - Clipboard screenshot paste, durable recovery-safe staging, `img/` materialization and collision-safe attachment handling across Save As.
+- Theme-aware language-tagged code-fence highlighting in Edit and Read, using standalone KSyntaxHighlighting rather than Kate.
 - Optional constrained Mermaid rendering through an already-installed external `mmdc`; no embedded WebEngine or automatic runtime downloads.
 - macOS F1 key labels, nonconflicting Replace/fullscreen shortcuts and a bundled app icon.
 - Optional image name/folder and Locate actions in the image context menu; current-document changes are undoable.
@@ -77,7 +79,8 @@ Omawrite at the size it is designed around; larger and smaller sizes scale from 
 
 - **Qt 6.7 or newer**: `qt6-base` and `qt6-declarative` (including Qt Quick Controls, Quick Dialogs and QtTest for tests).
 - Linux: `xdg-desktop-portal` and a portal backend. macOS and Windows use native dialogs.
-- A matching C++17 compiler/build kit. See [installation instructions](docs/install.md); Windows/Linux builds have not been verified on this Mac.
+- A matching C++17 compiler/build kit, **CMake 3.24+**, and a native build tool for the first pinned KSyntaxHighlighting dependency build. Code highlighting needs no runtime downloads.
+- See [installation instructions](docs/install.md); Windows/Linux builds have not been verified on this Mac.
 
 The IBM Plex Mono font is bundled under the SIL Open Font License 1.1; see
 `fonts/OFL.txt`. The font is copyright IBM Corp.
@@ -85,8 +88,11 @@ The IBM Plex Mono font is bundled under the SIL Open Font License 1.1; see
 ## Build and install
 
 For a local build, install the Qt requirements above, a C++17 compiler such as
-`gcc`, and `make`. The build scripts use `qmake6` (or `qmake`), and the tests use
-QtTest; both ship in `qt6-base`.
+`gcc`, `make`, and CMake 3.24+. The scripts bootstrap the pinned standalone
+syntax engine into `.deps/install` if absent (or run `./bin/build-dependencies`
+explicitly). This downloads checksum-verified KDE source archives at build time.
+The build scripts use `qmake6` (or `qmake`), and the tests use QtTest. All projects
+currently use Release to match the private static library, including Windows' CRT.
 
 ```sh
 ./bin/build
@@ -107,18 +113,11 @@ app bundles. To open a file with the local Linux build:
 ./build/omawrite path/to/document.md
 ```
 
-On Arch Linux or Omarchy, install `base-devel` for the packaging tools, then
-build and install the package:
+### Binary distribution status
 
-```sh
-./bin/install
-```
-
-This runs the local build and `makepkg -fsi`, which installs the package through
-pacman and may ask for authentication. To build a package archive for inspection
-without installing it:
-
-```sh
-cd pkgbuild
-makepkg -f
-```
+Local development builds are supported. **No prebuilt release is being published.**
+The engine is MIT, but embedded language definitions have mixed additional terms.
+See [provenance and license/source audit status](third_party/ksyntaxhighlighting/README.md).
+The historical Arch `pkgbuild/PKGBUILD` / `bin/install` packaging route is disabled
+for this fork until that audit and a maintained fork recipe are complete. Upstream
+Omarchy packages are unaffected.

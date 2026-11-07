@@ -11,9 +11,37 @@
 #include <utility>
 #include <vector>
 
+namespace {
+struct CodeBlockData : QTextBlockUserData {
+    KSyntaxHighlighting::Definition language;
+    KSyntaxHighlighting::State state;
+};
+}
+
 MarkdownHighlighter::MarkdownHighlighter(QTextDocument *document)
     : QSyntaxHighlighter(document) {
     rebuildFormats();
+    // Connected after QSyntaxHighlighter's edit handler: propagate semantic
+    // lexer changes synchronously, even when the public fence integer stays put.
+    connect(document, &QTextDocument::contentsChange, this,
+            [this](int, int, int) { propagateCodeState(); });
+}
+
+void MarkdownHighlighter::propagateCodeState() {
+    if (m_propagatingCodeState || !m_pendingCodeBlock.isValid())
+        return;
+    m_propagatingCodeState = true;
+    const QSizeF pageSize = document()->pageSize();
+    document()->setPageSize(QSizeF(0, 0));
+    while (m_pendingCodeBlock.isValid()) {
+        const QTextBlock block = m_pendingCodeBlock;
+        m_pendingCodeBlock = QTextBlock();
+        rehighlightBlock(block);
+    }
+    document()->setPageSize(pageSize);
+    if (QAbstractTextDocumentLayout *layout = document()->documentLayout())
+        layout->documentSize();
+    m_propagatingCodeState = false;
 }
 
 // One setter for the whole theme, so a theme change rehighlights once.
@@ -30,6 +58,7 @@ void MarkdownHighlighter::setTheme(bool darkMode, const QString &background,
     m_customForeground = foreground;
     m_customAccent = accent;
     m_customCodeBackground = codeBackground;
+    m_codeHighlighter.setDarkMode(darkMode);
     rebuildFormats();
     rehighlightAll();
 }
@@ -89,6 +118,7 @@ void MarkdownHighlighter::rehighlightAll() {
     const QSizeF pageSize = doc->pageSize();
     doc->setPageSize(QSizeF(0, 0));
     rehighlight();
+    m_pendingCodeBlock = QTextBlock();
     doc->setPageSize(pageSize);
     if (QAbstractTextDocumentLayout *layout = doc->documentLayout())
         layout->documentSize();
@@ -238,6 +268,37 @@ void MarkdownHighlighter::highlightBlock(const QString &text) {
     // A fenced run of code is literal from its opening fence through its
     // closing one, so no markup runs inside it. The state rides from block to
     // block, and Qt rehighlights the rest of the document when it changes.
+    if (m_pendingCodeBlock == currentBlock())
+        m_pendingCodeBlock = QTextBlock();
+    // User data holds the embedded state without changing Backend's public
+    // integer fence encoding. Only propagate until this combined state settles.
+    const auto saveCodeState = [this](const KSyntaxHighlighting::Definition &language,
+                                      const KSyntaxHighlighting::State &state) {
+        auto *old = dynamic_cast<CodeBlockData *>(currentBlockUserData());
+        const bool changed = old ? old->language != language || old->state != state
+                                 : language.isValid() || state != KSyntaxHighlighting::State();
+        if (!old) {
+            old = new CodeBlockData;
+            setCurrentBlockUserData(old);
+        }
+        old->language = language;
+        old->state = state;
+        const QTextBlock next = currentBlock().next();
+        if (changed && next.isValid()) {
+            if (!m_pendingCodeBlock.isValid()
+                    || next.position() < m_pendingCodeBlock.position())
+                m_pendingCodeBlock = next;
+            // Covers Qt's initial delayed highlighting as well as explicit
+            // rehighlightBlock calls, which do not emit contentsChange.
+            if (!m_propagatingCodeState && !m_codePropagationScheduled) {
+                m_codePropagationScheduled = true;
+                QMetaObject::invokeMethod(this, [this] {
+                    m_codePropagationScheduled = false;
+                    propagateCodeState();
+                }, Qt::QueuedConnection);
+            }
+        }
+    };
     const int previous = previousBlockState();
     if (previous >= InsideFence) {
         const int fence = previous - InsideFence;
@@ -245,6 +306,18 @@ void MarkdownHighlighter::highlightBlock(const QString &text) {
                                          fence % 2 ? QLatin1Char('~') : QLatin1Char('`'));
         setCurrentBlockState(closing ? Prose : previous);
         setFormat(0, text.length(), closing ? m_fenceFormat : m_codeFormat);
+        const auto *context = dynamic_cast<const CodeBlockData *>(currentBlock().previous().userData());
+        if (!closing && context) {
+            const auto line = m_codeHighlighter.tokenize(text, context->language, context->state);
+            for (const auto &token : line.tokens) {
+                QTextCharFormat style = m_codeFormat;
+                style.merge(token.format);
+                setFormat(token.offset, token.length, style);
+            }
+            saveCodeState(context->language, line.state);
+        } else {
+            saveCodeState({}, {});
+        }
         highlightSearch(text);
         return;
     }
@@ -254,10 +327,13 @@ void MarkdownHighlighter::highlightBlock(const QString &text) {
         const bool tildes = text.trimmed().startsWith(QLatin1Char('~'));
         setCurrentBlockState(InsideFence + (opening - 3) * 2 + (tildes ? 1 : 0));
         setFormat(0, text.length(), m_fenceFormat);
+        const QString trimmed = text.trimmed();
+        saveCodeState(CodeHighlighter::resolveLanguage(trimmed.mid(opening)), {});
         highlightSearch(text);
         return;
     }
     setCurrentBlockState(Prose);
+    saveCodeState({}, {});
 
     if (!text.isEmpty()) {
         highlightMarkers(text);

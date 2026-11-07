@@ -1,6 +1,9 @@
 #pragma once
 
+#include "codehighlighter.h"
+
 #include <QRegularExpression>
+#include <QTextBlock>
 #include <QSyntaxHighlighter>
 #include <QTextCharFormat>
 #include <QTextCursor>
@@ -66,6 +69,11 @@ protected:
 
 private:
     void rebuildFormats();
+    void propagateCodeState();
+    CodeHighlighter m_codeHighlighter;
+    QTextBlock m_pendingCodeBlock;
+    bool m_propagatingCodeState = false;
+    bool m_codePropagationScheduled = false;
     void rehighlightAll();
     void highlightMarkers(const QString &text);
     void highlightHeadingMarkers(const QString &text);

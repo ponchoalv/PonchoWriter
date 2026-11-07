@@ -2,7 +2,7 @@
 
 ## Automated suites
 
-Run `./bin/test` with Qt 6.7+ and a C++17 compiler. The runner builds separate QtTest targets, uses the offscreen Qt platform, and recognizes macOS bundles and Unix binaries.
+Run `./bin/test` with Qt 6.7+, a C++17 compiler and CMake 3.24+ for the first syntax-dependency bootstrap. The runner builds separate QtTest targets, uses the offscreen Qt platform, and recognizes macOS bundles and Unix binaries.
 
 | Suite | Purpose |
 | --- | --- |
@@ -13,6 +13,7 @@ Run `./bin/test` with Qt 6.7+ and a C++17 compiler. The runner builds separate Q
 | `tests/previewblocks/previewblocks.pro` | Conservative structural parsing and native rasterization/fallback |
 | `tests/livepreview/livepreview.pro` | UTF-16 mappings, source/view separation, native input/selection/IME, object boundaries, source preservation, local/remote resources, cumulative raster budgets/stale-resource release and read links |
 | `tests/mermaid/mermaid.pro` | Optional-renderer fallback, constrained syntax and asynchronous process/cache behavior using a fake local CLI |
+| `tests/codehighlighting/codehighlighting.pro` | Language/alias resolution, plain fallback, multiline state and per-fence reset, incremental versus full rehighlight, language-only edits, theme/font/search/source/undo preservation |
 
 The main QML suite registers the same `Omawrite.LivePreview` type as the application. It uses a unique application-data identity per run, so a failed test's recovery snapshot cannot be restored by the next run. Tests must send physical text input to **`previewEditor`**, not the hidden canonical **`sourceEditor`**. When a test changes source directly, allow the queued projection update before sending input.
 
@@ -20,7 +21,7 @@ The relative-file-path regression canonicalizes an existing parent directory, no
 
 ## Verified development run
 
-On 2026-11-07, macOS arm64 with Homebrew Qt 6.12.0 and Apple Clang: **195 passed, 0 failed** across seven suites (111 / 16 / 22 / 12 / 7 / 21 / 6, including per-suite setup/cleanup). The macOS app built successfully. Its bundled icon resource matches the committed ICNS; Windows/Linux compilation was not tested. The automated renderer process tests use a fake CLI that rejects the obsolete `-w`/`--width` switches. Separately, the installed real Mermaid CLI 12.2.0/Node/Chrome stack was exercised through `MermaidRenderer`: the example flowchart produced a 552×77 PNG in about 1.15 seconds after removing `-w`. This is a single real-render smoke check, not exhaustive browser/platform validation.
+On 2026-11-07, macOS arm64 with Homebrew Qt 6.12.0 and Apple Clang: **208 passed, 0 failed** across eight suites (111 / 16 / 22 / 12 / 7 / 22 / 6 / 12, including per-suite setup/cleanup). The macOS app built successfully. Its bundled icon resource matches the committed ICNS; Windows/Linux compilation was not tested. The automated renderer process tests use a fake CLI that rejects the obsolete `-w`/`--width` switches. Separately, the installed real Mermaid CLI 12.2.0/Node/Chrome stack was exercised through `MermaidRenderer`: the example flowchart produced a 552×77 PNG in about 1.15 seconds after removing `-w`. This is a single real-render smoke check, not exhaustive browser/platform validation.
 
 Raster caches/projections are byte- and count-bounded (32 MiB per cache/projection; up to 64 visual objects per projection). Additional blocks fall back rather than making source inaccessible. These are not a whole-process memory cap: source documents, transient rasterization and the external renderer have separate costs.
 
@@ -31,6 +32,10 @@ The long-document mode-switch regression starts with the caret at the end, scrol
 Body-style regressions check softer prose versus stronger headings in both themes, regular/nonitalic paragraph fonts through repeated mode toggles, unchanged Markdown and the full window's theme bindings.
 
 Read/Edit appearance regressions compare actual paragraph and heading gaps, nested tight/loose list spacing, bold/italic, link accent and code backgrounds across themes and zoom sizes. Toggle tests check Mac/Linux/Windows shortcut labels and logical icon centering, including the Material control in the full window.
+
+Code-color regressions compare actual Read character formats with the shared tokenizer in both themes for Python, C++, JavaScript, JSON, YAML and shell aliases. They include quoted/list code, adjacent same-language fences, multiline comments, unclosed/empty fences and unknown/untagged plain fallback. An indented literal fence cannot claim the prefix of a later real fence. Read import validates the full sequence before applying source metadata; ambiguous syntax falls back to plain code. Source text and undo stay unchanged. The macOS app statically links the engine; upstream notices/inventory are included in its resources, but binary redistribution remains blocked pending the [resource-license/source audit](../third_party/ksyntaxhighlighting/README.md).
+
+The Windows kit-dispatch shell paths were checked with fake qmake/compiler/CMake tools (MinGW, MSVC and rejected unsupported kit). This is not a Windows compiler or runtime test.
 
 ## Manual release checks
 
@@ -45,5 +50,6 @@ Use [preview-example.md](preview-example.md), plus a disposable document and ima
 - Check F1 labels and physical Cmd+Option+F / Cmd+Ctrl+F on Mac. OS-reserved keys and Fn settings cannot be fully established by synthetic Qt events.
 - If you explicitly install/use Mermaid CLI, check a real successful diagram, an invalid diagram and renderer failure/timeout. Fake-CLI tests do not establish compatibility with a particular Node/Puppeteer/Chromium installation.
 - Check high-DPI and light/dark appearance, clickable Read links and local image scaling.
+- Use [code-highlighting-example.md](code-highlighting-example.md) to check real font/zoom/search/selection/undo behavior in tagged fences and across mode toggles. These are not autocomplete or LSP features.
 
 No renderer or external runtime is installed by the test runner. Do not describe tests of the fake CLI as an end-to-end Mermaid/browser test.

@@ -1,6 +1,8 @@
 QT += core gui testlib
 CONFIG += c++17 testcase console
 CONFIG -= app_bundle
+include(../../syntax-highlighting.pri)
+
 TEMPLATE = app
 TARGET = tst_mermaid
 INCLUDEPATH += ../../src

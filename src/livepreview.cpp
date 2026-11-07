@@ -1,6 +1,7 @@
 #include "livepreview.h"
 #include "markdownhighlighter.h"
 #include "mermaidrenderer.h"
+#include "readcodehighlighting.h"
 
 #include <QClipboard>
 #include <QGuiApplication>
@@ -428,6 +429,7 @@ void LivePreview::buildReadDocument(const QString &source) {
                       m_viewItem->property("previewAccent").value<QColor>(),
                       m_viewItem->property("previewDark").toBool());
     clearViewResources();
+    highlightReadCode(rendered, markdown, m_viewItem->property("previewDark").toBool());
     m_view->setHtml(rendered.toHtml());
     // Qt's HTML round-trip can lose the smallest heading's relative size.
     // Keep every heading on the same Markdown scale used by Edit highlighting.

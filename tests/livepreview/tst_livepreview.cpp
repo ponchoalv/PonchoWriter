@@ -21,6 +21,7 @@
 #include <QScopeGuard>
 #include "../../src/mermaidrenderer.h"
 #include "../../src/livepreview.h"
+#include "../../src/codehighlighter.h"
 
 class ImageResolver : public QObject {
     Q_OBJECT
@@ -80,6 +81,74 @@ private slots:
         flush();
     }
     void cleanup() { controller.reset(); root.reset(); }
+    void languageCodeTokensSurviveReadImportAndModeSwitches() {
+        const QList<QPair<QString, QStringList>> fences = {
+            {QStringLiteral("python"), {QStringLiteral("def greet(name):"), QStringLiteral("    return 'hello' # comment")}},
+            {QStringLiteral("cpp"), {QStringLiteral("int answer = 42; // comment")}},
+            {QStringLiteral("cpp"), {QStringLiteral("/*"), QStringLiteral("int value;"), QStringLiteral("*/")}},
+            {QStringLiteral("js"), {QStringLiteral("const value = true;")}},
+            {QStringLiteral("json"), {QStringLiteral("{\"key\": true, \"n\": 12}")}},
+            {QStringLiteral("yaml"), {QStringLiteral("enabled: true # comment")}},
+            {QStringLiteral("sh"), {QStringLiteral("echo \"hello\" # comment")}},
+            {QStringLiteral("python"), {QStringLiteral("'''unfinished string")}},
+            // Immediately adjacent, same language: MUST reset string state.
+            {QStringLiteral("python"), {QStringLiteral("return 123")}}
+        };
+        // Indented literal fence must not claim the prefix of the real C++ comment.
+        QString markdown = QStringLiteral("before\n\n    ```cpp\n    /*\n    ```\n\n");
+        for (const auto &fence : fences)
+            markdown += QStringLiteral("```%1\n%2\n```\n").arg(fence.first, fence.second.join(QLatin1Char('\n')));
+        markdown += QStringLiteral("\n> ```js\n> let quoted = false;\n> ```\n\n- item\n\n  ```cpp\n  int nested = 17;\n  ```\n\n```unknown-omawrite-language\nplain _code_\n```\n\n```\nuntyped_var = 99\n```\n\n```cpp\n```\n\nafter\n\n```js\nconst unfinished = 19;\n");
+        for (bool dark : {false, true}) {
+            viewItem->setProperty("previewDark", dark);
+            sourceItem->setProperty("text", markdown);
+            source->clearUndoRedoStacks();
+            controller->setReadMode(true);
+            controller->refresh();
+            flush();
+            CodeHighlighter lexer(dark);
+            QTextBlock nextBlock = view->begin();
+            auto checkFence = [&](const QString &language, const QStringList &lines) {
+                KSyntaxHighlighting::State state;
+                const auto definition = CodeHighlighter::resolveLanguage(language);
+                for (const QString &line : lines) {
+                    QTextBlock block = nextBlock;
+                    while (block.isValid() && block.text() != line) block = block.next();
+                    QVERIFY2(block.isValid(), qPrintable(line));
+                    nextBlock = block.next();
+                    const auto expected = lexer.tokenize(line, definition, state);
+                    state = expected.state;
+                    QVERIFY(!expected.tokens.isEmpty());
+                    for (const auto &token : expected.tokens) {
+                        QTextCursor cursor(view);
+                        cursor.setPosition(block.position() + token.offset);
+                        cursor.setPosition(block.position() + token.offset + 1, QTextCursor::KeepAnchor);
+                        if (token.format.hasProperty(QTextFormat::ForegroundBrush))
+                            QCOMPARE(cursor.charFormat().foreground(), token.format.foreground());
+                        else
+                            QCOMPARE(cursor.charFormat().foreground().color(), viewItem->property("color").value<QColor>());
+                    }
+                }
+            };
+            for (const auto &fence : fences) checkFence(fence.first, fence.second);
+            checkFence(QStringLiteral("js"), {QStringLiteral("let quoted = false;")});
+            checkFence(QStringLiteral("cpp"), {QStringLiteral("int nested = 17;")});
+            checkFence(QStringLiteral("js"), {QStringLiteral("const unfinished = 19;")});
+            for (const auto &plain : {QStringLiteral("plain _code_"), QStringLiteral("untyped_var = 99")}) {
+                const auto cursor = view->find(plain);
+                QVERIFY(!cursor.isNull());
+                QVERIFY(!cursor.charFormat().fontItalic());
+                QCOMPARE(cursor.charFormat().foreground().color(), viewItem->property("color").value<QColor>());
+            }
+            QCOMPARE(source->toPlainText(), markdown);
+            QVERIFY(!source->isUndoAvailable());
+            controller->setReadMode(false);
+            flush();
+            QCOMPARE(source->toPlainText(), markdown);
+            QVERIFY(!source->isUndoAvailable());
+        }
+    }
+
     void cumulativeTableAndImageBudgets() {
         viewItem->setProperty("width", 4096);
         QString tables = QStringLiteral("before\n\n");

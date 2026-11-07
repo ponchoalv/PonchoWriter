@@ -64,6 +64,12 @@ Body paragraphs use softer, theme-aware contrast while headings retain the stron
 
 Try [preview-example.md](preview-example.md) for tables, images, Mermaid and fallback cases.
 
+## Language-fence highlighting
+
+Tagged backtick and tilde fences use native theme-aware syntax colors in **Edit and Read**. Use `python`/`py`, `cpp`/`c++`, `js`, `ts`, `json`, `bash`/`sh`, `yaml`, or another supported language name. Unknown/untagged code stays plain. Multiline tokens continue within a fence and reset at every separate fence, including adjacent same-language fences. Code keeps the writing font, zoom, background and search behavior; Markdown source and undo are unchanged. This adds token coloring, not autocomplete or LSP.
+
+Read validates its source/import alignment before baking colors into HTML; complex parser disagreements fall back to plain code rather than coloring the wrong text. See the [syntax guide](syntax-highlighting.md), [example document](code-highlighting-example.md), and [dependency/license status](../third_party/ksyntaxhighlighting/README.md). Highlighting needs no Node/browser/runtime download.
+
 ## Paste screenshots without saving them manually
 
 On macOS, **Cmd+Ctrl+Shift+4** copies a selected screenshot region to the clipboard (an OS shortcut, not OmaWrite's). Then paste with **Cmd+V** into the document.

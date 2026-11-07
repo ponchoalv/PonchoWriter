@@ -1,8 +1,20 @@
 # Language-tagged code fences: KSyntaxHighlighting investigation
 
-Investigated 2026-11-07. **Proposal only: no KDE dependency or code-fence token highlighting has been added.**
+Investigated 2026-11-07. **Historical design investigation: language-fence highlighting is now implemented in Edit and Read.** Use the [current syntax-highlighting guide](syntax-highlighting.md) and [installation steps](install.md), not the planning estimates or deployment alternatives below.
 
-## Recommendation and effort
+## Implemented outcome
+
+The implementation uses standalone **KSyntaxHighlighting 6.13.0**, statically installed under `.deps/install` with embedded resources (`QRC_SYNTAX=ON`), not Kate/KTextEditor or WebEngine. Tagged backtick/tilde fences resolve aliases, native names and safe extensions; unknown/untagged code stays plain. Stateful tokens reset at every fence, including adjacent same-language fences. Read bakes token formats before HTML serialization and leaves code plain when source metadata and Qt's parser disagree. Theme-aware colors preserve writing font/zoom/background, search, source and undo; no autocomplete/LSP or graphical code editor is implied.
+
+Builds now need **CMake 3.24+ before the first bootstrap** and matching Qt 6.7+ Core/Gui/Network (Test for tests), compiler and build tool. The pinned ECM and syntax archives download only during developer builds. `bin/build`/`bin/test` bootstrap only when the private header is missing; use `JOBS=4 ./bin/build-dependencies` explicitly if needed. Everything must use Release (Debug unsupported); delete `.deps` and generated build/test directories when changing kit/compiler/architecture. See the installation guide for Windows dependency-before-qmake commands and optional matching static `OMAWRITE_SYNTAX_PREFIX`.
+
+The engine is MIT, but embedded definitions have **mixed GPL/LGPL/other licenses**. Upstream notices belong in `third_party/ksyntaxhighlighting/README.md` and `LICENSES/`; no all-MIT or redistribution-ready claim follows. Historical Arch packaging is disabled pending resource/license/source auditing. Windows/Linux instructions remain source-inspected, not built/tested. The macOS Qt 6.12.0 implementation run passed **208 checks across eight suites** with no failures and rebuilt the app; see [test details](testing.md).
+
+## Historical proposal (superseded where noted)
+
+The remaining design discussion records the original rationale and acceptance goals, not unfinished implementation work or measured delivery times.
+
+### Original recommendation and effort
 
 Use **KDE KSyntaxHighlighting**, the standalone syntax engine used by Kate, rather than embedding Kate/KTextEditor or adding a browser. It supplies language definitions, light/dark themes and a line-oriented lexer suitable for native Qt documents.
 
@@ -30,15 +42,15 @@ The current numeric fence-state encoding is also read by Backend's fence/link/fo
 
 Verify separate-fence boundaries, blank lines and code nested in lists/quotes. If Qt's imported code metadata is insufficient, carry source-fence metadata alongside import. Preserve source/view offsets, canonical Markdown and the existing undo stack.
 
-## Dependency and deployment choices
+## Historical dependency and deployment choices
 
 The library does not require a running KDE desktop or the full Kate editor. Its own build uses CMake/Extra CMake Modules; the app can remain qmake and consume an explicitly built, matched library. Alternatively, migrate the app to CMake separately—not as an accidental prerequisite for this feature.
 
-Version pinning matters: inspected upstream master (6.33 development) requires Qt 6.10, whereas OmaWrite currently declares Qt 6.7+. The inspected **6.13.0** release requires Qt 6.6 and demonstrates that a compatible release exists; this is not a final dependency/version selection. Review supported releases, fixes, syntax-definition licenses and distribution notices before choosing one.
+**Superseded selection discussion:** the implementation now pins 6.13.0. Version pinning matters: inspected upstream master (6.33 development) requires Qt 6.10, whereas OmaWrite currently declares Qt 6.7+. The inspected **6.13.0** release requires Qt 6.6 and demonstrates that a compatible release exists; this is not a final dependency/version selection. Review supported releases, fixes, syntax-definition licenses and distribution notices before choosing one.
 
-Bundle syntax definitions/themes with the library resources for offline, predictable behavior. Match compiler/architecture/Qt kit; bundle the resulting dylib/DLL and verify resources/rpaths/signing on clean machines. Windows/Linux packaging is not currently verified for this fork. Do not assume `macdeployqt` automatically deploys every non-Qt dependency.
+The original proposal was to bundle syntax definitions/themes with library resources for offline, predictable behavior and deploy a matching dylib/DLL. **The implemented choice is static linking with embedded resources, so no separate KDE dylib/DLL is deployed.** Matching compiler/architecture/Qt kit and clean-machine resource/signing validation still matter. Windows/Linux packaging is not currently verified for this fork. Do not assume `macdeployqt` automatically deploys every non-Qt dependency.
 
-## Acceptance checks
+## Acceptance checklist (not a test-results report)
 
 - Python, C++, JS/TS, JSON, shell and YAML; aliases, unknown/missing tags.
 - Multiline strings/comments, language-only edits, adjacent fences, unclosed fences, tilde/backtick lengths and undo/redo.

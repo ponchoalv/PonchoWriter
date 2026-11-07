@@ -13,6 +13,10 @@ else
   exit 1
 fi
 
+if [ -z "${OMAWRITE_SYNTAX_PREFIX:-}" ] && [ ! -f "$ROOT/.deps/install/include/KF6/KSyntaxHighlighting/KSyntaxHighlighting/Repository" ]; then
+  "$ROOT/bin/build-dependencies"
+fi
+
 JOBS="${JOBS:-$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 1)}"
 
 mkdir -p "$BUILD_DIR"

@@ -1319,13 +1319,17 @@ private slots:
         // marker hidden.
         const QList<QTextLayout::FormatRange> fenced =
             document.findBlockByNumber(2).layout()->formats();
-        QCOMPARE(fenced.size(), 1);
-        QCOMPARE(fenced.constFirst().length, document.findBlockByNumber(2).text().length());
-        QVERIFY(fenced.constFirst().format.background().style() != Qt::NoBrush);
+        QVERIFY(!fenced.isEmpty());
+        int covered = 0;
         for (const QTextLayout::FormatRange &range : fenced) {
+            QCOMPARE(range.start, covered);
+            covered += range.length;
+            QVERIFY(range.format.background().style() != Qt::NoBrush);
             QVERIFY(!range.format.fontItalic());
+            QVERIFY(range.format.fontPointSize() != 1.0); // No hidden Markdown markers.
             QVERIFY(range.format.foreground().color() != range.format.background().color());
         }
+        QCOMPARE(covered, document.findBlockByNumber(2).text().length());
 
         const QList<QTextLayout::FormatRange> prose =
             document.findBlockByNumber(4).layout()->formats();

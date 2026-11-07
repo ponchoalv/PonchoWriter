@@ -22,6 +22,7 @@
 
 #include "backend.h"
 #include "markdownhighlighter.h"
+#include "livepreview.h"
 
 // Counts QML "Binding loop detected" warnings while it is alive, forwarding
 // everything to the previous handler so test output stays intact.
@@ -50,15 +51,141 @@ private:
 class OmawriteTest : public QObject {
     Q_OBJECT
 
+    static void editorKeyClick(QQuickWindow *window, Qt::Key key,
+                               Qt::KeyboardModifiers modifiers = Qt::NoModifier) {
+        // Tests set the canonical source directly. Let its disposable view
+        // catch up, then send physical input to the actual visible editor.
+        QCoreApplication::processEvents();
+        QObject *view = window->findChild<QObject *>(QStringLiteral("previewEditor"));
+        QVERIFY(view);
+        QVERIFY(QMetaObject::invokeMethod(view, "forceActiveFocus"));
+        QTest::keyClick(window, key, modifiers);
+        QCoreApplication::processEvents();
+    }
+
+    static void openReplace(QQuickWindow *window) {
+#ifdef Q_OS_MACOS
+        QTest::keyClick(window, Qt::Key_F, Qt::ControlModifier | Qt::AltModifier);
+#else
+        QTest::keyClick(window, Qt::Key_H, Qt::ControlModifier);
+#endif
+    }
+
 private slots:
     void initTestCase() {
+        qmlRegisterType<LivePreview>("Omawrite", 1, 0, "LivePreview");
         QCoreApplication::setApplicationVersion(QStringLiteral("1.2.3-test"));
         QStandardPaths::setTestModeEnabled(true);
         QVERIFY(m_settingsDirectory.isValid());
+        QCoreApplication::setApplicationName(QStringLiteral("omawrite-tests-")
+            + QFileInfo(m_settingsDirectory.path()).fileName());
         QQuickStyle::setStyle(QStringLiteral("Material"));
         QSettings::setDefaultFormat(QSettings::IniFormat);
         QSettings::setPath(QSettings::IniFormat, QSettings::UserScope,
                            m_settingsDirectory.path());
+    }
+
+    void cleanupTestCase() {
+        QDir(QStandardPaths::writableLocation(QStandardPaths::AppDataLocation)).removeRecursively();
+    }
+
+    void pastesScreenshotThroughVisibleEditorAndPreservesSourceInReadMode() {
+        const QString mainQmlPath = QFINDTESTDATA("../src/Main.qml");
+        QVERIFY(!mainQmlPath.isEmpty());
+        QTemporaryDir recovery;
+        QVERIFY(recovery.isValid());
+        Backend backend;
+        backend.m_recoveryPath = recovery.filePath(QStringLiteral("recovery.json"));
+        QQmlEngine engine;
+        engine.rootContext()->setContextProperty(QStringLiteral("backend"), &backend);
+        QQmlComponent component(&engine, QUrl::fromLocalFile(mainQmlPath));
+        QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+        QScopedPointer<QObject> object(component.create());
+        auto *window = qobject_cast<QQuickWindow *>(object.data());
+        QVERIFY(window);
+        window->show();
+        QVERIFY(QTest::qWaitForWindowExposed(window));
+        QObject *source = window->findChild<QObject *>(QStringLiteral("sourceEditor"));
+        QObject *view = window->findChild<QObject *>(QStringLiteral("previewEditor"));
+        QVERIFY(source && view);
+        QImage image(80, 40, QImage::Format_ARGB32);
+        image.fill(Qt::blue);
+        QGuiApplication::clipboard()->setImage(image);
+        editorKeyClick(window, Qt::Key_V, Qt::ControlModifier);
+        QString markdown = source->property("text").toString();
+        QVERIFY(markdown.startsWith(QStringLiteral("![Screenshot](img/")));
+        QString path = markdown.mid(14, markdown.size() - 15);
+        QVERIFY(backend.resolveImageUrl(path).isLocalFile());
+        QVERIFY(source->property("canUndo").toBool());
+        editorKeyClick(window, Qt::Key_Z, Qt::ControlModifier);
+        QTRY_COMPARE(source->property("text").toString(), QString());
+        editorKeyClick(window, Qt::Key_Z, Qt::ControlModifier | Qt::ShiftModifier);
+        QTRY_COMPARE(source->property("text").toString(), markdown);
+
+        source->setProperty("cursorPosition", 5);
+        editorKeyClick(window, Qt::Key_F10, Qt::ShiftModifier);
+        QObject *menu = window->findChild<QObject *>(QStringLiteral("attachmentMenu"));
+        QVERIFY(menu);
+        QTRY_VERIFY(menu->property("visible").toBool());
+        QCOMPARE(menu->property("imagePath").toString(), path);
+        QVERIFY(QMetaObject::invokeMethod(menu, "close"));
+        QObject *rename = window->findChild<QObject *>(QStringLiteral("renameAttachmentAction"));
+        QObject *dialog = window->findChild<QObject *>(QStringLiteral("renameAttachmentDialog"));
+        QObject *field = window->findChild<QObject *>(QStringLiteral("attachmentPathField"));
+        QVERIFY(rename && dialog && field);
+        QVERIFY(QMetaObject::invokeMethod(rename, "triggered"));
+        QTRY_VERIFY(dialog->property("visible").toBool());
+        const QString newPath = QStringLiteral("img/context-menu-test.png");
+        field->setProperty("text", newPath);
+        QVERIFY(QMetaObject::invokeMethod(dialog, "accept"));
+        QTRY_VERIFY(!dialog->property("visible").toBool());
+        QTRY_VERIFY(!menu->property("visible").toBool());
+        const QString renamed = QStringLiteral("![Screenshot](%1)").arg(newPath);
+        QTRY_COMPARE(source->property("text").toString(), renamed);
+        editorKeyClick(window, Qt::Key_Z, Qt::ControlModifier);
+        QTRY_COMPARE(source->property("text").toString(), markdown);
+        editorKeyClick(window, Qt::Key_Z, Qt::ControlModifier | Qt::ShiftModifier);
+        QTRY_COMPARE(source->property("text").toString(), renamed);
+        markdown = renamed;
+        path = newPath;
+        QVERIFY(backend.resolveImageUrl(path).isLocalFile());
+
+        backend.replaceRange(markdown.size(), markdown.size(), QStringLiteral("\n\nAfter"));
+        source->setProperty("cursorPosition", markdown.size() + 7);
+        auto *document = qvariant_cast<QQuickTextDocument *>(view->property("textDocument"));
+        QVERIFY(document);
+        QTRY_VERIFY(document->textDocument()->toPlainText().contains(QChar::ObjectReplacementCharacter));
+        QRectF beforeImage, afterImage;
+        QVERIFY(QMetaObject::invokeMethod(view, "positionToRectangle", Q_RETURN_ARG(QRectF, beforeImage), Q_ARG(int, 0)));
+        QVERIFY(QMetaObject::invokeMethod(view, "positionToRectangle", Q_RETURN_ARG(QRectF, afterImage), Q_ARG(int, 1)));
+        QVERIFY(afterImage.x() > beforeImage.x());
+        auto *viewItem = qobject_cast<QQuickItem *>(view);
+        QVERIFY(viewItem);
+        for (const qreal fraction : {0.25, 0.75}) {
+            const QPointF local(beforeImage.x() + (afterImage.x() - beforeImage.x()) * fraction,
+                                beforeImage.y() + beforeImage.height() / 2);
+            QTest::mouseClick(window, Qt::RightButton, Qt::NoModifier, viewItem->mapToScene(local).toPoint());
+            QTRY_VERIFY(menu->property("visible").toBool());
+            QCOMPARE(menu->property("imagePath").toString(), path);
+            QVERIFY(QMetaObject::invokeMethod(menu, "close"));
+            QTRY_VERIFY(!menu->property("visible").toBool());
+        }
+        viewItem->forceActiveFocus();
+        const QString complete = source->property("text").toString();
+        QTest::keyClick(window, Qt::Key_M, Qt::ControlModifier | Qt::ShiftModifier);
+        QTRY_VERIFY(window->property("readMode").toBool());
+        QTest::keyClick(window, Qt::Key_X);
+        QTest::keyClick(window, Qt::Key_B, Qt::ControlModifier);
+        QCOMPARE(source->property("text").toString(), complete);
+        QTest::keyClick(window, Qt::Key_M, Qt::ControlModifier | Qt::ShiftModifier);
+        QTRY_VERIFY(!window->property("readMode").toBool());
+        QCOMPARE(source->property("text").toString(), complete);
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const QString saved = dir.filePath(QStringLiteral("note.md"));
+        backend.saveAs(QUrl::fromLocalFile(saved));
+        QCOMPARE(readFile(saved), complete.toUtf8());
+        QVERIFY(QFileInfo::exists(dir.filePath(path)));
     }
 
     void countsWords() {
@@ -415,7 +542,7 @@ private slots:
         QVERIFY(editor && searchField && replaceField && replaceButton && replaceAllButton);
 
         editor->setProperty("text", QStringLiteral("foo foo foo"));
-        QTest::keyClick(window, Qt::Key_H, Qt::ControlModifier);
+        openReplace(window);
         searchField->setProperty("text", QStringLiteral("foo"));
         replaceField->setProperty("text", QStringLiteral("Foo"));
 
@@ -525,7 +652,7 @@ private slots:
 
         // Typing does not search until it pauses.
         editor->setProperty("text", QStringLiteral("foo bar foo"));
-        QTest::keyClick(window, Qt::Key_H, Qt::ControlModifier);
+        openReplace(window);
         searchField->setProperty("text", QStringLiteral("f"));
         searchField->setProperty("text", QStringLiteral("fo"));
         QCOMPARE(window->property("searchMatches").toList().size(), 0);
@@ -572,7 +699,7 @@ private slots:
         QVERIFY(editor && searchField && replaceField && replaceAllButton);
 
         editor->setProperty("text", QStringLiteral("foo bar foo"));
-        QTest::keyClick(window, Qt::Key_H, Qt::ControlModifier);
+        openReplace(window);
         searchField->setProperty("text", QStringLiteral("foo"));
         QTRY_COMPARE(window->property("searchMatches").toList().size(), 2);
 
@@ -580,7 +707,7 @@ private slots:
         // so Replace All does not cut at the old query's matches.
         searchField->setProperty("text", QStringLiteral("o"));
         QMetaObject::invokeMethod(window, "closeSearch");
-        QTest::keyClick(window, Qt::Key_H, Qt::ControlModifier);
+        openReplace(window);
         replaceField->setProperty("text", QStringLiteral("x"));
         QMetaObject::invokeMethod(replaceAllButton, "clicked");
         QCOMPARE(editor->property("text").toString(), QStringLiteral("fxx bar fxx"));
@@ -615,14 +742,14 @@ private slots:
         QObject *replaceField = window->findChild<QObject *>(QStringLiteral("replaceField"));
         QVERIFY(editor && replaceField);
 
-        QTest::keyClick(window, Qt::Key_H, Qt::ControlModifier);
+        openReplace(window);
         QTest::keyClick(window, Qt::Key_Tab);
         QTRY_VERIFY(replaceField->property("activeFocus").toBool());
         QTest::keyClick(window, Qt::Key_Escape);
         QVERIFY(!window->property("searchOpen").toBool());
 
         // Escape closes the bar from the Replace field itself too.
-        QTest::keyClick(window, Qt::Key_H, Qt::ControlModifier);
+        openReplace(window);
         QMetaObject::invokeMethod(replaceField, "forceActiveFocus");
         QTest::keyClick(window, Qt::Key_Escape);
         QVERIFY(!window->property("searchOpen").toBool());
@@ -630,7 +757,8 @@ private slots:
         // A link inserted from the find bar puts the writer back in the text.
         QTest::keyClick(window, Qt::Key_F, Qt::ControlModifier);
         QTest::keyClick(window, Qt::Key_K, Qt::ControlModifier);
-        QVERIFY(editor->property("activeFocus").toBool());
+        QObject *view = window->findChild<QObject *>(QStringLiteral("previewEditor"));
+        QVERIFY(view && view->property("activeFocus").toBool());
     }
 
     void keepsShortcutsBehindDialogs() {
@@ -705,25 +833,25 @@ private slots:
         editor->setProperty("text", text);
         QMetaObject::invokeMethod(editor, "forceActiveFocus");
         editor->setProperty("cursorPosition", text.length());
-        QTest::keyClick(window, Qt::Key_Return);
+        editorKeyClick(window, Qt::Key_Return);
         QCOMPARE(editor->property("text").toString(), text + QStringLiteral("\n\n"));
 
         // Before a closing fence the caret is still in the code; before an
         // opening one it is not yet.
         editor->setProperty("text", QStringLiteral("```\ncode\n```"));
         editor->setProperty("cursorPosition", 9);
-        QTest::keyClick(window, Qt::Key_Return);
+        editorKeyClick(window, Qt::Key_Return);
         QCOMPARE(editor->property("text").toString(), QStringLiteral("```\ncode\n\n```"));
         editor->setProperty("text", QStringLiteral("para\n```\ncode\n```"));
         editor->setProperty("cursorPosition", 5);
-        QTest::keyClick(window, Qt::Key_Return);
+        editorKeyClick(window, Qt::Key_Return);
         QCOMPARE(editor->property("text").toString(),
                  QStringLiteral("para\n\n\n```\ncode\n```"));
 
         // Tilde fences hold code the same way.
         editor->setProperty("text", QStringLiteral("~~~\ncode"));
         editor->setProperty("cursorPosition", 8);
-        QTest::keyClick(window, Qt::Key_Return);
+        editorKeyClick(window, Qt::Key_Return);
         QCOMPARE(editor->property("text").toString(), QStringLiteral("~~~\ncode\n"));
     }
 
@@ -1945,11 +2073,11 @@ private slots:
         editor->setProperty("cursorPosition", editor->property("length").toInt());
         QVERIFY(!linger->property("running").toBool());
 
-        QTest::keyClick(window, Qt::Key_PageUp);
+        editorKeyClick(window, Qt::Key_PageUp);
         QVERIFY(linger->property("running").toBool());
 
         QMetaObject::invokeMethod(linger, "stop");
-        QTest::keyClick(window, Qt::Key_Home, Qt::ControlModifier);
+        editorKeyClick(window, Qt::Key_Home, Qt::ControlModifier);
         QVERIFY(linger->property("running").toBool());
         QCOMPARE(editor->property("cursorPosition").toInt(), 0);
     }
@@ -1981,7 +2109,7 @@ private slots:
             editor->setProperty("text", content);
             editor->setProperty("cursorPosition", position);
         };
-        auto returnKey = [&] { QTest::keyClick(window, Qt::Key_Return); };
+        auto returnKey = [&] { editorKeyClick(window, Qt::Key_Return); };
 
         // Ending a paragraph leaves the blank line that separates it from the
         // next one.
@@ -2058,8 +2186,8 @@ private slots:
             editor->setProperty("text", content);
             editor->setProperty("cursorPosition", position);
         };
-        auto tabKey = [&] { QTest::keyClick(window, Qt::Key_Tab); };
-        auto backtabKey = [&] { QTest::keyClick(window, Qt::Key_Backtab, Qt::ShiftModifier); };
+        auto tabKey = [&] { editorKeyClick(window, Qt::Key_Tab); };
+        auto backtabKey = [&] { editorKeyClick(window, Qt::Key_Backtab, Qt::ShiftModifier); };
 
         auto selection = [&] {
             return QStringLiteral("%1-%2@%3").arg(editor->property("selectionStart").toInt())
@@ -2206,8 +2334,8 @@ private slots:
             editor->setProperty("text", content);
             editor->setProperty("cursorPosition", position);
         };
-        auto returnKey = [&] { QTest::keyClick(window, Qt::Key_Return); };
-        auto backspaceKey = [&] { QTest::keyClick(window, Qt::Key_Backspace); };
+        auto returnKey = [&] { editorKeyClick(window, Qt::Key_Return); };
+        auto backspaceKey = [&] { editorKeyClick(window, Qt::Key_Backspace); };
 
         // Backspace at the head of a paragraph closes the whole break above
         // it, so the two paragraphs join in one press rather than two, and
@@ -2956,8 +3084,13 @@ private slots:
         QDir::setCurrent(previous);
 
         // A recovery draft written later must not depend on the directory.
-        QCOMPARE(backend.fileUrl().toLocalFile(),
-                 QDir(directory.path()).absoluteFilePath(QStringLiteral("relative.md")));
+        const QFileInfo actual(backend.fileUrl().toLocalFile());
+        QVERIFY(actual.isAbsolute());
+        QCOMPARE(actual.fileName(), QStringLiteral("relative.md"));
+        // macOS aliases /var to /private/var. The new file does not exist
+        // yet, so canonicalize its existing parent rather than the file.
+        QCOMPARE(QFileInfo(actual.absolutePath()).canonicalFilePath(),
+                 QFileInfo(directory.path()).canonicalFilePath());
     }
 
     void saysWhenARecoveredDraftKeepsAFileFromOpening() {

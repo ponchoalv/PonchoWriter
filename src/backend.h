@@ -5,6 +5,8 @@
 #include <QByteArray>
 #include <QFileSystemWatcher>
 #include <QFutureWatcher>
+#include <QMap>
+#include <QSet>
 #include <QString>
 #include <QStringList>
 #include <QTimer>
@@ -88,6 +90,14 @@ public:
     Q_INVOKABLE void newWindow();
     Q_INVOKABLE QString clipboardUrl() const;
     Q_INVOKABLE QString clipboardText() const;
+    // Returns Markdown for the caller to insert in the editor's undo stack.
+    Q_INVOKABLE QString pasteClipboardImage(const QString &proposedRelativePath = QString());
+    // Local files only; an empty URL means unavailable or disallowed.
+    Q_INVOKABLE QUrl resolveImageUrl(const QString &path) const;
+    // Current document only. Copy, never delete: undo and other documents stay safe.
+    Q_INVOKABLE bool renameAttachment(const QString &oldPath, const QString &newRelativePath);
+    Q_INVOKABLE bool locateAttachment(const QString &oldPath, const QUrl &localFile,
+                                     const QString &newRelativePath = QString());
     Q_INVOKABLE bool editorTextChanged();
     Q_INVOKABLE void setCaretPosition(int position);
     Q_INVOKABLE QString linkUrlAt(int position) const;
@@ -103,6 +113,7 @@ public:
 
 signals:
     void fileUrlChanged();
+    void attachmentUrlsChanged();
     void modifiedChanged();
     void statusChanged();
     void wordCountChanged();
@@ -126,6 +137,9 @@ private:
     void setModified(bool modified);
     void setStatus(const QString &status);
     void saveTo(const QUrl &url);
+    QString attachmentStoragePath() const;
+    bool materializeAttachments(const QUrl &destination, QString *error) const;
+    bool updateAttachment(const QString &oldPath, const QString &newPath, const QString &source);
     QUrl suggestedSaveUrl() const;
     QString currentDocumentText() const;
     void setWordCount(int words);
@@ -186,6 +200,8 @@ private:
     bool m_autoSaveHeld = false;
     QString m_recoveryPath;
     std::unique_ptr<QLockFile> m_recoveryLock;
+    QMap<QString, QString> m_stagedAttachments; // logical relative path -> immutable storage ID
+    QSet<QString> m_materializedAttachments; // use the current document's copy after a successful save
 
     QString m_themeBackground;
     QString m_themeForeground;

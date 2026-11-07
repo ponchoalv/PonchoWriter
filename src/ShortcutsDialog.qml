@@ -14,6 +14,18 @@ Dialog {
     property int containerWidth: 1280
     property int containerHeight: 820
     readonly property string versionText: "Omawrite " + Qt.application.version
+    // Overridable so the reference can be tested on any host platform.
+    property string platform: Qt.platform.os
+
+    function shortcutLabel(sequence) {
+        // Qt swaps Control and Meta on macOS by default: source Ctrl is Cmd,
+        // while source Meta is the physical Control key (not Cmd).
+        if (platform === "osx")
+            return sequence.replace(/\bCtrl\+/g, "Cmd+")
+                           .replace(/\bMeta\+/g, "Ctrl+")
+                           .replace(/\bAlt\+/g, "Option+");
+        return sequence.replace(/\bMeta\+/g, "Super+");
+    }
     readonly property var shortcuts: [
         { key: "Ctrl+S", desc: "Save" },
         { key: "Ctrl+Shift+S", desc: "Save As" },
@@ -22,9 +34,9 @@ Dialog {
         { key: "Ctrl+P", desc: "Print" },
         { key: "Ctrl+Z", desc: "Undo" },
         { key: "Ctrl+Shift+Z / Ctrl+Y", desc: "Redo" },
-        { key: "F11 / Super+F", desc: "Fullscreen" },
+        { key: root.platform === "osx" ? "F11 / Ctrl+Meta+F" : "F11 / Meta+F", desc: "Fullscreen" },
         { key: "Ctrl+F", desc: "Find" },
-        { key: "Ctrl+H", desc: "Find & Replace" },
+        { key: root.platform === "osx" ? "Ctrl+Alt+F" : "Ctrl+H", desc: "Find & Replace" },
         { key: "Ctrl+G / Enter", desc: "Next Match in Find" },
         { key: "Shift+Enter", desc: "Previous Match in Find" },
         { key: "Escape", desc: "Close Find" },
@@ -37,8 +49,14 @@ Dialog {
         { key: "Ctrl+-", desc: "Decrease Text Size" },
         { key: "Ctrl+0", desc: "Reset Text Size" },
         { key: "Ctrl+scroll", desc: "Change Text Size" },
-        { key: "Ctrl+? / Ctrl+/ / F1", desc: "Shortcuts" }
-    ]
+        { key: "Ctrl+? / Ctrl+/ / F1", desc: "Shortcuts" },
+        { key: "Ctrl+Shift+M", desc: "Toggle Reading Mode" },
+        { key: "Alt+S", desc: "Save (Unsaved Changes)" },
+        { key: "Alt+D", desc: "Discard (Unsaved Changes)" },
+        { key: "Alt+C / Escape", desc: "Cancel (Unsaved Changes)" }
+    ].map(function(shortcut) {
+        return { key: root.shortcutLabel(shortcut.key), desc: shortcut.desc };
+    })
 
     title: "Keyboard shortcuts"
     modal: true

@@ -1,4 +1,5 @@
 #include "backend.h"
+#include "attachmenthelper.h"
 
 #include <QClipboard>
 #include <QtConcurrent/QtConcurrentRun>
@@ -10,6 +11,8 @@
 #include <QFont>
 #include <QFontDatabase>
 #include <QGuiApplication>
+#include <QImage>
+#include <QUuid>
 #include <QMimeData>
 #include <QProcess>
 #include <QPrintDialog>
@@ -21,6 +24,7 @@
 #include <QStandardPaths>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QJsonArray>
 #include <QLockFile>
 #include <QSaveFile>
 #include <QTextBlock>
@@ -318,6 +322,9 @@ void Backend::open(const QUrl &url) {
     file.seek(0);
     const QByteArray contents = file.readAll();
     loadDocumentText(QString::fromUtf8(contents));
+    m_stagedAttachments.clear();
+    m_materializedAttachments.clear();
+    emit attachmentUrlsChanged();
     clearRecovery();
     setKnownFileContents(contents, true);
     m_autoSaveSuspended = false;
@@ -381,6 +388,9 @@ void Backend::openOrStartFile(const QUrl &requestedUrl) {
     }
 
     loadDocumentText(QString());
+    m_stagedAttachments.clear();
+    m_materializedAttachments.clear();
+    emit attachmentUrlsChanged();
     clearRecovery();
     // Nothing has been read, so no text counts as saved, and auto-save holds
     // off until an explicit save creates the file (see autoSave()).
@@ -477,6 +487,263 @@ void Backend::copyAsHtml() {
     mimeData->setText(rendered.toPlainText());
     QGuiApplication::clipboard()->setMimeData(mimeData);
     setStatus(QStringLiteral("Copied as HTML."));
+}
+
+QString Backend::attachmentStoragePath() const {
+    return QDir(QStandardPaths::writableLocation(QStandardPaths::AppDataLocation))
+        .filePath(QStringLiteral("attachments"));
+}
+
+QString Backend::pasteClipboardImage(const QString &proposedRelativePath) {
+    const QClipboard *clipboard = QGuiApplication::clipboard();
+    const QMimeData *mime = clipboard ? clipboard->mimeData() : nullptr;
+    if (!mime || !mime->hasImage()) return QString();
+    const QImage image = qvariant_cast<QImage>(mime->imageData());
+    if (image.isNull()) {
+        setStatus(QStringLiteral("Could not read the clipboard image."));
+        return QString();
+    }
+    const QString id = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    const QString path = proposedRelativePath.isEmpty()
+        ? QStringLiteral("img/screenshot-%1.png").arg(id) : proposedRelativePath;
+    if (!Attachments::safeRelativePath(path) || !path.endsWith(QStringLiteral(".png"), Qt::CaseInsensitive)
+        || m_stagedAttachments.contains(path)
+        || (m_fileUrl.isLocalFile() && QFileInfo::exists(QFileInfo(m_fileUrl.toLocalFile()).dir().filePath(path)))) {
+        setStatus(QStringLiteral("Choose an unused relative PNG attachment path (for example img/screenshot.png)."));
+        return QString();
+    }
+    const QString root = attachmentStoragePath();
+    if (!QDir().mkpath(root)) {
+        setStatus(QStringLiteral("Could not create attachment recovery storage."));
+        return QString();
+    }
+    // QSaveFile never exposes a partially encoded PNG to recovery or preview.
+    const QString storageId = id + QStringLiteral(".png");
+    QSaveFile file(QDir(root).filePath(storageId));
+    if (!file.open(QIODevice::WriteOnly) || !image.save(&file, "PNG") || !file.commit()) {
+        setStatus(QStringLiteral("Could not store the clipboard image."));
+        return QString();
+    }
+    m_stagedAttachments.insert(path, storageId);
+    emit attachmentUrlsChanged();
+    return QStringLiteral("![Screenshot](%1)").arg(path);
+}
+
+QUrl Backend::resolveImageUrl(const QString &path) const {
+    // Never hand a remote URL to the preview. Decode before validating so an
+    // encoded traversal or separator cannot bypass the relative-path policy.
+    const QUrl url(path);
+    QString local;
+    if (url.isLocalFile()) {
+        if (!url.host().isEmpty()) return QUrl();
+        local = url.toLocalFile();
+    } else {
+        if (!url.isRelative() || !url.host().isEmpty() || url.hasQuery() || url.hasFragment()) return QUrl();
+        const QString relative = Attachments::decodedPath(path);
+        if (QDir::isAbsolutePath(relative)) {
+            local = relative;
+        } else {
+            if (!Attachments::safeLocalPath(relative)) return QUrl();
+            if (m_stagedAttachments.contains(relative) && !m_materializedAttachments.contains(relative))
+                local = QDir(attachmentStoragePath()).filePath(m_stagedAttachments.value(relative));
+            else if (m_fileUrl.isLocalFile())
+                local = QFileInfo(m_fileUrl.toLocalFile()).dir().filePath(relative);
+        }
+    }
+    return QFileInfo(local).isFile() ? QUrl::fromLocalFile(QFileInfo(local).absoluteFilePath()) : QUrl();
+}
+
+bool Backend::materializeAttachments(const QUrl &destination, QString *error) const {
+    const QString root = QFileInfo(destination.toLocalFile()).absolutePath();
+    const bool moving = !m_fileUrl.isLocalFile()
+        || QFileInfo(m_fileUrl.toLocalFile()).absolutePath() != root;
+    QMap<QString, QString> paths;
+    const QString documentPath = QFileInfo(destination.toLocalFile()).absoluteFilePath();
+    const auto collidesWithDocument = [&documentPath](const QString &path) {
+        if (path.isEmpty()) return false;
+        const QFileInfo candidate(path), document(documentPath);
+        return QDir::cleanPath(candidate.absoluteFilePath()).compare(QDir::cleanPath(documentPath), Qt::CaseInsensitive) == 0
+            || (!candidate.canonicalFilePath().isEmpty()
+                && candidate.canonicalFilePath() == document.canonicalFilePath());
+    };
+    const QStringList referencedImages = Attachments::imagePaths(currentDocumentText());
+    QSet<QString> referencedPaths;
+    for (const QString &reference : referencedImages)
+        referencedPaths.insert(QDir::cleanPath(Attachments::decodedPath(reference)));
+    QStringList dependencies = referencedImages;
+    dependencies.append(m_stagedAttachments.keys());
+    // Collision protection is independent of whether an image needs copying:
+    // same-folder Save As must not replace an already-materialized image, nor
+    // may a new Markdown target overwrite an image in the original folder.
+    for (const QString &reference : dependencies) {
+        const QUrl url(reference);
+        if (!url.isLocalFile() && !url.isRelative()) continue;
+        const QString path = Attachments::decodedPath(reference);
+        QString target;
+        QString source;
+        if (url.isLocalFile() && url.host().isEmpty()) {
+            source = url.toLocalFile();
+        } else if (url.isRelative() && url.host().isEmpty() && QDir::isAbsolutePath(path)) {
+            source = path;
+        } else if (url.isRelative() && Attachments::safeLocalPath(path)) {
+            target = QDir(root).filePath(path);
+            if (m_fileUrl.isLocalFile()) source = QFileInfo(m_fileUrl.toLocalFile()).dir().filePath(path);
+        }
+        if (collidesWithDocument(target) || collidesWithDocument(source)) {
+            *error = QStringLiteral("The document destination would overwrite an attachment: %1").arg(reference);
+            return false;
+        }
+    }
+    if (moving) {
+        for (const QString &reference : referencedImages) {
+            const QUrl url(reference);
+            const QString path = Attachments::decodedPath(reference);
+            if (!url.isRelative() || QDir::isAbsolutePath(path))
+                continue; // absolute filesystem paths and file: URLs stay unchanged
+            if (!Attachments::safeLocalPath(path) || url.hasQuery() || url.hasFragment()) {
+                *error = QStringLiteral("Cannot safely copy attachment path: %1").arg(reference);
+                return false;
+            }
+            paths.insert(path, reference);
+        }
+    }
+    // Also preserve staged images no longer referenced after undo, or whose
+    // syntax the conservative source scanner cannot recognize. No image is
+    // deleted by undo, and a later redo remains valid after Save As.
+    for (auto it = m_stagedAttachments.cbegin(); it != m_stagedAttachments.cend(); ++it) {
+        if (!moving && m_materializedAttachments.contains(it.key())) continue;
+        // Exact decoded references only: substrings and code examples do not
+        // make a missing undo alias live; percent encoding must not hide it.
+        if (!resolveImageUrl(it.key()).isEmpty() || referencedPaths.contains(it.key()))
+            paths.insert(it.key(), it.key());
+    }
+    // Preflight every source/collision before creating any attachment files.
+    for (auto it = paths.cbegin(); it != paths.cend(); ++it) {
+        const QString target = QDir(root).filePath(it.key());
+        const QFileInfo targetInfo(target), documentInfo(documentPath);
+        if (QDir::cleanPath(target).compare(QDir::cleanPath(documentPath), Qt::CaseInsensitive) == 0
+            || (!targetInfo.canonicalFilePath().isEmpty()
+                && targetInfo.canonicalFilePath() == documentInfo.canonicalFilePath())) {
+            *error = QStringLiteral("The document and an attachment have the same destination: %1").arg(it.key());
+            return false;
+        }
+        const QUrl source = resolveImageUrl(it.value());
+        if (source.isEmpty()) {
+            *error = QStringLiteral("Attachment is missing: %1. Locate it before saving.").arg(it.key());
+            return false;
+        }
+        if (targetInfo.exists() && (targetInfo.isSymLink() || !targetInfo.isFile()
+            || !Attachments::sameFileContents(source.toLocalFile(), target))) {
+            *error = QStringLiteral("Attachment already exists: %1").arg(it.key());
+            return false;
+        }
+    }
+    for (auto it = paths.cbegin(); it != paths.cend(); ++it)
+        if (!Attachments::copyInto(resolveImageUrl(it.value()).toLocalFile(), root, it.key(), error)) return false;
+    return true;
+}
+
+bool Backend::updateAttachment(const QString &oldPath, const QString &newPath, const QString &source) {
+    if (!m_document || !Attachments::safeRelativePath(newPath) || oldPath == newPath
+        || m_stagedAttachments.contains(newPath)
+        || (m_fileUrl.isLocalFile() && QFileInfo::exists(QFileInfo(m_fileUrl.toLocalFile()).dir().filePath(newPath)))) {
+        setStatus(QStringLiteral("Choose a different, unused relative attachment path."));
+        return false;
+    }
+    QVector<Attachments::Reference> matches;
+    for (const auto &ref : Attachments::references(currentDocumentText()))
+        if (Attachments::decodedPath(ref.path) == Attachments::decodedPath(oldPath)) matches.append(ref);
+    std::sort(matches.begin(), matches.end(), [](const auto &a, const auto &b) { return a.start > b.start; });
+    // Confirm source spans with Qt's Markdown parser. In particular, a matching
+    // string in indented/container code or image alt text is not a reference.
+    QString probedText = currentDocumentText();
+    QStringList probeNames;
+    const QString probeId = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    for (qsizetype i = 0; i < matches.size(); ++i) {
+        const QString probe = QStringLiteral("omawrite-probe-%1-%2.png").arg(probeId).arg(i);
+        probeNames.append(probe);
+        probedText.replace(matches[i].start, matches[i].length, probe);
+    }
+    const QStringList renderedProbes = Attachments::imagePaths(probedText);
+    QVector<Attachments::Reference> confirmed;
+    for (qsizetype i = 0; i < matches.size(); ++i)
+        if (renderedProbes.contains(probeNames[i])) confirmed.append(matches[i]);
+    matches = confirmed;
+    if (matches.isEmpty()) {
+        setStatus(QStringLiteral("No supported matching image references in this document."));
+        return false;
+    }
+    QString proposedText = currentDocumentText();
+    for (const auto &ref : matches) proposedText.replace(ref.start, ref.length, newPath);
+    for (const QString &reference : Attachments::imagePaths(proposedText)) {
+        if (Attachments::decodedPath(reference) == Attachments::decodedPath(oldPath)) {
+            setStatus(QStringLiteral("This image uses unsupported source syntax; edit its references manually."));
+            return false;
+        }
+    }
+    const QString root = attachmentStoragePath();
+    const QString id = QUuid::createUuid().toString(QUuid::WithoutBraces) + QStringLiteral(".asset");
+    QString error;
+    if (!QDir().mkpath(root) || !Attachments::copyInto(source, root, id, &error)) {
+        setStatus(error.isEmpty() ? QStringLiteral("Could not create attachment recovery storage.") : error);
+        return false;
+    }
+    // Retain the old local asset as an undo alias too, even if it was never
+    // pasted in this session. Save As then preserves an undo back to its path.
+    const QString oldRelative = Attachments::decodedPath(oldPath);
+    if (Attachments::safeLocalPath(oldRelative) && !m_stagedAttachments.contains(oldRelative)) {
+        const QUrl oldSource = resolveImageUrl(oldPath);
+        if (!oldSource.isEmpty()) {
+            QString oldId = id;
+            if (!Attachments::sameFileContents(oldSource.toLocalFile(), source)) {
+                oldId = QUuid::createUuid().toString(QUuid::WithoutBraces) + QStringLiteral(".asset");
+                if (!Attachments::copyInto(oldSource.toLocalFile(), root, oldId, &error)) {
+                    setStatus(error);
+                    return false;
+                }
+            }
+            m_stagedAttachments.insert(oldRelative, oldId);
+            if (m_fileUrl.isLocalFile()) m_materializedAttachments.insert(oldRelative);
+        }
+    }
+    // Retain both old and new staged entries: undo must not remove images.
+    m_stagedAttachments.insert(newPath, id);
+    QTextCursor cursor(m_document);
+    cursor.beginEditBlock();
+    for (const auto &ref : matches) {
+        cursor.setPosition(ref.start);
+        cursor.setPosition(ref.start + ref.length, QTextCursor::KeepAnchor);
+        cursor.insertText(newPath);
+    }
+    cursor.endEditBlock();
+    emit attachmentUrlsChanged();
+    scheduleRecovery();
+    return true;
+}
+
+bool Backend::renameAttachment(const QString &oldPath, const QString &newRelativePath) {
+    const QUrl source = resolveImageUrl(oldPath);
+    if (source.isEmpty()) {
+        setStatus(QStringLiteral("Attachment is missing; locate a local file first."));
+        return false;
+    }
+    return updateAttachment(oldPath, newRelativePath, source.toLocalFile());
+}
+
+bool Backend::locateAttachment(const QString &oldPath, const QUrl &localFile, const QString &newRelativePath) {
+    if (!localFile.isLocalFile() || !localFile.host().isEmpty()
+        || !QFileInfo(localFile.toLocalFile()).isFile()) {
+        setStatus(QStringLiteral("Choose an existing local attachment file."));
+        return false;
+    }
+    QString path = newRelativePath;
+    if (path.isEmpty()) {
+        QString suffix = QFileInfo(localFile.toLocalFile()).suffix();
+        if (suffix.isEmpty() || !Attachments::safeRelativePath(suffix)) suffix = QStringLiteral("img");
+        path = QStringLiteral("img/attachment-%1.%2")
+            .arg(QUuid::createUuid().toString(QUuid::WithoutBraces), suffix);
+    }
+    return updateAttachment(oldPath, path, localFile.toLocalFile());
 }
 
 QString Backend::clipboardUrl() const {
@@ -842,6 +1109,13 @@ void Backend::saveTo(const QUrl &url) {
         return;
     }
 
+    QString attachmentError;
+    if (!materializeAttachments(url, &attachmentError)) {
+        setStatus(attachmentError);
+        emit saveFailed();
+        return;
+    }
+
     const QString targetName = QFileInfo(url.toLocalFile()).fileName();
     QSaveFile file(url.toLocalFile());
     // Without a temporary file beside it, as in a folder only the file itself
@@ -854,7 +1128,11 @@ void Backend::saveTo(const QUrl &url) {
     }
 
     const QByteArray contents = currentDocumentText().toUtf8();
-    file.write(contents);
+    if (file.write(contents) != contents.size()) {
+        setStatus(QStringLiteral("Could not write %1.").arg(targetName));
+        emit saveFailed();
+        return;
+    }
 
     // QSaveFile commits by replacing the target. Stop watching the old inode
     // before that replacement so our own write is not classified as external.
@@ -873,6 +1151,9 @@ void Backend::saveTo(const QUrl &url) {
     m_autoSaveSuspended = false;
     m_autoSaveTimer.stop();
     setFileUrl(url);
+    for (auto it = m_stagedAttachments.cbegin(); it != m_stagedAttachments.cend(); ++it)
+        m_materializedAttachments.insert(it.key());
+    emit attachmentUrlsChanged();
     watchCurrentFile();
     QSettings().setValue(lastSaveDirectorySetting,
                          QFileInfo(url.toLocalFile()).absolutePath());
@@ -970,16 +1251,27 @@ void Backend::writeRecovery() {
     if (!m_modified)
         return;
     const QString path = m_recoveryPath;
-    if (path.isEmpty())
+    if (path.isEmpty() || !QDir().mkpath(QFileInfo(path).absolutePath())) {
+        setStatus(QStringLiteral("Recovery storage is unavailable; save your document before closing."));
         return;
-    QDir().mkpath(QFileInfo(path).absolutePath());
+    }
     QSaveFile file(path);
-    if (!file.open(QIODevice::WriteOnly))
+    if (!file.open(QIODevice::WriteOnly)) {
+        setStatus(QStringLiteral("Could not open recovery storage; save your document before closing."));
         return;
+    }
+    QJsonObject attachments;
+    for (auto it = m_stagedAttachments.cbegin(); it != m_stagedAttachments.cend(); ++it)
+        attachments.insert(it.key(), it.value());
+    QJsonArray materialized;
+    for (const QString &path : m_materializedAttachments) materialized.append(path);
     const QJsonObject recovery{{QStringLiteral("fileUrl"), m_fileUrl.toString()},
-                               {QStringLiteral("text"), currentDocumentText()}};
-    file.write(QJsonDocument(recovery).toJson(QJsonDocument::Compact));
-    file.commit();
+                               {QStringLiteral("text"), currentDocumentText()},
+                               {QStringLiteral("attachments"), attachments},
+                               {QStringLiteral("materializedAttachments"), materialized}};
+    const QByteArray bytes = QJsonDocument(recovery).toJson(QJsonDocument::Compact);
+    if (file.write(bytes) != bytes.size() || !file.commit())
+        setStatus(QStringLiteral("Could not write recovery draft; keep this window open and save your document."));
 }
 
 void Backend::restoreRecovery() {
@@ -993,6 +1285,24 @@ void Backend::restoreRecovery() {
         return;
     }
     const QJsonObject recovery = json.object();
+    m_stagedAttachments.clear();
+    m_materializedAttachments.clear();
+    const QJsonObject attachments = recovery.value(QStringLiteral("attachments")).toObject();
+    const QRegularExpression storageId(QStringLiteral("^[a-f0-9-]{36}\\.(png|asset)$"));
+    bool missingAttachment = false;
+    for (auto it = attachments.begin(); it != attachments.end(); ++it) {
+        const QString id = it.value().toString();
+        if (!Attachments::safeLocalPath(it.key()) || !storageId.match(id).hasMatch()) {
+            missingAttachment = true;
+            continue;
+        }
+        // Keep missing IDs too: saving must fail, not silently drop the image.
+        m_stagedAttachments.insert(it.key(), id);
+        missingAttachment |= !QFileInfo::exists(QDir(attachmentStoragePath()).filePath(id));
+    }
+    for (const auto &value : recovery.value(QStringLiteral("materializedAttachments")).toArray())
+        if (m_stagedAttachments.contains(value.toString())) m_materializedAttachments.insert(value.toString());
+    emit attachmentUrlsChanged();
     loadDocumentText(recovery.value(QStringLiteral("text")).toString());
     const QUrl recoveredUrl(recovery.value(QStringLiteral("fileUrl")).toString());
     QFile diskFile(recoveredUrl.toLocalFile());
@@ -1007,7 +1317,9 @@ void Backend::restoreRecovery() {
     m_autoSaveSuspended = recoveredUrl.isLocalFile();
     watchCurrentFile();
     setModified(true);
-    setStatus(QStringLiteral("Recovered unsaved changes"));
+    setStatus(missingAttachment
+        ? QStringLiteral("Recovered unsaved changes; some staged attachments are missing or invalid.")
+        : QStringLiteral("Recovered unsaved changes"));
 }
 
 void Backend::clearRecovery() {

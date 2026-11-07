@@ -111,6 +111,65 @@ void MarkdownHighlighter::setCaret(int position) {
     rehighlightBlock(entered);
 }
 
+void MarkdownHighlighter::setSelection(int start, int end) {
+    const QTextCursor previous = m_selection;
+    const int last = document()->characterCount() - 1;
+    start = qBound(0, start, last);
+    end = qBound(0, end, last);
+    m_selection = QTextCursor(document());
+    m_selection.setPosition(qMin(start, end));
+    m_selection.setPosition(qMax(start, end), QTextCursor::KeepAnchor);
+    m_selection.setKeepPositionOnInsert(true);
+
+    // Inclusive endpoint blocks match the heading activation rule. Only
+    // restyle the symmetric difference: dragging within the same blocks or
+    // reporting an unchanged selection must not rehighlight the whole range.
+    const auto range = [this](const QTextCursor &cursor) {
+        return cursor.isNull() || !cursor.hasSelection()
+            ? std::pair<int, int>{-1, -2}
+            : std::pair<int, int>{document()->findBlock(cursor.selectionStart()).blockNumber(),
+                                  document()->findBlock(cursor.selectionEnd()).blockNumber()};
+    };
+    const auto oldRange = range(previous);
+    const auto newRange = range(m_selection);
+    if (oldRange == newRange)
+        return;
+    std::vector<std::pair<int, int>> changed;
+    const auto subtract = [&changed](std::pair<int, int> a, std::pair<int, int> b) {
+        if (a.first > a.second)
+            return;
+        if (b.first > b.second || a.second < b.first || a.first > b.second) {
+            changed.push_back(a);
+            return;
+        }
+        if (a.first < b.first)
+            changed.emplace_back(a.first, b.first - 1);
+        if (a.second > b.second)
+            changed.emplace_back(b.second + 1, a.second);
+    };
+    subtract(oldRange, newRange);
+    subtract(newRange, oldRange);
+    int count = 0;
+    for (const auto &interval : changed)
+        count += interval.second - interval.first + 1;
+    QTextDocument *doc = document();
+    const QSizeF pageSize = doc->pageSize();
+    // As in rehighlightAll(), suppress quadratic downstream relayout for a
+    // large selection, then complete layout once on the GUI thread.
+    if (count > 8)
+        doc->setPageSize(QSizeF(0, 0));
+    for (const auto &interval : changed) {
+        for (QTextBlock block = doc->findBlockByNumber(interval.first);
+             block.isValid() && block.blockNumber() <= interval.second; block = block.next())
+            rehighlightBlock(block);
+    }
+    if (count > 8) {
+        doc->setPageSize(pageSize);
+        if (QAbstractTextDocumentLayout *layout = doc->documentLayout())
+            layout->documentSize();
+    }
+}
+
 void MarkdownHighlighter::rebuildFormats() {
     const QColor marker = m_darkMode ? QColor(QStringLiteral("#4f525a"))
                                      : QColor(QStringLiteral("#aeb1b5"));
@@ -207,6 +266,9 @@ void MarkdownHighlighter::highlightBlock(const QString &text) {
             || text.contains(QLatin1Char('~'))) {
             highlightInline(text);
         }
+        // Last among markup styles, so inline links/emphasis cannot restore
+        // heading markers that should be hidden (or hide active ones).
+        highlightHeadingMarkers(text);
     }
     highlightSearch(text);
 }
@@ -346,12 +408,59 @@ void MarkdownHighlighter::highlightSearch(const QString &text) {
 
     for (const int from : findMatches(text, m_searchQuery)) {
         const int documentStart = currentBlock().position() + from;
-        QTextCharFormat format = this->format(from);
-        format.setBackground(documentStart == m_currentMatchStart
-                                 ? m_currentSearchFormat.background()
-                                 : m_searchFormat.background());
-        setFormat(from, m_searchQuery.length(), format);
+        // A match can cross hidden heading markers and visible content.
+        // Preserve each character's markup, changing only its background.
+        for (int i = from; i < from + m_searchQuery.length(); ++i) {
+            QTextCharFormat format = this->format(i);
+            format.setBackground(documentStart == m_currentMatchStart
+                                     ? m_currentSearchFormat.background()
+                                     : m_searchFormat.background());
+            setFormat(i, 1, format);
+        }
     }
+}
+
+namespace {
+
+struct HeadingMarkers {
+    int openingEnd = 0;
+    int closingStart = -1;
+};
+
+HeadingMarkers headingMarkers(const QString &text) {
+    // ATX headings allow up to three leading spaces, one to six hashes,
+    // and require a space/tab or end of line after the opening hashes.
+    static const QRegularExpression openingRe(QStringLiteral("^ {0,3}#{1,6}(?:[ \\t]+|$)"));
+    const auto opening = openingRe.match(text);
+    if (!opening.hasMatch())
+        return {};
+    HeadingMarkers markers;
+    markers.openingEnd = int(opening.capturedEnd());
+    // Closing hashes are optional, must be whitespace-separated, and may
+    // only be followed by spaces/tabs. Escaped or embedded hashes are text.
+    static const QRegularExpression closingRe(QStringLiteral("[ \\t]+#+[ \\t]*$"));
+    const auto closing = closingRe.match(text);
+    if (closing.hasMatch())
+        markers.closingStart = qMax(markers.openingEnd, int(closing.capturedStart()));
+    return markers;
+}
+
+} // namespace
+
+void MarkdownHighlighter::highlightHeadingMarkers(const QString &text) {
+    const HeadingMarkers markers = headingMarkers(text);
+    if (!markers.openingEnd)
+        return;
+    const bool atCaret = !m_caret.isNull() && m_caret.block() == currentBlock();
+    const int start = currentBlock().position();
+    const bool selected = m_selection.hasSelection()
+        && m_selection.selectionStart() <= start + text.length()
+        && m_selection.selectionEnd() >= start;
+    const QTextCharFormat &markerFormat = atCaret || selected ? m_markerFormat
+                                                            : m_hiddenMarkerFormat;
+    setFormat(0, markers.openingEnd, markerFormat);
+    if (markers.closingStart >= 0)
+        setFormat(markers.closingStart, text.length() - markers.closingStart, markerFormat);
 }
 
 void MarkdownHighlighter::highlightMarkers(const QString &text) {
@@ -362,16 +471,10 @@ void MarkdownHighlighter::highlightMarkers(const QString &text) {
         return;
 
     const QChar firstChar = text.at(first);
-    if (first == 0 && firstChar == QLatin1Char('#')) {
-        static const QRegularExpression headingRe(QStringLiteral("^(#{1,6})(\\s+)(.*)$"));
-        const QRegularExpressionMatch heading = headingRe.match(text);
-        if (heading.hasMatch()) {
-            setFormat(0, heading.capturedLength(1) + heading.capturedLength(2),
-                      m_markerFormat);
-            setFormat(heading.capturedStart(3), heading.capturedLength(3),
-                      m_headingFormat);
-            return;
-        }
+    const HeadingMarkers heading = headingMarkers(text);
+    if (heading.openingEnd) {
+        setFormat(heading.openingEnd, text.length() - heading.openingEnd, m_headingFormat);
+        return;
     }
 
     if (firstChar == QLatin1Char('>')) {

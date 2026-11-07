@@ -10,8 +10,27 @@ else
   QMAKE=qmake
 fi
 
-mkdir -p "$BUILD_DIR"
-cd "$BUILD_DIR"
-"$QMAKE" "$ROOT/tests/tests.pro"
-make -j"$(nproc 2>/dev/null || echo 1)"
-QT_QPA_PLATFORM=offscreen ./tst_omawrite
+JOBS="${JOBS:-$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 1)}"
+
+run_suite() (
+  project="$1"
+  target="$2"
+  directory="$3"
+  mkdir -p "$directory"
+  cd "$directory"
+  "$QMAKE" "$ROOT/$project"
+  make -j"$JOBS"
+  executable="./$target"
+  if [ -x "./$target.app/Contents/MacOS/$target" ]; then
+    executable="./$target.app/Contents/MacOS/$target"
+  fi
+  QT_QPA_PLATFORM=offscreen "$executable"
+)
+
+run_suite tests/tests.pro tst_omawrite "$BUILD_DIR"
+run_suite tests/shortcutlabels.pro tst_shortcutlabels "$BUILD_DIR/shortcutlabels"
+run_suite tests/headings/headings.pro tst_headings "$BUILD_DIR/headings"
+run_suite tests/attachments/attachments.pro tst_attachments "$BUILD_DIR/attachments"
+run_suite tests/previewblocks/previewblocks.pro tst_previewblocks "$BUILD_DIR/previewblocks"
+run_suite tests/livepreview/livepreview.pro tst_livepreview "$BUILD_DIR/livepreview"
+run_suite tests/mermaid/mermaid.pro tst_mermaid "$BUILD_DIR/mermaid"

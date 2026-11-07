@@ -13,12 +13,21 @@ else
   exit 1
 fi
 
-JOBS="$(nproc 2>/dev/null || echo 1)"
+JOBS="${JOBS:-$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 1)}"
 
 mkdir -p "$BUILD_DIR"
 cd "$BUILD_DIR"
 
+# qmake can retain an old generated plist after ICON changes in an existing build.
+if [ "$(uname -s)" = "Darwin" ]; then
+  rm -f "$BUILD_DIR/omawrite.app/Contents/Info.plist"
+fi
+
 "$QMAKE" "$ROOT/omawrite.pro"
 make -j"$JOBS"
 
-echo "Built $BUILD_DIR/omawrite"
+if [ -x "$BUILD_DIR/omawrite.app/Contents/MacOS/omawrite" ]; then
+  echo "Built $BUILD_DIR/omawrite.app (open it with: open \"$BUILD_DIR/omawrite.app\")"
+else
+  echo "Built $BUILD_DIR/omawrite"
+fi

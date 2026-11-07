@@ -11,6 +11,7 @@
 #include <QFile>
 
 #include "backend.h"
+#include "livepreview.h"
 #include "cli.h"
 #include "systemtheme.h"
 
@@ -73,6 +74,7 @@ int main(int argc, char *argv[]) {
         applyInterfaceFont(backend.textScale());
     });
 
+    qmlRegisterType<LivePreview>("Omawrite", 1, 0, "LivePreview");
     QQmlApplicationEngine engine;
     QObject::connect(&engine, &QQmlApplicationEngine::warnings, &app,
                      [](const QList<QQmlError> &warnings) {

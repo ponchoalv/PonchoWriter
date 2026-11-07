@@ -2,13 +2,31 @@
 
 A dead-simple Markdown writing app built with Qt Quick and C++ that automatically follows system dark/light mode.
 
+This is the [ponchoalv fork](https://github.com/ponchoalv/omawrite) of
+[omacom/omawrite](https://github.com/omacom/omawrite). See the
+[writing and shortcut guide](docs/writing-and-shortcuts.md),
+[native preview design](docs/live-preview-design.md),
+[example document](docs/preview-example.md), and
+[test guide](docs/testing.md), and
+[Windows, macOS and Linux installation guide](docs/install.md).
+
+## Fork additions
+
+- Native Edit/Read toggle with inactive table/local-image previews and caret-aware heading markers. Markdown stays the source of truth with one undo history.
+- Clipboard screenshot paste, durable recovery-safe staging, `img/` materialization and collision-safe attachment handling across Save As.
+- Optional constrained Mermaid rendering through an already-installed external `mmdc`; no embedded WebEngine or automatic runtime downloads.
+- macOS F1 key labels, nonconflicting Replace/fullscreen shortcuts and a bundled app icon.
+- Optional image name/folder and Locate actions in the image context menu; current-document changes are undoable.
+
+The screenshots below are from upstream, before these fork additions.
+
 <img width="2948" height="3227" alt="screenshot-2026-06-23_15-24-08" src="https://github.com/user-attachments/assets/4e930c0d-edda-4046-b444-a59eff523329" />
 <img width="2948" height="3227" alt="screenshot-2026-06-23_15-23-23" src="https://github.com/user-attachments/assets/8ced7c26-961b-4ded-b263-84403001a951" />
 
 
 ## Install
 
-Install via the Omarchy Package Repository via the `omawrite` package. It's installed by default in new installations of Omarchy (from Quattro forward).
+The **upstream** app is available through the Omarchy Package Repository as `omawrite` and is included in new Omarchy installations (from Quattro forward). These fork features require building this checkout; they are not part of that upstream package.
 
 ## Command line
 
@@ -17,15 +35,19 @@ Install via the Omarchy Package Repository via the `omawrite` package. It's inst
 
 ## Shortcuts
 
-- `Ctrl+S` saves. Unsaved documents use the XDG desktop portal file picker.
+On macOS, use **Cmd** instead of **Ctrl** in the list below unless noted.
+The `F1` reference displays platform-specific key names, including Option on Mac.
+
+- `Ctrl+S` saves. Unsaved documents use a native macOS dialog or the Linux XDG desktop portal picker.
 - `Ctrl+Shift+S` saves as.
-- `Ctrl+O` opens a Markdown file through the portal picker.
+- `Ctrl+O` opens a Markdown file through the platform file picker.
 - `Ctrl+P` opens the system print dialog.
 - `Ctrl+N` opens a new Omawrite window.
 - `Ctrl+Z`, `Ctrl+Shift+Z`, and `Ctrl+Y` handle undo and redo.
-- `Super+F` toggles fullscreen. Qt maps this key as `Meta+F`.
+- `Super+F` toggles fullscreen on Linux; `Cmd+Ctrl+F` on macOS. `F11` is also available.
 - `Ctrl+F` searches the document. Use `Enter` or `Ctrl+G` for the next match and `Shift+Enter` for the previous match.
-- `Ctrl+H` opens find and replace.
+- `Ctrl+H` opens find and replace on Linux; `Cmd+Option+F` on macOS (leaving `Cmd+H` for Hide App).
+- `Ctrl+Shift+M` (`Cmd+Shift+M` on macOS) toggles Read/Edit.
 - `Ctrl+B`, `Ctrl+I`, and `Ctrl+Shift+X` toggle bold, italic, and strikethrough Markdown. `Ctrl+K` inserts a link.
 - `Ctrl+=` and `Ctrl+-` change the text size, `Ctrl+0` returns to the default.
   `Ctrl+scroll` does the same.
@@ -53,8 +75,9 @@ Omawrite at the size it is designed around; larger and smaller sizes scale from 
 
 ## Requirements
 
-- Qt 6: `qt6-base` and `qt6-declarative` (which includes Qt Quick Controls)
-- `xdg-desktop-portal` and a portal backend
+- **Qt 6.7 or newer**: `qt6-base` and `qt6-declarative` (including Qt Quick Controls, Quick Dialogs and QtTest for tests).
+- Linux: `xdg-desktop-portal` and a portal backend. macOS and Windows use native dialogs.
+- A matching C++17 compiler/build kit. See [installation instructions](docs/install.md); Windows/Linux builds have not been verified on this Mac.
 
 The IBM Plex Mono font is bundled under the SIL Open Font License 1.1; see
 `fonts/OFL.txt`. The font is copyright IBM Corp.
@@ -71,8 +94,14 @@ QtTest; both ship in `qt6-base`.
 ./build/omawrite
 ```
 
-`bin/test` runs the Qt test suite with the offscreen platform, so it does not
-require an active graphical session. To open a file with the local build:
+On macOS, launch the app with `open build/omawrite.app`; the executable is
+`build/omawrite.app/Contents/MacOS/omawrite`. Homebrew Qt supplies `qmake6`.
+The bundle includes `assets/omawrite.icns`, generated from the upstream SVG artwork;
+no icon converter is needed to build.
+
+`bin/test` runs the Qt test suites with the offscreen platform, so they do not
+require an active graphical session. It handles both Unix executables and macOS
+app bundles. To open a file with the local Linux build:
 
 ```sh
 ./build/omawrite path/to/document.md

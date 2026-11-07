@@ -15,6 +15,9 @@ public:
                   const QString &accent, const QString &codeBackground);
     void setSearch(const QString &query, int currentMatchStart);
     void setCaret(int position);
+    // Document offsets; reversed endpoints are accepted. A collapsed range
+    // clears the selection. Call alongside setCaret when the editor selects.
+    void setSelection(int start, int end);
     void refreshFont();
 
     struct Span {
@@ -65,6 +68,7 @@ private:
     void rebuildFormats();
     void rehighlightAll();
     void highlightMarkers(const QString &text);
+    void highlightHeadingMarkers(const QString &text);
     void highlightInline(const QString &text);
     void highlightSearch(const QString &text);
 
@@ -90,6 +94,8 @@ private:
     // The markers of whatever markup the caret is in or against are shown,
     // so they can be seen and edited.
     QTextCursor m_caret;
+    // Tracks selected source positions through edits, without changing text.
+    QTextCursor m_selection;
     QTextCharFormat m_searchFormat;
     QTextCharFormat m_currentSearchFormat;
 };

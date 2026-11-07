@@ -6,14 +6,23 @@ ToolButton {
     id: control
     property bool readMode: false
     property color iconColor: "#909191"
+    property string shortcutPlatform: Qt.platform.os
+    readonly property string shortcutText: (shortcutPlatform === "osx" ? "Cmd" : "Ctrl") + "+Shift+M"
+    implicitWidth: 40
+    implicitHeight: 40
+    padding: 8
     Accessible.name: readMode ? "Edit Markdown" : "Read document"
     ToolTip.visible: hovered
-    ToolTip.text: (readMode ? "Edit" : "Read") + " (Ctrl+Shift+M)"
+    ToolTip.text: (readMode ? "Edit" : "Read") + " (" + shortcutText + ")"
     contentItem: Item {
         implicitWidth: 24
         implicitHeight: 24
         Canvas {
             id: canvas
+            objectName: "previewToggleCanvas"
+            // Center the logical 24px glyph, not its high-DPI backing surface.
+            x: (parent.width - 24) / 2
+            y: (parent.height - 24) / 2
             readonly property real dpr: Screen.devicePixelRatio
             width: 24 * dpr
             height: 24 * dpr

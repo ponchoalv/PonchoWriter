@@ -58,7 +58,7 @@ Use the upper-right **book/pencil** button or Cmd+Shift+M (Ctrl+Shift+M on Linux
 
 **Edit** keeps ordinary Markdown text editable. Supported inactive pipe tables and standalone local image paragraphs become native visual blocks. Click a block to reveal its source; move away to render it again. Selections crossing a block reveal source rather than copying an opaque picture. Headings and existing inline emphasis retain caret-aware markers.
 
-**Read** renders supported Markdown without an editing caret. Links are clickable. This uses Qt's Markdown/HTML subset, not a web browser: arbitrary web CSS/layout is not supported. Remote images are deliberately not fetched. Unsupported or unavailable visual blocks remain usable source; rendering is never a Markdown conversion on save. One canonical source document owns saving, search, formatting and undo.
+**Read** renders supported Markdown without an editing caret. Paragraphs and headings retain Edit's blank-line breathing room; wrapped lines, code lines and tight list items stay compact. Links use the same theme accent, and bold, italic and code backgrounds match Edit. Links are clickable. This uses Qt's Markdown/HTML subset, not a web browser: arbitrary web CSS/layout is not supported. Remote images are deliberately not fetched. Unsupported or unavailable visual blocks remain usable source; rendering is never a Markdown conversion on save. One canonical source document owns saving, search, formatting and undo.
 
 Try [preview-example.md](preview-example.md) for tables, images, Mermaid and fallback cases.
 

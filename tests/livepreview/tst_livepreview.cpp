@@ -10,6 +10,8 @@
 #include <QTextFragment>
 #include <QTextImageFormat>
 #include <QTextLayout>
+#include <QAbstractTextDocumentLayout>
+#include <QTextTable>
 #include <QInputMethodEvent>
 #include <QTemporaryDir>
 #include <QImage>
@@ -136,6 +138,95 @@ private slots:
                     .value<QImage>().isNull());
         QVERIFY(view->resource(QTextDocument::ImageResource, QUrl("preview:edit/31"))
                     .value<QImage>().isNull());
+    }
+
+    void readSpacingAndInlineStylesMatchEdit() {
+        const QString text = QStringLiteral("before\n\n# Header\n\nA **bold** *italic* [link](https://example.com) `code`.\n\nAnother paragraph.\n\n| A | B |\n| --- | --- |\n| cell | y |\n\nAfter table.\n\n```text\nfirst\nsecond\n```\n\n- one\n- two\n");
+        sourceItem->setProperty("text", text);
+        sourceItem->setProperty("cursorPosition", 0);
+        auto find = [&] (const QString &word) {
+            for (QTextBlock block = view->begin(); block.isValid(); block = block.next())
+                if (block.text().contains(word)) return block;
+            return QTextBlock();
+        };
+        auto gap = [&] (const QString &left, const QString &right) {
+            view->size();
+            return view->documentLayout()->blockBoundingRect(find(right)).top()
+                 - view->documentLayout()->blockBoundingRect(find(left)).bottom();
+        };
+        auto format = [&] (const QString &word, bool edit) {
+            const QTextBlock block = find(word);
+            const int start = block.text().indexOf(word);
+            if (edit) {
+                for (const auto &range : block.layout()->formats())
+                    if (start >= range.start && start < range.start + range.length) return range.format;
+            }
+            QTextCursor cursor(block);
+            cursor.setPosition(block.position() + start);
+            cursor.movePosition(QTextCursor::NextCharacter, QTextCursor::KeepAnchor);
+            return cursor.charFormat();
+        };
+        for (bool dark : {false, true}) {
+            viewItem->setProperty("previewDark", dark);
+            viewItem->setProperty("color", QColor(dark ? "#eeeeee" : "#222324"));
+            viewItem->setProperty("previewAccent", QColor("#c98545"));
+            for (int pixels : {16, 28}) {
+                QFont font = qvariant_cast<QFont>(viewItem->property("font"));
+                font.setPixelSize(pixels);
+                viewItem->setProperty("font", font);
+                controller->refresh();
+                flush();
+                const qreal headingGap = gap("Header", "bold");
+                const qreal paragraphGap = gap("bold", "Another");
+                const auto bold = format("bold", true);
+                const auto italic = format("italic", true);
+                const auto link = format("link", true);
+                const auto code = format("code", true);
+                controller->setReadMode(true);
+                QVERIFY(qAbs(gap("Header", "bold") - headingGap) < 1);
+                QVERIFY(qAbs(gap("bold", "Another") - paragraphGap) < 1);
+                QCOMPARE(format("bold", false).fontWeight(), bold.fontWeight());
+                QCOMPARE(format("italic", false).fontItalic(), italic.fontItalic());
+                QCOMPARE(format("link", false).foreground(), link.foreground());
+                QCOMPARE(format("link", false).fontUnderline(), link.fontUnderline());
+                QCOMPARE(format("link", false).anchorHref(), QStringLiteral("https://example.com"));
+                QCOMPARE(format("code", false).background(), code.background());
+                QCOMPARE(format("code", false).foreground(), code.foreground());
+                const QTextBlock first = find("first"), second = find("second");
+                QCOMPARE(first.blockFormat().bottomMargin(), 0.0);
+                QCOMPARE(second.blockFormat().topMargin(), 0.0);
+                QCOMPARE(find("one").blockFormat().bottomMargin(), 0.0);
+                QTextTable *table = QTextCursor(find("cell")).currentTable();
+                QVERIFY(table);
+                QCOMPARE(find("cell").blockFormat().bottomMargin(), 0.0);
+                QVERIFY(table->format().bottomMargin() > 0);
+                QCOMPARE(source->toPlainText(), text);
+                controller->setReadMode(false);
+            }
+        }
+    }
+
+    void nestedAndLooseListsKeepSourceSpacing() {
+        for (const QString &items : {QStringLiteral("- parent\n  - child\n- sibling"),
+                                    QStringLiteral("- parent\n\n- child\n\n- sibling")}) {
+            sourceItem->setProperty("text", "before\n\n" + items + "\n\nafter");
+            sourceItem->setProperty("cursorPosition", 0);
+            flush();
+            auto gap = [&] (const QString &left, const QString &right) {
+                view->size();
+                QRectF a, b;
+                for (auto block = view->begin(); block.isValid(); block = block.next()) {
+                    if (block.text().contains(left)) a = view->documentLayout()->blockBoundingRect(block);
+                    if (block.text().contains(right)) b = view->documentLayout()->blockBoundingRect(block);
+                }
+                return b.top() - a.bottom();
+            };
+            const qreal firstGap = gap("parent", "child"), secondGap = gap("child", "sibling");
+            controller->setReadMode(true);
+            QVERIFY(qAbs(gap("parent", "child") - firstGap) < 1);
+            QVERIFY(qAbs(gap("child", "sibling") - secondGap) < 1);
+            controller->setReadMode(false);
+        }
     }
 
     void headingSizesSurviveModeToggleAndZoom() {

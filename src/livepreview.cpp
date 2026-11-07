@@ -13,6 +13,9 @@
 #include <QTextBlock>
 #include <QTextCursor>
 #include <QTextImageFormat>
+#include <QTextLayout>
+#include <QTextTable>
+#include <QSet>
 #include <QTimer>
 #include <algorithm>
 
@@ -26,6 +29,107 @@ class ResourceFreeDocument : public QTextDocument {
 protected:
     QVariant loadResource(int, const QUrl &) override { return {}; }
 };
+QVector<bool> listBlankLines(const QString &source) {
+    // Qt drops list looseness during Markdown import. Keep only this small
+    // piece of source spacing metadata; never infer gaps from list identity
+    // (nested tight items belong to different QTextLists).
+    QVector<bool> gaps;
+    const QRegularExpression item(QStringLiteral("^\\s*(?:[-+*]|[0-9]+[.)])\\s+"));
+    const QRegularExpression fence(QStringLiteral("^\\s*(`{3,}|~{3,})(.*)$"));
+    QChar fenceCharacter;
+    int fenceLength = 0;
+    bool blank = false;
+    for (const QString &line : source.split(QLatin1Char('\n'))) {
+        const auto match = fence.match(line);
+        if (fenceLength) {
+            if (match.hasMatch() && match.captured(1).front() == fenceCharacter
+                && match.capturedLength(1) >= fenceLength && match.captured(2).trimmed().isEmpty())
+                fenceLength = 0;
+            continue;
+        }
+        if (match.hasMatch()) {
+            fenceCharacter = match.captured(1).front();
+            fenceLength = match.capturedLength(1);
+        } else if (item.match(line).hasMatch()) {
+            gaps.append(blank);
+            blank = false;
+        } else if (line.trimmed().isEmpty()) {
+            blank = true;
+        }
+    }
+    return gaps;
+}
+
+void styleReadDocument(QTextDocument &document, const QString &source,
+                       const QColor &foreground, const QColor &accent, bool dark) {
+    // Measure an actual blank editor line: pointSize() is -1 for pixel fonts,
+    // which makes Qt's imported Markdown paragraph margins collapse.
+    QTextLayout blank(QStringLiteral(" "), document.defaultFont());
+    blank.beginLayout();
+    QTextLine line = blank.createLine();
+    line.setLineWidth(100);
+    const qreal gap = line.height();
+    blank.endLayout();
+    const QColor codeBackground(dark ? QStringLiteral("#252525") : QStringLiteral("#eeeeee"));
+    const QColor quoteColor(dark ? QStringLiteral("#4f525a") : QStringLiteral("#aeb1b5"));
+    QSet<QTextTable *> tables;
+    QVector<bool> listGaps = listBlankLines(source);
+    int listCount = 0;
+    for (QTextBlock block = document.begin(); block.isValid(); block = block.next())
+        if (block.textList()) ++listCount;
+    // HTML/quoted/ambiguous list syntax is left tight rather than assigning
+    // unrelated source whitespace to the wrong imported list item.
+    if (listCount != listGaps.size()) listGaps.clear();
+    int listIndex = -1;
+    for (QTextBlock block = document.begin(); block.isValid(); block = block.next()) {
+        QTextCursor cursor(block);
+        QTextTable *table = cursor.currentTable();
+        if (table) tables.insert(table);
+        QTextBlockFormat format = block.blockFormat();
+        const bool code = format.hasProperty(QTextFormat::BlockCodeLanguage);
+        const QTextBlock next = block.next();
+        const bool nextCode = next.isValid()
+            && next.blockFormat().hasProperty(QTextFormat::BlockCodeLanguage);
+        if (block.textList()) ++listIndex;
+        const bool tightList = block.textList() && next.isValid() && next.textList()
+            && !listGaps.value(listIndex + 1, false);
+        const bool nextTable = next.isValid() && QTextCursor(next).currentTable();
+        format.setTopMargin(0);
+        format.setBottomMargin(!next.isValid() || table || nextTable || tightList
+                               || (code && nextCode) || block.text().isEmpty() ? 0 : gap);
+        cursor.setBlockFormat(format);
+        const bool quote = format.intProperty(QTextFormat::BlockQuoteLevel) > 0;
+        for (auto it = block.begin(); !it.atEnd(); ++it) {
+            const QTextFragment fragment = it.fragment();
+            const QTextCharFormat existing = fragment.charFormat();
+            QTextCharFormat patch;
+            patch.setForeground(quote ? quoteColor : foreground);
+            if (quote) patch.setFontItalic(true);
+            // Explicit Markdown code property, not the resolved font: the
+            // whole editor may itself use a monospace writing font.
+            if (code || (existing.hasProperty(QTextFormat::FontFixedPitch) && existing.fontFixedPitch())) {
+                patch.setForeground(foreground);
+                patch.setBackground(codeBackground);
+                patch.setFontFamilies(document.defaultFont().families());
+            }
+            if (existing.isAnchor() && !existing.anchorHref().isEmpty()) {
+                patch.setForeground(accent);
+                patch.setFontUnderline(true);
+            }
+            cursor.setPosition(fragment.position());
+            cursor.setPosition(fragment.position() + fragment.length(), QTextCursor::KeepAnchor);
+            cursor.mergeCharFormat(patch);
+        }
+    }
+    // Frame margins belong outside tables, never inside every cell paragraph.
+    for (QTextTable *table : tables) {
+        QTextTableFormat format = table->format();
+        const QTextBlock before = table->firstCursorPosition().block().previous();
+        format.setTopMargin(before.isValid() && !before.text().isEmpty() ? gap : 0);
+        format.setBottomMargin(gap);
+        table->setFormat(format);
+    }
+}
 }
 
 LivePreview::LivePreview(QObject *parent) : QObject(parent), m_mermaid(new MermaidRenderer(this)) {
@@ -314,6 +418,9 @@ void LivePreview::buildReadDocument(const QString &source) {
             cursor.insertImage(format);
         }
     }
+    styleReadDocument(rendered, markdown, m_viewItem->property("color").value<QColor>(),
+                      m_viewItem->property("previewAccent").value<QColor>(),
+                      m_viewItem->property("previewDark").toBool());
     clearViewResources();
     m_view->setHtml(rendered.toHtml());
     // Qt's HTML round-trip can lose the smallest heading's relative size.

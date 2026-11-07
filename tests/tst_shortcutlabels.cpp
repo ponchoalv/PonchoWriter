@@ -3,6 +3,7 @@
 #include <QQmlEngine>
 #include <QJSValue>
 #include <QQuickStyle>
+#include <QQuickItem>
 #include <memory>
 
 class ShortcutLabelsTest : public QObject {
@@ -11,6 +12,29 @@ class ShortcutLabelsTest : public QObject {
 private slots:
     void initTestCase() {
         QQuickStyle::setStyle(QStringLiteral("Basic"));
+    }
+
+    void previewToggleLabelsAndCentering() {
+        QQmlEngine engine;
+        QQmlComponent component(&engine, QUrl::fromLocalFile(
+            QFINDTESTDATA("../src/PreviewToggle.qml")));
+        std::unique_ptr<QObject> object(component.create());
+        QVERIFY2(object, qPrintable(component.errorString()));
+        auto *button = qobject_cast<QQuickItem *>(object.get());
+        auto *canvas = object->findChild<QQuickItem *>("previewToggleCanvas");
+        QVERIFY(button && canvas);
+        for (const QString &platform : {QStringLiteral("osx"), QStringLiteral("linux"), QStringLiteral("windows")}) {
+            object->setProperty("shortcutPlatform", platform);
+            QCOMPARE(object->property("shortcutText").toString(),
+                     platform == "osx" ? QStringLiteral("Cmd+Shift+M") : QStringLiteral("Ctrl+Shift+M"));
+        }
+        for (int size : {40, 52}) {
+            button->setWidth(size);
+            button->setHeight(size);
+            QCoreApplication::processEvents();
+            const QPointF center = canvas->mapToItem(button, QPointF(canvas->width() / 2, canvas->height() / 2));
+            QCOMPARE(center, QPointF(size / 2.0, size / 2.0));
+        }
     }
 
     void labels_data() {

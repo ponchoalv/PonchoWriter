@@ -108,6 +108,11 @@ private slots:
         QObject *source = window->findChild<QObject *>(QStringLiteral("sourceEditor"));
         QObject *view = window->findChild<QObject *>(QStringLiteral("previewEditor"));
         QVERIFY(source && view);
+        auto *toggle = window->findChild<QQuickItem *>(QStringLiteral("readEditToggle"));
+        auto *glyph = toggle ? toggle->findChild<QQuickItem *>(QStringLiteral("previewToggleCanvas")) : nullptr;
+        QVERIFY(toggle && glyph);
+        QCOMPARE(glyph->mapToItem(toggle, QPointF(glyph->width() / 2, glyph->height() / 2)),
+                 QPointF(toggle->width() / 2, toggle->height() / 2));
         QImage image(80, 40, QImage::Format_ARGB32);
         image.fill(Qt::blue);
         QGuiApplication::clipboard()->setImage(image);

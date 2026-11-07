@@ -108,6 +108,16 @@ private slots:
         QObject *source = window->findChild<QObject *>(QStringLiteral("sourceEditor"));
         QObject *view = window->findChild<QObject *>(QStringLiteral("previewEditor"));
         QVERIFY(source && view);
+        for (bool dark : {false, true}) {
+            backend.setDarkMode(dark);
+            QCoreApplication::processEvents();
+            const QColor body = window->property("bodyTextColor").value<QColor>();
+            const QColor strong(backend.themeForeground());
+            QCOMPARE(view->property("color").value<QColor>(), body);
+            QCOMPARE(source->property("color").value<QColor>(), body);
+            QCOMPARE(view->property("previewForeground").value<QColor>(), strong);
+            QVERIFY(dark ? qGray(body.rgb()) < qGray(strong.rgb()) : qGray(body.rgb()) > qGray(strong.rgb()));
+        }
         auto *toggle = window->findChild<QQuickItem *>(QStringLiteral("readEditToggle"));
         auto *glyph = toggle ? toggle->findChild<QQuickItem *>(QStringLiteral("previewToggleCanvas")) : nullptr;
         QVERIFY(toggle && glyph);

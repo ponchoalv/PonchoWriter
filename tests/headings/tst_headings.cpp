@@ -24,7 +24,7 @@ class HeadingTests : public QObject {
     }
 
 private slots:
-    void headingSizesMatchReadAndActiveMarkersAreWarm() {
+    void headingSizesMatchReadAndActiveMarkersAreMuted() {
         for (bool pixels : {false, true}) {
             for (int size : {12, 24}) {
                 for (bool dark : {false, true}) {
@@ -58,7 +58,7 @@ private slots:
                         document.size();
                         QCOMPARE(renderedSize(document.begin(), level + 1, 5), expected);
                         QCOMPARE(renderedSize(document.begin(), 0, level), expected);
-                        const QColor marker = dark ? QColor("#e5a35b") : QColor("#996020");
+                        const QColor marker = dark ? QColor("#4f525a") : QColor("#aeb1b5");
                         QCOMPARE(formatAt(document, 0).foreground().color(), marker);
                         QCOMPARE(formatAt(document, markdown.size() - 1).foreground().color(), marker);
                         QCOMPARE(document.toPlainText(), source);

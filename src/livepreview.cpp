@@ -29,6 +29,11 @@ class ResourceFreeDocument : public QTextDocument {
 protected:
     QVariant loadResource(int, const QUrl &) override { return {}; }
 };
+QColor strongForeground(QObject *view) {
+    const QColor foreground = view->property("previewForeground").value<QColor>();
+    return foreground.isValid() ? foreground : view->property("color").value<QColor>();
+}
+
 QVector<bool> listBlankLines(const QString &source) {
     // Qt drops list looseness during Markdown import. Keep only this small
     // piece of source spacing metadata; never infer gaps from list identity
@@ -61,7 +66,7 @@ QVector<bool> listBlankLines(const QString &source) {
 }
 
 void styleReadDocument(QTextDocument &document, const QString &source,
-                       const QColor &foreground, const QColor &accent, bool dark) {
+                       const QColor &foreground, const QColor &body, const QColor &accent, bool dark) {
     // Measure an actual blank editor line: pointSize() is -1 for pixel fonts,
     // which makes Qt's imported Markdown paragraph margins collapse.
     QTextLayout blank(QStringLiteral(" "), document.defaultFont());
@@ -103,7 +108,7 @@ void styleReadDocument(QTextDocument &document, const QString &source,
             const QTextFragment fragment = it.fragment();
             const QTextCharFormat existing = fragment.charFormat();
             QTextCharFormat patch;
-            patch.setForeground(quote ? quoteColor : foreground);
+            patch.setForeground(quote ? quoteColor : (format.headingLevel() > 0 ? foreground : body));
             if (quote) patch.setFontItalic(true);
             // Explicit Markdown code property, not the resolved font: the
             // whole editor may itself use a monospace writing font.
@@ -418,7 +423,8 @@ void LivePreview::buildReadDocument(const QString &source) {
             cursor.insertImage(format);
         }
     }
-    styleReadDocument(rendered, markdown, m_viewItem->property("color").value<QColor>(),
+    styleReadDocument(rendered, markdown, strongForeground(m_viewItem),
+                      m_viewItem->property("color").value<QColor>(),
                       m_viewItem->property("previewAccent").value<QColor>(),
                       m_viewItem->property("previewDark").toBool());
     clearViewResources();
@@ -465,7 +471,7 @@ void LivePreview::rebuild() {
         m_highlighter->setDocument(m_view);
     const bool dark = m_viewItem->property("previewDark").toBool();
     m_highlighter->setTheme(dark, m_viewItem->property("previewBackground").value<QColor>().name(),
-                            m_viewItem->property("color").value<QColor>().name(),
+                            strongForeground(m_viewItem).name(),
                             m_viewItem->property("previewAccent").value<QColor>().name(),
                             dark ? QStringLiteral("#252525") : QStringLiteral("#eeeeee"));
     struct Replacement { PreviewBlocks::Block block; QImage image; };

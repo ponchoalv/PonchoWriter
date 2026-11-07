@@ -19,6 +19,11 @@ ApplicationWindow {
     readonly property bool darkMode: backend.darkMode
     readonly property color pageColor: backend.themeBackground
     readonly property color textColor: backend.themeForeground
+    // Keep prose softer than headings without fading links, selection or UI.
+    readonly property color bodyTextColor: Qt.rgba(
+        pageColor.r + (textColor.r - pageColor.r) * 0.76,
+        pageColor.g + (textColor.g - pageColor.g) * 0.76,
+        pageColor.b + (textColor.b - pageColor.b) * 0.76, 1)
     readonly property color mutedColor: darkMode ? "#909191" : "#aeb1b5"
     readonly property color selectionFill: backend.themeSelection
     readonly property color selectionTextColor: backend.themeSelectionForeground
@@ -733,7 +738,7 @@ ApplicationWindow {
                 selectByMouse: true
                 persistentSelection: true
                 activeFocusOnPress: true
-                color: win.textColor
+                color: win.bodyTextColor
                 selectedTextColor: win.selectionTextColor
                 selectionColor: win.selectionFill
                 font.family: backend.editorFont
@@ -1113,13 +1118,14 @@ ApplicationWindow {
                 selectByMouse: true
                 persistentSelection: true
                 readOnly: win.readMode
-                color: win.textColor
+                color: win.bodyTextColor
                 selectedTextColor: win.selectionTextColor
                 selectionColor: win.selectionFill
                 font: editor.font
                 renderType: editor.renderType
                 property color previewBackground: win.pageColor
                 property color previewAccent: backend.themeAccent
+                property color previewForeground: win.textColor
                 property bool previewDark: win.darkMode
                 onFontChanged: livePreview.refresh()
                 onCursorRectangleChanged: if (!win.projectionChanging && !livePreview.readMode) editorFlick.ensureCursorVisible()

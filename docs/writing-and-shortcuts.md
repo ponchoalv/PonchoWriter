@@ -43,7 +43,7 @@ Usual cut/copy/paste/select-all keys come from Qt's text editor. There is no use
 ## Existing writing behavior
 
 - Bold, italic, strike and link markers are caret-aware: source becomes visible when editing the relevant span.
-- Heading levels 1–6 use the same relative font sizes in Edit and Read, including when zoom changes. Inactive headings hide their `#` markers; moving into the heading reveals them in warm orange on dark themes (brown on light themes), at the heading's size. A selection crossing a heading reveals its markers too.
+- Heading levels 1–6 use the same relative font sizes in Edit and Read, including when zoom changes. Inactive headings hide their `#` markers; moving into the heading reveals them in the original muted gray, at the heading's size. A selection crossing a heading reveals its markers too.
 - Return normally inserts two newlines (a paragraph break); Shift+Return inserts one. Blank lines and fenced code use one newline.
 - Return continues lists and blockquotes; Return on an empty marker exits the list/quote.
 - Tab / Shift+Tab indent eligible list items by up to four columns, not arbitrary code blocks.
@@ -57,6 +57,8 @@ Usual cut/copy/paste/select-all keys come from Qt's text editor. There is no use
 Use the upper-right **book/pencil** button or Cmd+Shift+M (Ctrl+Shift+M on Linux).
 
 **Edit** keeps ordinary Markdown text editable. Supported inactive pipe tables and standalone local image paragraphs become native visual blocks. Click a block to reveal its source; move away to render it again. Selections crossing a block reveal source rather than copying an opaque picture. Headings and existing inline emphasis retain caret-aware markers.
+
+Body paragraphs use softer, theme-aware contrast while headings retain the stronger theme foreground. Text stays regular-weight unless Markdown calls for emphasis; links and selections keep their own colors rather than being faded with the whole editor.
 
 **Read** renders supported Markdown without an editing caret. Paragraphs and headings retain Edit's blank-line breathing room; wrapped lines, code lines and tight list items stay compact. Links use the same theme accent, and bold, italic and code backgrounds match Edit. Links are clickable. This uses Qt's Markdown/HTML subset, not a web browser: arbitrary web CSS/layout is not supported. Remote images are deliberately not fetched. Unsupported or unavailable visual blocks remain usable source; rendering is never a Markdown conversion on save. One canonical source document owns saving, search, formatting and undo.
 

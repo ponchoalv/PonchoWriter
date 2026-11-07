@@ -206,6 +206,38 @@ private slots:
         }
     }
 
+    void normalTextStaysRegularAcrossModeToggles() {
+        const QString text = QStringLiteral("# Header\n\nParagraph with **bold** text.\n\nAnother paragraph.");
+        sourceItem->setProperty("text", text);
+        sourceItem->setProperty("cursorPosition", text.size());
+        for (bool dark : {false, true}) {
+            const QColor strong(dark ? "#eeeeee" : "#222324");
+            const QColor body(dark ? "#b8b8b8" : "#575859");
+            viewItem->setProperty("previewDark", dark);
+            viewItem->setProperty("previewForeground", strong);
+            viewItem->setProperty("color", body);
+            controller->refresh();
+            flush();
+            for (bool read : {false, true, false, true, false}) {
+                controller->setReadMode(read);
+                for (auto block = view->begin(); block.isValid(); block = block.next()) {
+                    QTextCursor cursor(block);
+                    cursor.movePosition(QTextCursor::NextCharacter, QTextCursor::KeepAnchor);
+                    const auto format = cursor.charFormat();
+                    if (block.text().startsWith("Header") && read)
+                        QCOMPARE(format.foreground().color(), strong);
+                    if (!block.text().startsWith("Paragraph") && !block.text().startsWith("Another")) continue;
+                    QCOMPARE(format.fontWeight(), int(QFont::Normal));
+                    QVERIFY(!format.fontItalic());
+                    QCOMPARE(block.blockFormat().headingLevel(), 0);
+                    if (read) QCOMPARE(format.foreground().color(), body);
+                    else QCOMPARE(format.foreground().style(), Qt::NoBrush); // uses the TextEdit body color
+                }
+                QCOMPARE(source->toPlainText(), text);
+            }
+        }
+    }
+
     void nestedAndLooseListsKeepSourceSpacing() {
         for (const QString &items : {QStringLiteral("- parent\n  - child\n- sibling"),
                                     QStringLiteral("- parent\n\n- child\n\n- sibling")}) {

@@ -463,10 +463,8 @@ void MarkdownHighlighter::highlightHeadingMarkers(const QString &text) {
         && m_selection.selectionEnd() >= start;
     QTextCharFormat markerFormat = m_hiddenMarkerFormat;
     if (atCaret || selected) {
-        markerFormat = m_headingFormat;
+        markerFormat = m_markerFormat;
         markerFormat.setProperty(QTextFormat::FontSizeAdjustment, 4 - markers.level);
-        markerFormat.setForeground(m_darkMode ? QColor(QStringLiteral("#e5a35b"))
-                                             : QColor(QStringLiteral("#996020")));
     }
     setFormat(0, markers.openingEnd, markerFormat);
     if (markers.closingStart >= 0)

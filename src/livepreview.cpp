@@ -316,6 +316,18 @@ void LivePreview::buildReadDocument(const QString &source) {
     }
     clearViewResources();
     m_view->setHtml(rendered.toHtml());
+    // Qt's HTML round-trip can lose the smallest heading's relative size.
+    // Keep every heading on the same Markdown scale used by Edit highlighting.
+    for (QTextBlock block = m_view->begin(); block.isValid(); block = block.next()) {
+        const int level = block.blockFormat().headingLevel();
+        if (level < 1 || level > 6)
+            continue;
+        QTextCursor heading(block);
+        heading.select(QTextCursor::BlockUnderCursor);
+        QTextCharFormat size;
+        size.setProperty(QTextFormat::FontSizeAdjustment, 4 - level);
+        heading.mergeCharFormat(size);
+    }
     for (const auto &resource : resources) {
         m_view->addResource(QTextDocument::ImageResource, resource.first, resource.second);
         m_resourceNames.append(resource.first);

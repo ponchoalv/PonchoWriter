@@ -24,6 +24,51 @@ class HeadingTests : public QObject {
     }
 
 private slots:
+    void headingSizesMatchReadAndActiveMarkersAreWarm() {
+        for (bool pixels : {false, true}) {
+            for (int size : {12, 24}) {
+                for (bool dark : {false, true}) {
+                    for (int level = 1; level <= 6; ++level) {
+                        const QString markdown = QString(level, QLatin1Char('#')) + QStringLiteral(" Title ###");
+                        QFont font;
+                        if (pixels) font.setPixelSize(size);
+                        else font.setPointSize(size);
+                        QTextDocument document;
+                        document.setDefaultFont(font);
+                        const QString source = markdown + QStringLiteral("\n\nafter");
+                        document.setPlainText(source);
+                        MarkdownHighlighter highlighter(&document);
+                        highlighter.setTheme(dark, {}, {}, {}, {});
+                        highlighter.setCaret(source.size());
+                        highlighter.rehighlight();
+                        QTextDocument read;
+                        read.setDefaultFont(font);
+                        read.setMarkdown(markdown);
+                        document.size();
+                        read.size();
+                        const auto renderedSize = [](const QTextBlock &block, int start, int length) {
+                            const auto runs = block.layout()->glyphRuns(start, length);
+                            return runs.isEmpty() ? qreal(-1) : runs.first().rawFont().pixelSize();
+                        };
+                        const qreal expected = renderedSize(read.begin(), 0, 5);
+                        QVERIFY(expected > 0);
+                        QCOMPARE(renderedSize(document.begin(), level + 1, 5), expected);
+                        QVERIFY(hidden(document, 0));
+                        highlighter.setCaret(level + 2);
+                        document.size();
+                        QCOMPARE(renderedSize(document.begin(), level + 1, 5), expected);
+                        QCOMPARE(renderedSize(document.begin(), 0, level), expected);
+                        const QColor marker = dark ? QColor("#e5a35b") : QColor("#996020");
+                        QCOMPARE(formatAt(document, 0).foreground().color(), marker);
+                        QCOMPARE(formatAt(document, markdown.size() - 1).foreground().color(), marker);
+                        QCOMPARE(document.toPlainText(), source);
+                        QVERIFY(!document.isUndoAvailable());
+                    }
+                }
+            }
+        }
+    }
+
     void largeSelectionOnlyRestylesChangedBlocks() {
         class CountingHighlighter : public MarkdownHighlighter {
         public:

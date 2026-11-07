@@ -425,6 +425,7 @@ namespace {
 struct HeadingMarkers {
     int openingEnd = 0;
     int closingStart = -1;
+    int level = 0;
 };
 
 HeadingMarkers headingMarkers(const QString &text) {
@@ -436,6 +437,10 @@ HeadingMarkers headingMarkers(const QString &text) {
         return {};
     HeadingMarkers markers;
     markers.openingEnd = int(opening.capturedEnd());
+    const int hashStart = text.indexOf(QLatin1Char('#'));
+    while (hashStart + markers.level < markers.openingEnd
+           && text.at(hashStart + markers.level) == QLatin1Char('#'))
+        ++markers.level;
     // Closing hashes are optional, must be whitespace-separated, and may
     // only be followed by spaces/tabs. Escaped or embedded hashes are text.
     static const QRegularExpression closingRe(QStringLiteral("[ \\t]+#+[ \\t]*$"));
@@ -456,8 +461,13 @@ void MarkdownHighlighter::highlightHeadingMarkers(const QString &text) {
     const bool selected = m_selection.hasSelection()
         && m_selection.selectionStart() <= start + text.length()
         && m_selection.selectionEnd() >= start;
-    const QTextCharFormat &markerFormat = atCaret || selected ? m_markerFormat
-                                                            : m_hiddenMarkerFormat;
+    QTextCharFormat markerFormat = m_hiddenMarkerFormat;
+    if (atCaret || selected) {
+        markerFormat = m_headingFormat;
+        markerFormat.setProperty(QTextFormat::FontSizeAdjustment, 4 - markers.level);
+        markerFormat.setForeground(m_darkMode ? QColor(QStringLiteral("#e5a35b"))
+                                             : QColor(QStringLiteral("#996020")));
+    }
     setFormat(0, markers.openingEnd, markerFormat);
     if (markers.closingStart >= 0)
         setFormat(markers.closingStart, text.length() - markers.closingStart, markerFormat);
@@ -473,7 +483,11 @@ void MarkdownHighlighter::highlightMarkers(const QString &text) {
     const QChar firstChar = text.at(first);
     const HeadingMarkers heading = headingMarkers(text);
     if (heading.openingEnd) {
-        setFormat(heading.openingEnd, text.length() - heading.openingEnd, m_headingFormat);
+        QTextCharFormat headingFormat = m_headingFormat;
+        // Use the same relative sizes as Qt's Markdown heading importer (Read).
+        // A relative adjustment also follows pixel fonts, zoom and font changes.
+        headingFormat.setProperty(QTextFormat::FontSizeAdjustment, 4 - heading.level);
+        setFormat(heading.openingEnd, text.length() - heading.openingEnd, headingFormat);
         return;
     }
 

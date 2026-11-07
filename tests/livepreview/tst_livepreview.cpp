@@ -9,6 +9,7 @@
 #include <QTextBlock>
 #include <QTextFragment>
 #include <QTextImageFormat>
+#include <QTextLayout>
 #include <QInputMethodEvent>
 #include <QTemporaryDir>
 #include <QImage>
@@ -135,6 +136,41 @@ private slots:
                     .value<QImage>().isNull());
         QVERIFY(view->resource(QTextDocument::ImageResource, QUrl("preview:edit/31"))
                     .value<QImage>().isNull());
+    }
+
+    void headingSizesSurviveModeToggleAndZoom() {
+        QString text = QStringLiteral("before\n\n");
+        for (int level = 1; level <= 6; ++level)
+            text += QString(level, QLatin1Char('#')) + QStringLiteral(" Title %1\n\n").arg(level);
+        sourceItem->setProperty("text", text);
+        sourceItem->setProperty("cursorPosition", 0);
+        for (int pixels : {16, 28}) {
+            QFont font = qvariant_cast<QFont>(viewItem->property("font"));
+            font.setPixelSize(pixels);
+            viewItem->setProperty("font", font);
+            controller->refresh();
+            flush();
+            auto sizes = [&] {
+                view->size();
+                QList<qreal> result;
+                for (QTextBlock block = view->begin(); block.isValid(); block = block.next()) {
+                    const int start = block.text().indexOf(QStringLiteral("Title"));
+                    if (start < 0) continue;
+                    const auto runs = block.layout()->glyphRuns(start, 5);
+                    result.append(runs.isEmpty() ? -1 : runs.first().rawFont().pixelSize());
+                }
+                return result;
+            };
+            const auto editSizes = sizes();
+            QCOMPARE(editSizes.size(), 6);
+            QVERIFY(editSizes.first() > pixels);
+            QVERIFY(editSizes.last() > 0 && editSizes.last() < pixels);
+            controller->setReadMode(true);
+            QCOMPARE(sizes(), editSizes);
+            controller->setReadMode(false);
+            QCOMPARE(sizes(), editSizes);
+            QCOMPARE(source->toPlainText(), text);
+        }
     }
 
     void mappingUtf16() {

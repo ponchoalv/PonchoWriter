@@ -43,7 +43,7 @@ Usual cut/copy/paste/select-all keys come from Qt's text editor. There is no use
 ## Existing writing behavior
 
 - Bold, italic, strike and link markers are caret-aware: source becomes visible when editing the relevant span.
-- Inactive headings hide their `#` markers; moving into the heading reveals the source. A selection crossing a heading reveals its markers too.
+- Heading levels 1–6 use the same relative font sizes in Edit and Read, including when zoom changes. Inactive headings hide their `#` markers; moving into the heading reveals them in warm orange on dark themes (brown on light themes), at the heading's size. A selection crossing a heading reveals its markers too.
 - Return normally inserts two newlines (a paragraph break); Shift+Return inserts one. Blank lines and fenced code use one newline.
 - Return continues lists and blockquotes; Return on an empty marker exits the list/quote.
 - Tab / Shift+Tab indent eligible list items by up to four columns, not arbitrary code blocks.

@@ -678,7 +678,11 @@ void LivePreview::rebuild() {
     const QFont font = qvariant_cast<QFont>(m_viewItem->property("font"));
     m_mermaid->setGeneration(source + QString::number(m_viewItem->property("width").toInt())
                              + m_viewItem->property("previewDark").toString());
-    m_view->setDefaultFont(font);
+    // QTextDocument does not equality-check this setter: even an unchanged
+    // font invalidates the entire layout. A caret click must not restart it
+    // while Qt Quick is updating the viewport from document-size callbacks.
+    if (m_view->defaultFont() != font)
+        m_view->setDefaultFont(font);
     m_segments.clear();
     if (m_readMode) {
         buildReadDocument(source);

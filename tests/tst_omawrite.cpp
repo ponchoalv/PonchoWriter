@@ -161,6 +161,82 @@ private slots:
             }
         }
     }
+    void largeCodeBlockKeepsItsFullScrollRangeWhenClicked() {
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        QString text;
+        const QString fixture = qEnvironmentVariable("OMAWRITE_LARGE_CODE_FIXTURE");
+        if (!fixture.isEmpty()) {
+            QFile file(fixture); QVERIFY(file.open(QIODevice::ReadOnly));
+            text = QString::fromUtf8(file.readAll()); // Never attach Backend to the original path.
+        } else {
+            text = "Configuration:\n\n```toml\n";
+            for (int i = 0; i < 260; ++i)
+                text += QString("# Configuration comment %1 https://example.invalid/guide/normalization-and-window-management\nvalue_%1 = 'workspace'\n").arg(i);
+            text += "```\n";
+        }
+        for (const char *name : {"Regular", "Italic", "Bold", "BoldItalic"}) {
+            const QString path = QStringLiteral("../fonts/IBMPlexMono-%1.ttf").arg(QLatin1String(name));
+            QVERIFY(QFontDatabase::addApplicationFont(QTest::qFindTestData(path.toUtf8().constData(), __FILE__, __LINE__)) >= 0);
+        }
+        Backend backend; backend.m_recoveryPath = directory.filePath("recovery.json");
+        QQmlEngine engine; engine.rootContext()->setContextProperty("backend", &backend);
+        QQmlComponent component(&engine, QUrl::fromLocalFile(QFINDTESTDATA("../src/Main.qml")));
+        QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+        QScopedPointer<QObject> root(component.create());
+        auto *window = qobject_cast<QQuickWindow *>(root.data()); QVERIFY(window);
+        auto *source = root->findChild<QObject *>("sourceEditor");
+        auto *view = root->findChild<QQuickItem *>("previewEditor");
+        auto *scroll = root->findChild<QQuickItem *>("editorScroll");
+        auto *projection = root->findChild<LivePreview *>();
+        QVERIFY(source && view && scroll && projection);
+        if (QGuiApplication::platformName() != "offscreen")
+            QVERIFY(QTest::qWaitForWindowExposed(window));
+        source->setProperty("text", text); source->setProperty("cursorPosition", text.size());
+        QTRY_COMPARE(projection->codeBlockPanels().size(), 1);
+        QTest::qWait(100);
+        const qreal height = view->property("contentHeight").toReal();
+        const qreal panelHeight = projection->codeBlockPanels().first().toMap().value("height").toReal();
+        QVERIFY(height > 3000);
+        const qreal panelBottom = projection->codeBlockPanels().first().toMap().value("y").toReal() + panelHeight;
+        QVERIFY(panelBottom <= height + 1);
+        QVERIFY(scroll->property("contentHeight").toReal() >= view->y() + panelBottom);
+        const auto finalLineIsReachable = [&] {
+            QRectF last;
+            if (!QMetaObject::invokeMethod(view, "positionToRectangle", Q_RETURN_ARG(QRectF, last), Q_ARG(int, int(text.size()))))
+                return false;
+            const qreal maxScroll = scroll->property("contentHeight").toReal() - scroll->height();
+            const qreal y = view->y() + last.y() - qMax(qreal(0), maxScroll);
+            return last.bottom() <= view->property("contentHeight").toReal() + 1
+                && y >= 0 && y + last.height() <= scroll->height();
+        };
+        QVERIFY(finalLineIsReachable());
+        for (int repeat = 0; repeat < 2; ++repeat) {
+            for (qreal fraction : {0.1, 0.5, 0.85, 0.2}) {
+                int position = int(text.size() * fraction);
+                position = text.lastIndexOf('\n', position) + 1;
+                QRectF cursor;
+                QVERIFY(QMetaObject::invokeMethod(view, "positionToRectangle", Q_RETURN_ARG(QRectF, cursor), Q_ARG(int, position)));
+                scroll->setProperty("contentY", qMax(qreal(0), view->y() + cursor.center().y() - scroll->height() / 2));
+                QCoreApplication::processEvents();
+                QTest::mouseClick(window, Qt::LeftButton, Qt::NoModifier,
+                    view->mapToScene(cursor.center() + QPointF(12, 0)).toPoint());
+                QTest::qWait(50);
+                QCOMPARE(projection->codeBlockPanels().size(), 1);
+                QVERIFY(qAbs(source->property("cursorPosition").toInt() - position) <= 4);
+                const qreal after = view->property("contentHeight").toReal();
+                QVERIFY2(qAbs(after - height) < 1,
+                    qPrintable(QString("contentHeight %1 -> %2, panel=%3, scroll=%4, doc=%5, implicit=%6").arg(height).arg(after)
+                        .arg(projection->codeBlockPanels().first().toMap().value("height").toReal())
+                        .arg(scroll->property("contentHeight").toReal())
+                        .arg(view->property("textDocument").value<QQuickTextDocument *>()->textDocument()->documentLayout()->documentSize().height())
+                        .arg(view->implicitHeight())));
+                QCOMPARE(projection->codeBlockPanels().first().toMap().value("height").toReal(), panelHeight);
+                QVERIFY(finalLineIsReachable());
+                QCOMPARE(source->property("text").toString(), text);
+            }
+        }
+    }
     void forwardsNativeFileEventsDeliveredAfterStartupAndWaitsForQuiet() {
         FileOpenRequests events(qApp);
         QSignalSpy requests(&events, &FileOpenRequests::filesRequested);

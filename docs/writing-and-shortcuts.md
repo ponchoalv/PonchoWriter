@@ -27,7 +27,7 @@ Qt normally maps a source-code `Ctrl` modifier to **Command** on macOS and `Meta
 | Italic | Cmd+I | Ctrl+I |
 | Strikethrough | Cmd+Shift+X | Ctrl+Shift+X |
 | Insert Markdown link | Cmd+K | Ctrl+K |
-| Copy whole rendered document as HTML | Cmd+Shift+C | Ctrl+Shift+C |
+| Copy selection as HTML (whole document if no selection) | Cmd+Shift+C | Ctrl+Shift+C |
 | Increase text size | Cmd+= or Cmd++ | Ctrl+= or Ctrl++ |
 | Decrease text size | Cmd+- | Ctrl+- |
 | Reset text size | Cmd+0 | Ctrl+0 |
@@ -63,6 +63,22 @@ Body paragraphs use softer, theme-aware contrast while headings retain the stron
 **Read** renders supported Markdown without an editing caret. Switching back with the book/pencil button or shortcut preserves the reading viewport and places a new caret near its center, instead of returning to the previous editing caret. Paragraphs and headings retain Edit's blank-line breathing room; wrapped lines, code lines and tight list items stay compact. Links use the same theme accent, and bold, italic and code backgrounds match Edit. Links are clickable. This uses Qt's Markdown/HTML subset, not a web browser: arbitrary web CSS/layout is not supported. Remote images are deliberately not fetched. Unsupported or unavailable visual blocks remain usable source; rendering is never a Markdown conversion on save. One canonical source document owns saving, search, formatting and undo.
 
 Try [preview-example.md](preview-example.md) for tables, images, Mermaid and fallback cases.
+
+## Counts, remembered position and Reveal
+
+The footer shows the existing document word count, plus **N selected** when text is selected in either mode. Selection counting is debounced and asynchronous; obsolete results are discarded. It uses the same rules as the existing total (including code/Markdown text; CJK characters count individually), not a new semantic prose parser.
+
+Existing local files remember their mode and reading position between opens/restarts. Edit stores a source anchor, pixel offset and caret; Read stores a relative scroll position. Layout changes or changed file contents can make restoration approximate. Untitled drafts have no per-file position record. Save As keeps the current view and records the new filename. The local settings cache retains at most 100 files; positions are not written into Markdown or synced between machines.
+
+Right-click in either mode and choose **Reveal in Finder**, **Reveal in File Explorer**, or **Reveal in File Manager**. Save untitled documents first. macOS/Windows request file selection; Linux requests `org.freedesktop.FileManager1.ShowItems` and falls back to opening the parent folder if unsupported. That fallback does not guarantee file selection. Windows/Linux implementations are source-reviewed but not runtime-tested here.
+
+## Clipboard behavior
+
+- **Cmd+C / Ctrl+C in Edit** copies selected Markdown, including hidden formatting markers. There is no redundant Copy Markdown command.
+- **Standard Copy in Read** keeps Qt's rendered-selection behavior; it does not reconstruct Markdown from the reading view.
+- **Cmd+Shift+C / Ctrl+Shift+C** copies only the selection as HTML in either mode; with no selection, it copies the whole rendered document. Edit renders the selected Markdown fragment, so selecting only part of a Markdown delimiter pair may not retain that formatting. Read preserves selected semantic emphasis/links while removing the writer's theme colors and font sizes. The clipboard also includes plain text for applications without HTML paste support.
+
+Code-block wrapping/horizontal scrolling is a [future TODO only](TODO.md), not part of these changes.
 
 ## Language-fence highlighting
 

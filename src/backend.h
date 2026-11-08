@@ -29,6 +29,7 @@ class Backend : public QObject {
     Q_PROPERTY(bool modified READ modified NOTIFY modifiedChanged)
     Q_PROPERTY(QString status READ status NOTIFY statusChanged)
     Q_PROPERTY(int wordCount READ wordCount NOTIFY wordCountChanged)
+    Q_PROPERTY(int selectionWordCount READ selectionWordCount NOTIFY selectionWordCountChanged)
     Q_PROPERTY(bool darkMode READ darkMode WRITE setDarkMode NOTIFY darkModeChanged)
     Q_PROPERTY(qreal textScale READ textScale NOTIFY textScaleChanged)
     Q_PROPERTY(QString themeBackground READ themeBackground NOTIFY themeColorsChanged)
@@ -55,6 +56,7 @@ public:
     bool modified() const { return m_modified; }
     QString status() const { return m_status; }
     int wordCount() const { return m_wordCount; }
+    int selectionWordCount() const { return m_selectionWordCount; }
     bool darkMode() const { return m_darkMode; }
     void setDarkMode(bool darkMode);
     // What the desktop asks for, times what the user asked for on top of it.
@@ -94,7 +96,7 @@ public:
     Q_INVOKABLE void resetTextSize();
     Q_INVOKABLE void holdAutoSave(bool held);
     Q_INVOKABLE void printDocument();
-    Q_INVOKABLE void copyAsHtml();
+    Q_INVOKABLE void copyAsHtml(int start = -1, int end = -1, QObject *renderedDocument = nullptr);
     Q_INVOKABLE void newWindow();
     Q_INVOKABLE QString clipboardUrl() const;
     Q_INVOKABLE QString clipboardText() const;
@@ -119,6 +121,11 @@ public:
     Q_INVOKABLE QVariantMap windowGeometry() const;
     Q_INVOKABLE void saveWindowGeometry(int x, int y, int width, int height, bool maximized);
     Q_INVOKABLE void documentFontChanged();
+    Q_INVOKABLE void countSelectedText(const QString &text);
+    Q_INVOKABLE QVariantMap readingPosition(const QUrl &url) const;
+    Q_INVOKABLE void rememberReadingPosition(const QUrl &url, qreal ratio, bool readMode, int caret,
+                                              int anchor = -1, qreal offset = 0);
+    Q_INVOKABLE bool revealCurrentFile();
 
 signals:
     void clipboardChanged();
@@ -127,6 +134,9 @@ signals:
     void modifiedChanged();
     void statusChanged();
     void wordCountChanged();
+    void selectionWordCountChanged();
+    void documentAboutToReplace();
+    void documentLoaded();
     void darkModeChanged();
     void textScaleChanged();
     void themeColorsChanged();
@@ -154,6 +164,9 @@ private:
     QString currentDocumentText() const;
     void setWordCount(int words);
     void refreshWordCount();
+    void refreshSelectionWordCount();
+    static QString positionKey(const QUrl &url);
+    static QString explorerRevealArguments(QString path);
     void scheduleWordCount();
     void applyDocumentTypography();
     void reapplyTypographyToChange();
@@ -178,6 +191,11 @@ private:
     bool m_modified = false;
     QString m_status;
     int m_wordCount = 0;
+    int m_selectionWordCount = 0;
+    QString m_selectionText;
+    QFutureWatcher<int> m_selectionCountWatcher;
+    quint64 m_selectionGeneration = 0, m_selectionJobGeneration = 0;
+    bool m_selectionCounting = false;
     bool m_darkMode = true;
     // The desktop's light/dark setting, used when the Omarchy theme names none.
     bool m_systemDarkMode = true;

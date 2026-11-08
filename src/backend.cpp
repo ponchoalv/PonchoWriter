@@ -3,6 +3,16 @@
 #include "attachmenthelper.h"
 
 #include <QClipboard>
+#include <QCryptographicHash>
+#include <QDateTime>
+#include <QDesktopServices>
+#ifdef Q_OS_LINUX
+#include <QDBusConnection>
+#include <QDBusMessage>
+#include <QDBusPendingCallWatcher>
+#include <QDBusPendingReply>
+#endif
+#include <cmath>
 #include <QtConcurrent/QtConcurrentRun>
 #include <QColor>
 #include <QCoreApplication>
@@ -13,6 +23,8 @@
 #include <QFontDatabase>
 #include <QGuiApplication>
 #include <QImage>
+#include <QBuffer>
+#include <QTextImageFormat>
 #include <QUuid>
 #include <QMimeData>
 #include <QProcess>
@@ -32,6 +44,7 @@
 #include <QTextBlockFormat>
 #include <QTextCursor>
 #include <QTextDocument>
+#include <QTextDocumentFragment>
 #include <QTextLayout>
 #include <QTextStream>
 #include <QUrl>
@@ -172,6 +185,18 @@ Backend::Backend(std::unique_ptr<SpellingDictionary> dictionary, QObject *parent
             }
         }
     }
+    connect(&m_selectionCountWatcher, &QFutureWatcher<int>::finished, this, [this] {
+        m_selectionCounting = false;
+        if (m_selectionJobGeneration == m_selectionGeneration) {
+            const int count = m_selectionCountWatcher.result();
+            if (count != m_selectionWordCount) {
+                m_selectionWordCount = count;
+                emit selectionWordCountChanged();
+            }
+        } else if (!m_selectionText.isEmpty()) {
+            refreshSelectionWordCount();
+        }
+    });
     m_wordCountTimer.setSingleShot(true);
     m_wordCountTimer.setInterval(120);
     connect(&m_wordCountTimer, &QTimer::timeout, this, &Backend::refreshWordCount);
@@ -347,6 +372,7 @@ void Backend::open(const QUrl &url) {
     file.setTextModeEnabled(true);
     file.seek(0);
     const QByteArray contents = file.readAll();
+    emit documentAboutToReplace();
     loadDocumentText(QString::fromUtf8(contents));
     m_stagedAttachments.clear();
     m_materializedAttachments.clear();
@@ -366,6 +392,7 @@ void Backend::open(const QUrl &url) {
         setStatus(QStringLiteral("Opened %1. Auto-save is off to keep its encoding and line endings.")
                       .arg(fileName()));
     }
+    emit documentLoaded();
 }
 
 void Backend::save() {
@@ -413,6 +440,7 @@ void Backend::openOrStartFile(const QUrl &requestedUrl) {
         return;
     }
 
+    emit documentAboutToReplace();
     loadDocumentText(QString());
     m_stagedAttachments.clear();
     m_materializedAttachments.clear();
@@ -425,6 +453,7 @@ void Backend::openOrStartFile(const QUrl &requestedUrl) {
     watchCurrentFile();
     setModified(false);
     setStatus(QStringLiteral("New file %1").arg(fileName()));
+    emit documentLoaded();
 }
 
 void Backend::reloadFromDisk() {
@@ -497,9 +526,55 @@ void Backend::newWindow() {
         setStatus(QStringLiteral("Could not open a new window."));
 }
 
-void Backend::copyAsHtml() {
+void Backend::copyAsHtml(int start, int end, QObject *renderedDocument) {
     QTextDocument rendered;
-    rendered.setMarkdown(currentDocumentText());
+    const bool selected = start >= 0 && end > start;
+    auto *quick = qobject_cast<QQuickTextDocument *>(renderedDocument);
+    if (selected && quick && quick->textDocument()) {
+        QTextDocument *view = quick->textDocument();
+        QTextCursor selection(view);
+        selection.setPosition(qBound(0, start, view->characterCount() - 1));
+        selection.setPosition(qBound(0, end, view->characterCount() - 1), QTextCursor::KeepAnchor);
+        QTextCursor(&rendered).insertFragment(selection.selection());
+        // Snapshot ranges before changing formats (adjacent fragments may merge).
+        QList<QTextLayout::FormatRange> formats;
+        for (QTextBlock block = rendered.begin(); block.isValid(); block = block.next()) {
+            for (auto it = block.begin(); !it.atEnd(); ++it) {
+                const auto fragment = it.fragment();
+                if (!fragment.isValid()) continue;
+                auto format = fragment.charFormat();
+                if (format.isImageFormat()) {
+                    auto imageFormat = format.toImageFormat();
+                    const auto image = qvariant_cast<QImage>(view->resource(
+                        QTextDocument::ImageResource, QUrl(imageFormat.name())));
+                    QByteArray png;
+                    QBuffer buffer(&png);
+                    buffer.open(QIODevice::WriteOnly);
+                    if (!image.isNull() && image.save(&buffer, "PNG")) {
+                        imageFormat.setName(QStringLiteral("data:image/png;base64,")
+                                            + QString::fromLatin1(png.toBase64()));
+                        format = imageFormat;
+                    } else if (QUrl(imageFormat.name()).scheme() == QStringLiteral("preview")) {
+                        format.setObjectType(QTextFormat::NoObject); // Never export private resource URLs.
+                    }
+                }
+                for (int property : {QTextFormat::ForegroundBrush, QTextFormat::BackgroundBrush,
+                         QTextFormat::FontFamilies, QTextFormat::FontPointSize, QTextFormat::FontPixelSize})
+                    format.clearProperty(property);
+                formats.append({fragment.position(), fragment.length(), format});
+            }
+        }
+        for (const auto &range : formats) {
+            QTextCursor cursor(&rendered);
+            cursor.setPosition(range.start);
+            cursor.setPosition(range.start + range.length, QTextCursor::KeepAnchor);
+            cursor.setCharFormat(range.format);
+        }
+    } else {
+        QString markdown = currentDocumentText();
+        if (selected) markdown = markdown.mid(start, end - start);
+        rendered.setMarkdown(markdown);
+    }
 
     // Drop Qt's fixed fonts and margins from the body and blocks, so the pasted
     // text takes on the destination's own typeface and paragraph spacing.
@@ -1335,6 +1410,7 @@ void Backend::restoreRecovery() {
     for (const auto &value : recovery.value(QStringLiteral("materializedAttachments")).toArray())
         if (m_stagedAttachments.contains(value.toString())) m_materializedAttachments.insert(value.toString());
     emit attachmentUrlsChanged();
+    emit documentAboutToReplace();
     loadDocumentText(recovery.value(QStringLiteral("text")).toString());
     const QUrl recoveredUrl(recovery.value(QStringLiteral("fileUrl")).toString());
     QFile diskFile(recoveredUrl.toLocalFile());
@@ -1352,6 +1428,7 @@ void Backend::restoreRecovery() {
     setStatus(missingAttachment
         ? QStringLiteral("Recovered unsaved changes; some staged attachments are missing or invalid.")
         : QStringLiteral("Recovered unsaved changes"));
+    emit documentLoaded();
 }
 
 void Backend::clearRecovery() {
@@ -1586,6 +1663,101 @@ int Backend::countWords(const QString &text) {
         ++count;
     }
     return count;
+}
+
+void Backend::countSelectedText(const QString &text) {
+    if (text == m_selectionText) return;
+    m_selectionText = text;
+    ++m_selectionGeneration;
+    if (text.isEmpty()) {
+        if (m_selectionWordCount) {
+            m_selectionWordCount = 0;
+            emit selectionWordCountChanged();
+        }
+    } else if (!m_selectionCounting) {
+        refreshSelectionWordCount();
+    }
+}
+
+void Backend::refreshSelectionWordCount() {
+    m_selectionCounting = true;
+    m_selectionJobGeneration = m_selectionGeneration;
+    m_selectionCountWatcher.setFuture(QtConcurrent::run(&Backend::countWords, m_selectionText));
+}
+
+QString Backend::positionKey(const QUrl &url) {
+    if (!url.isLocalFile()) return {};
+    const QFileInfo info(url.toLocalFile());
+    if (!info.isFile()) return {};
+    const QString canonical = info.canonicalFilePath();
+    if (canonical.isEmpty()) return {};
+    return QString::fromLatin1(QCryptographicHash::hash(
+        QUrl::fromLocalFile(canonical).toEncoded(), QCryptographicHash::Sha256).toHex());
+}
+
+QVariantMap Backend::readingPosition(const QUrl &url) const {
+    const QString key = positionKey(url);
+    return key.isEmpty() ? QVariantMap{} : QSettings().value(QStringLiteral("readingPositions/") + key).toMap();
+}
+
+void Backend::rememberReadingPosition(const QUrl &url, qreal ratio, bool readMode, int caret,
+                                     int anchor, qreal offset) {
+    const QString key = positionKey(url);
+    if (key.isEmpty() || !std::isfinite(ratio) || !std::isfinite(offset)) return;
+    QSettings settings;
+    settings.beginGroup(QStringLiteral("readingPositions"));
+    settings.setValue(key, QVariantMap{{QStringLiteral("ratio"), qBound(qreal(0), ratio, qreal(1))},
+        {QStringLiteral("readMode"), readMode}, {QStringLiteral("caret"), qMax(0, caret)},
+        {QStringLiteral("anchor"), qMax(-1, anchor)}, {QStringLiteral("offset"), offset},
+        {QStringLiteral("updated"), QDateTime::currentMSecsSinceEpoch()}});
+    auto keys = settings.childKeys();
+    if (keys.size() > 100) {
+        std::sort(keys.begin(), keys.end(), [&settings](const QString &a, const QString &b) {
+            return settings.value(a).toMap().value(QStringLiteral("updated")).toLongLong()
+                < settings.value(b).toMap().value(QStringLiteral("updated")).toLongLong();
+        });
+        for (int i = 0; i < keys.size() - 100; ++i) settings.remove(keys[i]);
+    }
+}
+
+QString Backend::explorerRevealArguments(QString path) {
+    path.replace(QLatin1Char('/'), QLatin1Char('\\'));
+    return QStringLiteral("/select,\"%1\"").arg(path);
+}
+
+bool Backend::revealCurrentFile() {
+    const QFileInfo info(m_fileUrl.toLocalFile());
+    if (!m_fileUrl.isLocalFile() || !info.isFile()) {
+        setStatus(QStringLiteral("Save this file before revealing it in the file manager."));
+        return false;
+    }
+    const QString path = info.absoluteFilePath();
+#ifdef Q_OS_MACOS
+    const bool opened = QProcess::startDetached(QStringLiteral("/usr/bin/open"), {QStringLiteral("-R"), path});
+#elif defined(Q_OS_WIN)
+    QProcess explorer;
+    explorer.setProgram(QDir(qEnvironmentVariable("WINDIR", QStringLiteral("C:/Windows")))
+                            .filePath(QStringLiteral("explorer.exe")));
+    explorer.setNativeArguments(explorerRevealArguments(path));
+    const bool opened = explorer.startDetached();
+#elif defined(Q_OS_LINUX)
+    auto message = QDBusMessage::createMethodCall(QStringLiteral("org.freedesktop.FileManager1"),
+        QStringLiteral("/org/freedesktop/FileManager1"), QStringLiteral("org.freedesktop.FileManager1"),
+        QStringLiteral("ShowItems"));
+    message << QStringList{QUrl::fromLocalFile(path).toString(QUrl::FullyEncoded)} << QString();
+    auto *watcher = new QDBusPendingCallWatcher(QDBusConnection::sessionBus().asyncCall(message, 1500), this);
+    connect(watcher, &QDBusPendingCallWatcher::finished, this, [this, path](QDBusPendingCallWatcher *call) {
+        const QDBusPendingReply<> reply = *call;
+        if (reply.isError() && !QDesktopServices::openUrl(QUrl::fromLocalFile(QFileInfo(path).absolutePath())))
+            setStatus(QStringLiteral("Could not open the file manager."));
+        call->deleteLater();
+    });
+    const bool opened = true; // Asynchronous; fallback opens the folder, not necessarily selecting.
+#else
+    const bool opened = QDesktopServices::openUrl(QUrl::fromLocalFile(info.absolutePath()));
+#endif
+    if (!opened) setStatus(QStringLiteral("Could not open the file manager."));
+    return opened;
 }
 
 QString Backend::suggestedFileName(const QString &text) {

@@ -313,6 +313,150 @@ private slots:
         QCOMPARE(source->property("text").toString(), markdown);
     }
 
+    void selectionCountsDiscardStaleResultsAndUseExistingWordRules() {
+        Backend backend;
+        backend.countSelectedText(QStringLiteral("one two three"));
+        QTRY_COMPARE(backend.selectionWordCount(), 3);
+        backend.countSelectedText(QString(300000, QLatin1Char('a')));
+        backend.countSelectedText(QStringLiteral("hello 世界"));
+        QTRY_COMPARE(backend.selectionWordCount(), 3);
+        backend.countSelectedText(QString());
+        QCOMPARE(backend.selectionWordCount(), 0);
+        QTest::qWait(150);
+        QCOMPARE(backend.selectionWordCount(), 0);
+    }
+
+    void readingPositionStorageIsLocalBoundedAndClamped() {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        Backend backend;
+        const QUrl url = QUrl::fromLocalFile(dir.filePath("a space,é.md"));
+        backend.rememberReadingPosition(url, 0.4, true, 25);
+        QVERIFY(backend.readingPosition(url).isEmpty()); // Not created yet.
+        QFile file(url.toLocalFile());
+        QVERIFY(file.open(QIODevice::WriteOnly)); file.write("hello"); file.close();
+        backend.rememberReadingPosition(url, 2, true, -5);
+        const auto state = backend.readingPosition(url);
+        QCOMPARE(state.value("ratio").toDouble(), 1.0);
+        QCOMPARE(state.value("caret").toInt(), 0);
+        QVERIFY(state.value("readMode").toBool());
+        Backend anotherWindow;
+        QCOMPARE(anotherWindow.readingPosition(url), state);
+        QVERIFY(backend.readingPosition(QUrl("https://example.com/a")).isEmpty());
+        QVERIFY(!backend.revealCurrentFile()); // Untitled never launches a process.
+        QCOMPARE(Backend::explorerRevealArguments(QStringLiteral("C:/space dir/a,bé.md")),
+                 QStringLiteral("/select,\"C:\\space dir\\a,bé.md\""));
+        for (int i = 0; i < 105; ++i) {
+            const auto path = dir.filePath(QString::number(i) + ".md");
+            QFile extra(path); QVERIFY(extra.open(QIODevice::WriteOnly)); extra.close();
+            backend.rememberReadingPosition(QUrl::fromLocalFile(path), 0.5, false, i);
+        }
+        QSettings settings;
+        settings.beginGroup("readingPositions");
+        QVERIFY(settings.childKeys().size() <= 100);
+    }
+
+    void selectionFooterPositionReopenAndClipboardActions() {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        Backend backend;
+        backend.m_recoveryPath = dir.filePath("recovery.json");
+        QQmlEngine engine;
+        engine.rootContext()->setContextProperty(QStringLiteral("backend"), &backend);
+        QQmlComponent component(&engine, QUrl::fromLocalFile(QFINDTESTDATA("../src/Main.qml")));
+        QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+        QScopedPointer<QObject> root(component.create());
+        auto *window = qobject_cast<QQuickWindow *>(root.data()); QVERIFY(window);
+        window->show(); QVERIFY(QTest::qWaitForWindowExposed(window));
+        auto *source = window->findChild<QObject *>("sourceEditor");
+        auto *view = window->findChild<QObject *>("previewEditor");
+        auto *flick = window->findChild<QObject *>("editorScroll");
+        QVERIFY(source && view && flick);
+        QString text = "**alpha beta**\n\n";
+        for (int i = 0; i < 100; ++i) text += QString("## Section %1\n\nA long paragraph of ordinary words.\n\n").arg(i);
+        QImage fixture(24, 12, QImage::Format_ARGB32); fixture.fill(Qt::green);
+        QVERIFY(fixture.save(dir.filePath("fixture.png")));
+        text += "![Local picture](fixture.png)\n";
+        const auto first = QUrl::fromLocalFile(dir.filePath("first.md"));
+        const auto second = QUrl::fromLocalFile(dir.filePath("second.md"));
+        for (const auto &url : {first, second}) {
+            QFile file(url.toLocalFile()); QVERIFY(file.open(QIODevice::WriteOnly)); file.write(text.toUtf8());
+        }
+        backend.open(first);
+        QTRY_VERIFY(window->property("positionReady").toBool());
+        QVERIFY(QMetaObject::invokeMethod(view, "select", Q_ARG(int, 0), Q_ARG(int, 14)));
+        QTRY_COMPARE(backend.selectionWordCount(), 2);
+        auto *label = window->findChild<QObject *>("wordCountLabel"); QVERIFY(label);
+        QTRY_VERIFY(label->property("text").toString().startsWith("2 selected"));
+        auto *preview = window->findChild<LivePreview *>("livePreviewController"); QVERIFY(preview);
+        QMetaObject::invokeMethod(view, "forceActiveFocus");
+        QTest::keyClick(window, Qt::Key_C, Qt::ControlModifier);
+        QCOMPARE(QGuiApplication::clipboard()->text(), QStringLiteral("**alpha beta**"));
+        QTest::keyClick(window, Qt::Key_C, Qt::ControlModifier | Qt::ShiftModifier);
+        QVERIFY(QGuiApplication::clipboard()->mimeData()->html().contains("font-weight"));
+        QVERIFY(!QGuiApplication::clipboard()->text().contains("Section"));
+        QCOMPARE(QGuiApplication::clipboard()->text().trimmed(), QStringLiteral("alpha beta"));
+        window->setProperty("readMode", true);
+        QTRY_VERIFY(!view->property("text").toString().isEmpty());
+        QVERIFY(QMetaObject::invokeMethod(view, "select", Q_ARG(int, 0), Q_ARG(int, 10)));
+        QTRY_COMPARE(backend.selectionWordCount(), 2);
+        auto *quick = qvariant_cast<QQuickTextDocument *>(view->property("textDocument")); QVERIFY(quick);
+        QMetaObject::invokeMethod(view, "forceActiveFocus");
+        QTest::keyClick(window, Qt::Key_C, Qt::ControlModifier | Qt::ShiftModifier);
+        QCOMPARE(QGuiApplication::clipboard()->text().trimmed(), QStringLiteral("alpha beta"));
+        QVERIFY(QGuiApplication::clipboard()->mimeData()->html().contains("font-weight"));
+        const int imagePosition = quick->textDocument()->toPlainText().indexOf(QChar::ObjectReplacementCharacter);
+        QVERIFY(imagePosition >= 0);
+        QVERIFY(QMetaObject::invokeMethod(view, "select", Q_ARG(int, imagePosition), Q_ARG(int, imagePosition + 1)));
+        QTest::keyClick(window, Qt::Key_C, Qt::ControlModifier | Qt::ShiftModifier);
+        const auto imageHtml = QGuiApplication::clipboard()->mimeData()->html();
+        QVERIFY(imageHtml.contains("data:image/png;base64,"));
+        QVERIFY(!imageHtml.contains("preview:"));
+        const qreal maximum = flick->property("contentHeight").toReal() - flick->property("height").toReal();
+        QVERIFY(maximum > 0);
+        flick->setProperty("contentY", maximum * 0.6);
+        QVERIFY(QMetaObject::invokeMethod(window, "rememberPosition"));
+        backend.open(second);
+        QTRY_VERIFY(window->property("positionReady").toBool());
+        QVERIFY(!window->property("readMode").toBool());
+        backend.open(first);
+        QTRY_VERIFY(window->property("positionReady").toBool());
+        QVERIFY(window->property("readMode").toBool());
+        QTRY_VERIFY(qAbs(flick->property("contentY").toReal() /
+            qMax(qreal(1), flick->property("contentHeight").toReal() - flick->property("height").toReal()) - 0.6) < 0.04);
+        QCOMPARE(source->property("text").toString(), text);
+        backend.open(first); // Same URL reload also restores, not just fileUrlChanged.
+        QTRY_VERIFY(window->property("positionReady").toBool());
+        QVERIFY(window->property("readMode").toBool());
+        window->setProperty("readMode", false);
+        QCoreApplication::processEvents();
+        const qreal editMaximum = flick->property("contentHeight").toReal() - flick->property("height").toReal();
+        flick->setProperty("contentY", editMaximum * 0.4);
+        QVERIFY(QMetaObject::invokeMethod(window, "rememberPosition"));
+        const auto saved = backend.readingPosition(first);
+        QVERIFY(saved.value("anchor").toInt() > 0);
+        backend.open(second);
+        QTRY_VERIFY(window->property("positionReady").toBool());
+        backend.open(first);
+        QTRY_VERIFY(window->property("positionReady").toBool());
+        QVERIFY(!window->property("readMode").toBool());
+        QTest::qWait(100);
+        QVERIFY(qAbs(flick->property("contentY").toReal() /
+            qMax(qreal(1), flick->property("contentHeight").toReal() - flick->property("height").toReal()) - 0.4) < 0.04);
+        // A failed open must not replace the document or its remembered state.
+        backend.open(QUrl::fromLocalFile(dir.filePath("missing.md")));
+        QCOMPARE(backend.fileUrl(), first);
+        QCOMPARE(source->property("text").toString(), text);
+        backend.copyAsHtml();
+        QVERIFY(QGuiApplication::clipboard()->text().contains("Section"));
+        const auto savedAs = QUrl::fromLocalFile(dir.filePath("renamed.md"));
+        const auto beforeSaveAs = flick->property("contentY").toReal();
+        backend.saveAs(savedAs);
+        QCOMPARE(backend.fileUrl(), savedAs);
+        QCOMPARE(flick->property("contentY").toReal(), beforeSaveAs);
+        QVERIFY(backend.readingPosition(savedAs).value("anchor").toInt() > 0);
+    }
+
     void pastesScreenshotThroughVisibleEditorAndPreservesSourceInReadMode_data() {
         QTest::addColumn<bool>("contextMenu");
         QTest::newRow("keyboard") << false;

@@ -1,3 +1,4 @@
+linux: QT += dbus
 QT += core gui concurrent quick testlib widgets printsupport quickcontrols2 quickdialogs2
 CONFIG += testcase c++17 console
 CONFIG -= app_bundle

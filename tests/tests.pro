@@ -1,4 +1,5 @@
 QT += core gui concurrent quick testlib
+linux: QT += dbus
 CONFIG += testcase c++17
 include(../syntax-highlighting.pri)
 include(../spellchecking.pri)

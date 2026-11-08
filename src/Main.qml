@@ -50,6 +50,10 @@ ApplicationWindow {
     property bool replaceOpen: false
     property bool awaitingPendingSave: false
     property alias readMode: livePreview.readMode
+    onReadModeChanged: {
+        selectionCountDelay.restart();
+        if (positionReady && !restoringReadingPosition) positionSaveDelay.restart();
+    }
     property bool projectionChanging: false
     property bool restoringReadingPosition: false
     property int scrollSourceAnchor: 0
@@ -57,6 +61,54 @@ ApplicationWindow {
     property bool lastProjectionReadMode: false
     property bool useRelativeScrollAnchor: false
     property real scrollAnchorRatio: 0
+    property url positionFileUrl: ""
+    property bool positionReady: false
+    property bool documentReplacing: false
+    property var pendingReadingPosition: null
+    property int positionEpoch: 0
+
+    function rememberPosition() {
+        if (!positionReady || projectionChanging || restoringReadingPosition) return;
+        var top = presentation.positionAt(0, Math.max(0, editorFlick.contentY - presentation.y));
+        backend.rememberReadingPosition(positionFileUrl,
+            Math.max(0, Math.min(1, editorFlick.contentY / Math.max(1, editorFlick.contentHeight - editorFlick.height))),
+            readMode, editor.cursorPosition, readMode ? -1 : livePreview.sourcePosition(top),
+            editorFlick.contentY - presentation.y - presentation.positionToRectangle(top).y);
+    }
+    function restoreFilePosition() {
+        documentReplacing = false;
+        positionFileUrl = backend.fileUrl;
+        pendingReadingPosition = backend.readingPosition(positionFileUrl);
+        restoringReadingPosition = true;
+        positionReady = false;
+        editor.cursorPosition = Math.max(0, Math.min(editor.length, pendingReadingPosition.caret || 0));
+        livePreview.readMode = pendingReadingPosition.readMode === true;
+        livePreview.refresh();
+    }
+    function applyReadingPosition() {
+        if (pendingReadingPosition === null) return;
+        var ratio = pendingReadingPosition.ratio || 0;
+        var target = ratio * Math.max(0, editorFlick.contentHeight - editorFlick.height);
+        if (!readMode && pendingReadingPosition.anchor !== undefined && pendingReadingPosition.anchor >= 0) {
+            var point = presentation.positionToRectangle(livePreview.viewPosition(pendingReadingPosition.anchor));
+            target = presentation.y + point.y + (pendingReadingPosition.offset || 0);
+        }
+        editorFlick.scrollTo(editorFlick.clampContentY(target));
+        pendingReadingPosition = null;
+        positionReady = true;
+        var epoch = positionEpoch;
+        Qt.callLater(function() { if (epoch === win.positionEpoch) win.restoringReadingPosition = false; });
+    }
+    Timer {
+        id: positionSaveDelay
+        interval: 750
+        onTriggered: win.rememberPosition()
+    }
+    Timer {
+        id: selectionCountDelay
+        interval: 120
+        onTriggered: backend.countSelectedText(win.readMode ? presentation.selectedText : editor.selectedText)
+    }
 
     LivePreview {
         id: livePreview
@@ -82,6 +134,7 @@ ApplicationWindow {
             editorFlick.scrollTo(editorFlick.clampContentY(targetY));
             win.lastProjectionReadMode = readMode;
             win.projectionChanging = false;
+            win.applyReadingPosition();
         }
     }
 
@@ -117,7 +170,6 @@ ApplicationWindow {
     // Pointer hit-testing must not turn blank space into the nearest word.
     // Keyboard menus intentionally use the insertion point instead.
     function showEditorMenuAt(px, py, token) {
-        if (win.readMode) return false;
         if (openAttachmentMenuAt(px, py)) return true;
         editorContextMenu.word = token;
         editorContextMenu.popup(px, py);
@@ -170,17 +222,24 @@ ApplicationWindow {
             onTriggered: backend.spelling.learn(editorContextMenu.word)
         }
         MenuSeparator { visible: editorContextMenu.hasWord; height: visible ? implicitHeight : 0 }
-        MenuItem { text: "Undo"; enabled: editor.canUndo; onTriggered: editor.undo() }
-        MenuItem { text: "Redo"; enabled: editor.canRedo; onTriggered: editor.redo() }
+        MenuItem { text: "Undo"; enabled: !win.readMode && editor.canUndo; onTriggered: editor.undo() }
+        MenuItem { text: "Redo"; enabled: !win.readMode && editor.canRedo; onTriggered: editor.redo() }
         MenuSeparator {}
-        MenuItem { text: "Cut"; enabled: presentation.selectedText.length > 0; onTriggered: editor.cut() }
+        MenuItem { text: "Cut"; enabled: !win.readMode && presentation.selectedText.length > 0; onTriggered: editor.cut() }
         MenuItem { text: "Copy"; enabled: presentation.selectedText.length > 0; onTriggered: livePreview.copySource() }
         MenuItem {
             text: "Paste"
-            enabled: presentation.canPaste || backend.clipboardImageAvailable
+            enabled: !win.readMode && (presentation.canPaste || backend.clipboardImageAvailable)
             onTriggered: { livePreview.prepareEdit(); editor.pasteFromClipboard(); }
         }
         MenuItem { text: "Select All"; onTriggered: presentation.selectAll() }
+        MenuItem {
+            objectName: "revealCurrentFileAction"
+            text: Qt.platform.os === "osx" ? "Reveal in Finder"
+                : Qt.platform.os === "windows" ? "Reveal in File Explorer" : "Reveal in File Manager"
+            enabled: backend.fileUrl.toString().length > 0
+            onTriggered: backend.revealCurrentFile()
+        }
         MenuSeparator {}
         Menu {
             title: "Spelling"
@@ -248,7 +307,23 @@ ApplicationWindow {
 
     Connections {
         target: backend
-        function onFileUrlChanged() { livePreview.refresh(); }
+        function onFileUrlChanged() {
+            livePreview.refresh();
+            if (!win.documentReplacing && win.positionReady) {
+                win.rememberPosition(); // Save As keeps this viewport, not the destination's old position.
+                win.positionFileUrl = backend.fileUrl;
+                win.rememberPosition();
+            }
+        }
+        function onDocumentAboutToReplace() {
+            win.rememberPosition();
+            ++win.positionEpoch;
+            win.documentReplacing = true;
+            win.positionReady = false;
+            win.restoringReadingPosition = true;
+            positionSaveDelay.stop();
+        }
+        function onDocumentLoaded() { win.restoreFilePosition(); }
         function onAttachmentUrlsChanged() { livePreview.refresh(); }
         function onThemeColorsChanged() { livePreview.refresh(); }
     }
@@ -258,8 +333,10 @@ ApplicationWindow {
     color: pageColor
 
     onClosing: function(close) {
-        if (closeConfirmed || !backend.modified)
+        if (closeConfirmed || !backend.modified) {
+            win.rememberPosition();
             return;
+        }
 
         close.accepted = false;
         pendingAction = "close";
@@ -476,7 +553,13 @@ ApplicationWindow {
 
     Shortcut {
         sequence: "Ctrl+Shift+C"
-        onActivated: backend.copyAsHtml()
+        onActivated: {
+            if (win.readMode && presentation.selectionStart !== presentation.selectionEnd)
+                backend.copyAsHtml(presentation.selectionStart, presentation.selectionEnd, presentation.textDocument);
+            else if (!win.readMode && editor.selectionStart !== editor.selectionEnd)
+                backend.copyAsHtml(editor.selectionStart, editor.selectionEnd);
+            else backend.copyAsHtml();
+        }
     }
 
     Shortcut {
@@ -764,7 +847,10 @@ ApplicationWindow {
             }
 
             onMovementStarted: wheelScroll.stop()
-            onContentYChanged: editor.hoveredLinkUrl = ""
+            onContentYChanged: {
+                editor.hoveredLinkUrl = "";
+                if (win.positionReady && !win.projectionChanging && !win.restoringReadingPosition) positionSaveDelay.restart();
+            }
 
             // Ctrl+wheel changes the text size, as it does in a browser. A
             // wheel notch is a whole step, but a touchpad trickles in pixels,
@@ -1256,6 +1342,9 @@ ApplicationWindow {
                 property color previewForeground: win.textColor
                 property bool previewDark: win.darkMode
                 onFontChanged: livePreview.refresh()
+                onSelectionStartChanged: selectionCountDelay.restart()
+                onSelectionEndChanged: selectionCountDelay.restart()
+                onSelectedTextChanged: selectionCountDelay.restart()
                 onCursorRectangleChanged: if (!win.projectionChanging && !win.restoringReadingPosition && !livePreview.readMode) editorFlick.ensureCursorVisible()
                 onLinkActivated: function(link) { Qt.openUrlExternally(link); }
 
@@ -1286,7 +1375,7 @@ ApplicationWindow {
 
                 MouseArea {
                     anchors.fill: parent
-                    acceptedButtons: win.readMode ? Qt.NoButton : Qt.RightButton
+                    acceptedButtons: Qt.RightButton
                     onPressed: (mouse) => {
                         mouse.accepted = win.openEditorMenuAt(mouse.x, mouse.y);
                     }
@@ -1317,8 +1406,8 @@ ApplicationWindow {
 
                 Keys.priority: Keys.BeforeItem
                 Keys.onPressed: function(event) {
-                    if (!win.readMode && (event.key === Qt.Key_Menu
-                            || (event.key === Qt.Key_F10 && (event.modifiers & Qt.ShiftModifier)))) {
+                    if (event.key === Qt.Key_Menu
+                            || (event.key === Qt.Key_F10 && (event.modifiers & Qt.ShiftModifier))) {
                         if (win.openEditorMenuForCaret()) {
                             event.accepted = true;
                             return;
@@ -1419,7 +1508,10 @@ ApplicationWindow {
             anchors.bottom: parent.bottom
             anchors.rightMargin: 12
             anchors.bottomMargin: 10
-            text: backend.wordCount + (backend.wordCount === 1 ? " Word" : " Words")
+            objectName: "wordCountLabel"
+            text: (presentation.selectionStart !== presentation.selectionEnd
+                ? backend.selectionWordCount + " selected · " : "")
+                + backend.wordCount + (backend.wordCount === 1 ? " Word" : " Words")
             color: win.mutedColor
             opacity: 0.75
             font.family: "IBM Plex Mono"
@@ -1609,8 +1701,12 @@ ApplicationWindow {
         width = geometry.width;
         height = geometry.height;
         if (geometry.maximized) showMaximized();
+        Qt.callLater(function() { if (!win.positionReady && win.pendingReadingPosition === null) win.restoreFilePosition(); });
     }
 
-    Component.onDestruction: backend.saveWindowGeometry(x, y, width, height, visibility === Window.Maximized)
+    Component.onDestruction: {
+        win.rememberPosition();
+        backend.saveWindowGeometry(x, y, width, height, visibility === Window.Maximized);
+    }
 
 }

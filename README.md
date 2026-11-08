@@ -21,6 +21,7 @@ This is the [ponchoalv fork](https://github.com/ponchoalv/omawrite) of
 - macOS F1 key labels, nonconflicting Replace/fullscreen shortcuts and a bundled app icon.
 - Optional image name/folder and Locate actions in the image context menu; current-document changes are undoable.
 - Minimal Edit-only spelling underlines and suggestions using Sonnet Core with native macOS/Windows dictionaries or system Hunspell on Linux; no autocorrect or dictionary downloads.
+- Lightweight selection word counts, per-file position memory, cross-platform Reveal, and selection-aware HTML copying. See the [writing guide](docs/writing-and-shortcuts.md); code-block overflow remains a [future TODO](docs/TODO.md).
 
 The screenshots below are from upstream, before these fork additions.
 

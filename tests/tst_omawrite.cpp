@@ -80,6 +80,61 @@ class OmawriteTest : public QObject {
     }
 
 private slots:
+    void codePanelHoverCopyAndReadLanguageUseQtClipboard() {
+        QTemporaryDir directory; QVERIFY(directory.isValid());
+        Backend backend; backend.m_recoveryPath = directory.filePath("recovery.json");
+        QQmlEngine engine; engine.rootContext()->setContextProperty("backend", &backend);
+        QQmlComponent component(&engine, QUrl::fromLocalFile(QFINDTESTDATA("../src/Main.qml")));
+        QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+        QScopedPointer<QObject> root(component.create());
+        auto *window = qobject_cast<QQuickWindow *>(root.data()); QVERIFY(window);
+        auto *source = root->findChild<QObject *>("sourceEditor");
+        auto *view = root->findChild<QQuickItem *>("previewEditor");
+        auto *projection = root->findChild<LivePreview *>();
+        QVERIFY(source && view && projection);
+        if (QGuiApplication::platformName() != "offscreen") QVERIFY(QTest::qWaitForWindowExposed(window));
+        const QString text = "```json\n{\"value\":42}\n```\n\n```\nplain\n```\n";
+        source->setProperty("text", text); source->setProperty("cursorPosition", text.size());
+        for (bool read : {false, true}) {
+            root->setProperty("readMode", read);
+            QTRY_COMPARE(projection->codeBlockPanels().size(), 2);
+            QTRY_COMPARE(projection->codeBlockPanels().first().toMap().value("readMode").toBool(), read);
+            QCoreApplication::processEvents();
+            QQuickItem *controls = nullptr;
+            for (auto *item : view->childItems()) {
+                if (item->objectName() != "codeBlockControls") continue;
+                if (!controls || item->y() < controls->y()) controls = item;
+                auto *label = item->findChild<QQuickItem *>("codeBlockLanguage"); QVERIFY(label);
+                QCOMPARE(label->isVisible(), read);
+            }
+            QVERIFY(controls);
+            auto *button = controls->findChild<QQuickItem *>("codeBlockCopyButton");
+            auto *label = controls->findChild<QQuickItem *>("codeBlockLanguage");
+            QVERIFY(button && label); QCOMPARE(label->property("text").toString(), QString("json"));
+            QTest::mouseMove(window, QPoint(5, 5));
+            QTRY_COMPARE(button->opacity(), qreal(0));
+            QTest::mouseMove(window, controls->mapToScene(QPointF(controls->width() / 2, controls->height() / 2)).toPoint());
+            QTRY_COMPARE(button->opacity(), qreal(1));
+            QVERIFY(button->isEnabled());
+            auto *document = view->property("textDocument").value<QQuickTextDocument *>()->textDocument();
+            const int position = document->find("value").selectionStart();
+            QVERIFY(QMetaObject::invokeMethod(view, "select", Q_ARG(int, position), Q_ARG(int, position + 5)));
+            QVERIFY(QMetaObject::invokeMethod(view, "forceActiveFocus"));
+            const auto selection = view->property("selectedText").toString();
+            QGuiApplication::clipboard()->setText("before");
+            QSignalSpy clicked(button, SIGNAL(clicked()));
+            QTest::mouseClick(window, Qt::LeftButton, Qt::NoModifier,
+                button->mapToScene(QPointF(button->width() / 2, button->height() / 2)).toPoint());
+            QCOMPARE(clicked.count(), 1);
+            QTRY_COMPARE(QGuiApplication::clipboard()->text(), QString("{\"value\":42}"));
+            QCOMPARE(view->property("selectedText").toString(), selection);
+            QVERIFY(view->hasActiveFocus());
+            QCOMPARE(source->property("text").toString(), text);
+            QVERIFY(!source->property("canUndo").toBool());
+            QTest::mouseMove(window, QPoint(5, 5));
+            QTRY_COMPARE(button->opacity(), qreal(0));
+        }
+    }
     void codePanelsHaveNativePaddingInBothModesAtDifferentZooms() {
         QTemporaryDir directory; QVERIFY(directory.isValid());
         const int font = QFontDatabase::addApplicationFont(QFINDTESTDATA("../fonts/IBMPlexMono-Regular.ttf"));

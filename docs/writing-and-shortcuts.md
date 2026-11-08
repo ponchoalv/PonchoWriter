@@ -92,6 +92,8 @@ Tagged backtick and tilde fences use native theme-aware syntax colors in **Edit 
 
 Fenced code now sits on **one continuous full-column panel**, including empty and wrapped lines, with generous, zoom-scaled padding on all sides, a subtle half-pixel border and small rounded corners in both modes. Presentation-only spacing keeps the padded backgrounds clear of neighboring prose and other code blocks. Edit includes the fence delimiters; Read omits them. Inline code keeps its small character background. Panels are native decorations behind selectable text, not images or extra document structure; font, source positions, selection, search, undo and existing wrapping behavior stay unchanged.
 
+Hover over a fenced-code panel in either mode to show **Copy** at its top right. It copies only the native code body as plain text through Qt's clipboard: no opening/closing fences or language tag, and no dependence on the current selection. Read mode also shows the first language token to the left of Copy; untagged blocks say `text`. Unknown language tags remain visible. A reserved header keeps these controls off the code; clicking Copy retains editor focus and selection.
+
 Read validates its source/import alignment before baking colors into HTML; complex parser disagreements fall back to plain code rather than coloring the wrong text. See the [syntax guide](syntax-highlighting.md), [example document](code-highlighting-example.md), and [dependency/license status](../third_party/ksyntaxhighlighting/README.md). Highlighting needs no Node/browser/runtime download.
 
 ## Paste screenshots without saving them manually

@@ -108,6 +108,60 @@ private slots:
         QCOMPARE(source->toPlainText(), text);
         QVERIFY(!source->isUndoAvailable());
     }
+    void codePanelCopyUsesOnlyNativeBodiesAndCarriesLanguage() {
+        const QString text = "```cpp extra\n  int value = 1;\n\n// 🙂\n```\n"
+                             "```\nplain\n```\n~~~custom-tag\nunknown\n~~~~\n"
+                             "```json\n{\"a\":1}\n```\n```json\n{\"b\":2}\n```\n";
+        const QStringList bodies{"  int value = 1;\n\n// 🙂", "plain", "unknown", "{\"a\":1}", "{\"b\":2}"};
+        const QStringList languages{"cpp", "text", "custom-tag", "json", "json"};
+        source->setPlainText(text); source->clearUndoRedoStacks();
+        select(sourceItem, text.size(), text.size());
+        for (bool read : {false, true}) {
+            controller->setReadMode(read); controller->refresh(); flush();
+            QCOMPARE(controller->codeBlockPanels().size(), bodies.size());
+            for (int i = 0; i < bodies.size(); ++i) {
+                QCOMPARE(controller->codeBlockPanels()[i].toMap().value("language").toString(), languages[i]);
+                QVERIFY(controller->copyCodeBlock(i));
+                QCOMPARE(QGuiApplication::clipboard()->text(), bodies[i]);
+            }
+            QCOMPARE(source->toPlainText(), text);
+            QVERIFY(!source->isUndoAvailable());
+        }
+        source->setPlainText("<!--\n```wrong\nphantom\n```\n-->\n\n```json\nactual\n```\n");
+        controller->setReadMode(true); controller->refresh(); flush();
+        QCOMPARE(controller->codeBlockPanels().size(), 1);
+        QCOMPARE(controller->codeBlockPanels().first().toMap().value("language").toString(), QString("json"));
+        QVERIFY(controller->copyCodeBlock(0));
+        QCOMPARE(QGuiApplication::clipboard()->text(), QString("actual")); // Never source-parser phantom code.
+        source->setPlainText("```text\nunclosed\n"); flush();
+        for (bool read : {false, true}) {
+            controller->setReadMode(read); controller->refresh(); flush();
+            QVERIFY(controller->copyCodeBlock(0));
+            QCOMPARE(QGuiApplication::clipboard()->text(), read ? QString("unclosed") : QString("unclosed\n"));
+        }
+        controller->setReadMode(false); source->setPlainText("```\n```\n"); flush();
+        QVERIFY(controller->copyCodeBlock(0));
+        QCOMPARE(QGuiApplication::clipboard()->text(), QString());
+        QGuiApplication::clipboard()->setText("unchanged");
+        QVERIFY(!controller->copyCodeBlock(-1)); QVERIFY(!controller->copyCodeBlock(99));
+        const auto page = view->pageSize(); view->setPageSize(QSizeF(0, 0));
+        QVERIFY(!controller->copyCodeBlock(0));
+        view->setPageSize(page); flush();
+        QInputMethodEvent preedit(QString::fromUtf8("に"), {});
+        QCoreApplication::sendEvent(viewItem, &preedit);
+        QVERIFY(!controller->copyCodeBlock(0));
+        QInputMethodEvent cancel(QString(), {}); QCoreApplication::sendEvent(viewItem, &cancel); flush();
+        { // A stale presentation must not copy unrelated text even if source is unchanged.
+            QSignalBlocker viewSignals(view);
+            QTextCursor edit(view); edit.insertText("unexpected");
+        }
+        QVERIFY(!controller->copyCodeBlock(0));
+        QCOMPARE(QGuiApplication::clipboard()->text(), QString("unchanged"));
+        controller->refresh(); flush();
+        QTextCursor cursor(source); cursor.insertText("Before\n"); // Projection has not caught up yet.
+        QVERIFY(!controller->copyCodeBlock(0));
+        QCOMPARE(QGuiApplication::clipboard()->text(), QString("unchanged"));
+    }
     void manyCodePanelsBatchTheirSpacingUpdates() {
         QString text = "Before\n";
         for (int i = 0; i < 300; ++i) text += "```text\nvalue\n```\n";
@@ -309,6 +363,13 @@ private slots:
         source->setPlainText(text); select(sourceItem, text.size(), text.size());
         controller->setReadMode(true); controller->refresh(); flush();
         QCOMPARE(controller->codeBlockPanels().size(), 3);
+        const QStringList bodies{"int nested = 1;", "first = 1", "second = 2"};
+        const QStringList languages{"cpp", "py", "py"};
+        for (int i = 0; i < bodies.size(); ++i) {
+            QCOMPARE(controller->codeBlockPanels()[i].toMap().value("language").toString(), languages[i]);
+            QVERIFY(controller->copyCodeBlock(i));
+            QCOMPARE(QGuiApplication::clipboard()->text(), bodies[i]);
+        }
         QCOMPARE(source->toPlainText(), text);
     }
     void richImageRestylesCoalesceLayoutNotifications() {

@@ -32,6 +32,7 @@ public:
     Q_INVOKABLE void attach(QObject *sourceItem, QObject *viewItem);
     Q_INVOKABLE void refresh();
     Q_INVOKABLE void copySource();
+    Q_INVOKABLE bool copyCodeBlock(int panelIndex);
     Q_INVOKABLE void prepareEdit();
     Q_INVOKABLE void setSearchHighlight(const QString &query, int currentMatchStart);
     Q_INVOKABLE QString imagePathAt(int viewPosition) const;
@@ -69,6 +70,7 @@ private:
     void scheduleCodeBlockPanels();
     QVariantList m_codeBlockPanels;
     QList<QPair<int, int>> m_readCodeBlocks;
+    QStringList m_readCodeLanguages;
     bool m_panelsPending = false;
     QPointer<QObject> m_sourceItem, m_viewItem, m_resolver;
     QPointer<QTextDocument> m_source, m_view;
@@ -78,6 +80,7 @@ private:
     QList<Segment> m_segments;
     QList<QUrl> m_resourceNames;
     QString m_viewText;
+    QString m_projectionSource, m_panelsSource, m_panelsView;
     QString m_projectionKey;
     QString m_searchQuery;
     int m_currentMatch = -1;

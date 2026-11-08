@@ -1368,6 +1368,15 @@ ApplicationWindow {
                         antialiasing: true
                     }
                 }
+                Repeater {
+                    model: livePreview.codeBlockPanels
+                    delegate: CodeBlockControls {
+                        preview: livePreview
+                        readMode: win.readMode
+                        labelColor: win.mutedColor
+                        composing: presentation.inputMethodComposing
+                    }
+                }
 
                 Text {
                     anchors.left: parent.left

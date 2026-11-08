@@ -541,6 +541,17 @@ void LivePreview::buildReadDocument(const QString &source) {
     // survive. Adjacent same-language fences must remain separate panels.
     m_readCodeBlocks = rendered.blockCount() == m_view->blockCount()
         && rendered.toPlainText() == m_view->toPlainText() ? codeGroups : QList<QPair<int, int>>{};
+    m_readCodeLanguages.clear();
+    for (const auto &group : m_readCodeBlocks) {
+        QString language;
+        for (int n = group.first; n <= group.second; ++n) {
+            const auto tag = rendered.findBlockByNumber(n).blockFormat()
+                .stringProperty(QTextFormat::BlockCodeLanguage).simplified().section(QLatin1Char(' '), 0, 0);
+            if (n == group.first) language = tag;
+            else if (language != tag) { language.clear(); break; }
+        }
+        m_readCodeLanguages.append(language);
+    }
     // Qt's HTML round-trip can lose the smallest heading's relative size.
     // Keep every heading on the same Markdown scale used by Edit highlighting.
     for (QTextBlock block = m_view->begin(); block.isValid(); block = block.next()) {
@@ -638,6 +649,7 @@ void LivePreview::updateCodeBlockPanels() {
     }
     const qreal lineHeight = QFontMetricsF(qvariant_cast<QFont>(m_viewItem->property("font"))).height();
     const qreal paddingY = std::ceil(lineHeight / 2);
+    const qreal paddingTop = paddingY + 24; // Stable space for the hover toolbar.
     const qreal paddingX = std::ceil(lineHeight * 0.75);
     const qreal gap = std::ceil(lineHeight / 3);
     // Reserve visual-only paragraph space so padded decorations cannot cover
@@ -652,7 +664,7 @@ void LivePreview::updateCodeBlockPanels() {
     // the existing root frame as well (no new frames or source positions).
     auto frame = m_view->rootFrame()->frameFormat();
     const qreal edgeTop = !groups.isEmpty() && groups.first().first == 0
-        ? qMax(m_view->documentMargin(), paddingY + gap) : m_view->documentMargin();
+        ? qMax(m_view->documentMargin(), paddingTop + gap) : m_view->documentMargin();
     const qreal edgeBottom = !groups.isEmpty() && groups.last().second == m_view->blockCount() - 1
         ? qMax(m_view->documentMargin(), paddingY + gap) : m_view->documentMargin();
     if (frame.topMargin() != edgeTop || frame.bottomMargin() != edgeBottom) {
@@ -668,7 +680,8 @@ void LivePreview::updateCodeBlockPanels() {
             const auto block = m_view->findBlockByNumber(first ? group.first : group.second);
             if (!block.isValid()) continue;
             auto format = block.blockFormat();
-            const qreal space = paddingY * ((first ? previousCode : nextCode) ? 2 : 1) + gap;
+            const qreal space = (first ? paddingTop : paddingY) + gap
+                + ((first ? previousCode : nextCode) ? (first ? paddingY : paddingTop) : 0);
             if ((first ? format.topMargin() : format.bottomMargin()) >= space) continue;
             if (first) format.setTopMargin(space);
             else format.setBottomMargin(space);
@@ -693,7 +706,8 @@ void LivePreview::updateCodeBlockPanels() {
     if (alignment == Qt::AlignVCenter) top += spare / 2;
     else if (alignment == Qt::AlignBottom) top += spare;
     QVariantList panels;
-    for (const auto &group : groups) {
+    for (int i = 0; i < groups.size(); ++i) {
+        const auto &group = groups.at(i);
         const auto first = m_view->findBlockByNumber(group.first);
         const auto last = m_view->findBlockByNumber(group.second);
         if (!first.isValid() || !last.isValid()) continue;
@@ -704,15 +718,23 @@ void LivePreview::updateCodeBlockPanels() {
         // that destroys otherwise valid background delegates. A subsequent
         // layout notification will supply the completed geometry.
         if (!a || !b || !a->lineCount() || !b->lineCount()) return;
-        const qreal y = top + a->position().y() + a->lineAt(0).y() - paddingY;
+        const qreal y = top + a->position().y() + a->lineAt(0).y() - paddingTop;
         const auto endLine = b->lineAt(b->lineCount() - 1);
         const qreal bottom = top + b->position().y() + endLine.y() + endLine.height() + paddingY;
         const qreal x = left + bounds.left() - paddingX;
-        panels.append(QVariantMap{{"x", x}, {"y", y},
+        QString language = m_readMode ? m_readCodeLanguages.value(i)
+            : first.text().trimmed().mid(MarkdownHighlighter::openingFenceLength(first.text()))
+                  .simplified().section(QLatin1Char(' '), 0, 0);
+        panels.append(QVariantMap{{"language", language.isEmpty() ? QStringLiteral("text") : language},
+            {"firstBlock", group.first}, {"lastBlock", group.second},
+            {"readMode", m_readMode},
+            {"x", x}, {"y", y},
             {"width", qMax(qreal(0), m_viewItem->property("width").toReal()
                          - m_viewItem->property("rightPadding").toReal() + paddingX - x)},
             {"height", bottom - y}});
     }
+    m_panelsSource = m_projectionSource;
+    m_panelsView = m_viewText;
     if (panels != m_codeBlockPanels) {
         m_codeBlockPanels = panels;
         emit codeBlockPanelsChanged();
@@ -727,6 +749,7 @@ void LivePreview::rebuild() {
     const auto finishLayout = qScopeGuard([this] { completeProjectionLayout(); });
     m_pending = false;
     const QString source = documentText(m_source);
+    m_projectionSource = source;
     m_anchor = qBound(0, m_anchor, int(source.size()));
     m_caret = qBound(0, m_caret, int(source.size()));
     const QFont font = qvariant_cast<QFont>(m_viewItem->property("font"));
@@ -870,6 +893,33 @@ QString LivePreview::imagePathAt(int position) const {
     }
     return {};
 }
+bool LivePreview::copyCodeBlock(int panelIndex) {
+    if (!m_source || !m_view || m_composing || m_view->pageSize() == QSizeF(0, 0)
+        || panelIndex < 0 || panelIndex >= m_codeBlockPanels.size()) return false;
+    const auto panel = m_codeBlockPanels.at(panelIndex).toMap();
+    // Document revisions also change during highlighting/selection. Compare
+    // text snapshots only when copying, not on each hover or geometry update.
+    if (documentText(m_source) != m_panelsSource || documentText(m_view) != m_panelsView
+        || panel.value("readMode").toBool() != m_readMode) return false;
+    auto first = m_view->findBlockByNumber(panel.value("firstBlock").toInt());
+    auto last = m_view->findBlockByNumber(panel.value("lastBlock").toInt());
+    if (!first.isValid() || !last.isValid() || first.blockNumber() > last.blockNumber()) return false;
+    if (!m_readMode) {
+        const int length = MarkdownHighlighter::openingFenceLength(first.text());
+        if (!length) return false;
+        const QChar marker = first.text().trimmed().at(0);
+        if (last != first && MarkdownHighlighter::closesFence(last.text(), length, marker))
+            last = last.previous();
+        first = first.next();
+    }
+    QStringList lines;
+    for (auto block = first; block.isValid() && last.isValid()
+         && block.blockNumber() <= last.blockNumber(); block = block.next())
+        lines.append(block.text());
+    QGuiApplication::clipboard()->setText(lines.join(QLatin1Char('\n')));
+    return true;
+}
+
 void LivePreview::copySource() {
     if (m_readMode) {
         QMetaObject::invokeMethod(m_viewItem, "copy");

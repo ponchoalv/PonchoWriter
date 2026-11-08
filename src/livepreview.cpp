@@ -633,7 +633,9 @@ void LivePreview::updateCodeBlockPanels() {
     auto *layout = m_view->documentLayout();
     layout->documentSize();
     const qreal left = m_viewItem->property("leftPadding").toReal() - m_view->documentMargin();
-    qreal top = m_viewItem->property("topPadding").toReal() - m_view->documentMargin();
+    // QTextLayout positions already include the document margin. Qt Quick's
+    // vertical text origin adds padding/alignment, not a margin subtraction.
+    qreal top = m_viewItem->property("topPadding").toReal();
     const qreal spare = m_viewItem->property("height").toReal()
         - m_viewItem->property("topPadding").toReal() - m_viewItem->property("bottomPadding").toReal()
         - m_viewItem->property("contentHeight").toReal();

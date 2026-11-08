@@ -12,6 +12,7 @@
 #include <QTextFragment>
 #include <QTextImageFormat>
 #include <QTextLayout>
+#include <QFontDatabase>
 #include <QAbstractTextDocumentLayout>
 #include <QTextTable>
 #include <QInputMethodEvent>
@@ -106,6 +107,46 @@ private slots:
         QCOMPARE(source->toPlainText(), text);
         QVERIFY(!source->isUndoAvailable());
     }
+    void codePanelsCoverNativeFontBoundsAcrossMarginsAndZoom() {
+        const int id = QFontDatabase::addApplicationFont(QFINDTESTDATA("../../fonts/IBMPlexMono-Regular.ttf"));
+        QVERIFY(id >= 0);
+        const QString text = "Testing background\n\n```json\n{\"this\":\"that\", \"jgy\":true}\n```\n";
+        source->setPlainText(text); source->clearUndoRedoStacks();
+        select(sourceItem, text.size(), text.size());
+        for (int pixels : {12, 20, 34}) {
+            QFont font(QFontDatabase::applicationFontFamilies(id).first()); font.setPixelSize(pixels);
+            viewItem->setProperty("font", font);
+            for (bool read : {false, true}) {
+                controller->setReadMode(read); controller->refresh(); flush();
+                for (int margin : {0, 4, 9}) {
+                    view->setDocumentMargin(margin); flush();
+                    QCOMPARE(controller->codeBlockPanels().size(), 1);
+                    const auto panel = controller->codeBlockPanels().first().toMap();
+                    const auto block = view->find("\"this\"").block();
+                    QVERIFY(block.isValid());
+                    QRectF cursor;
+                    QVERIFY(QMetaObject::invokeMethod(viewItem, "positionToRectangle", Q_RETURN_ARG(QRectF, cursor), Q_ARG(int, block.position())));
+                    const qreal top = panel.value("y").toReal(), bottom = top + panel.value("height").toReal();
+                    QVERIFY2(top <= cursor.top() && bottom >= cursor.bottom(),
+                        qPrintable(QString("pixels=%1 read=%2 margin=%3 panel=%4..%5 cursor=%6..%7")
+                            .arg(pixels).arg(read).arg(margin).arg(top).arg(bottom).arg(cursor.top()).arg(cursor.bottom())));
+                    const auto *layout = block.layout();
+                    const qreal origin = cursor.y() - layout->lineAt(0).y();
+                    for (const auto &run : layout->glyphRuns()) {
+                        const auto glyphs = run.glyphIndexes();
+                        const auto positions = run.positions();
+                        for (int i = 0; i < glyphs.size(); ++i) {
+                            const auto ink = run.rawFont().boundingRect(glyphs.at(i)).translated(positions.at(i));
+                            QVERIFY(top <= origin + ink.top());
+                            QVERIFY(bottom >= origin + ink.bottom());
+                        }
+                    }
+                }
+            }
+        }
+        QCOMPARE(source->toPlainText(), text);
+        QVERIFY(!source->isUndoAvailable());
+    }
     void codePanelsCoverBlankAndWrappedLinesWithoutChangingSource() {
         const QString text = "before `inline`\n\n```cpp\nint value = 1;\n\n// " + QString(180, 'x')
             + "\n```\n```unknown-language\nplain\n```\n\nafter\n\n~~~\nunfinished\n";
@@ -126,7 +167,7 @@ private slots:
             const auto blank = view->find("int value").block().next();
             QCOMPARE(blank.text(), QString());
             view->documentLayout()->blockBoundingRect(blank);
-            const qreal blankY = blank.layout()->position().y() - view->documentMargin();
+            const qreal blankY = blank.layout()->position().y();
             QVERIFY(first.value("y").toReal() <= blankY);
             QVERIFY(first.value("y").toReal() + first.value("height").toReal()
                     >= blankY + blank.layout()->lineAt(0).height());

@@ -80,6 +80,54 @@ class OmawriteTest : public QObject {
     }
 
 private slots:
+    void readCodePanelCoversNativeTextAtDifferentZooms() {
+        QTemporaryDir directory; QVERIFY(directory.isValid());
+        const int font = QFontDatabase::addApplicationFont(QFINDTESTDATA("../fonts/IBMPlexMono-Regular.ttf"));
+        QVERIFY(font >= 0);
+        Backend backend; backend.m_recoveryPath = directory.filePath("recovery.json");
+        const qreal previousZoom = backend.m_textZoom;
+        const QString previousFont = backend.editorFont();
+        const auto restoreSettings = qScopeGuard([&] { backend.setTextZoom(previousZoom); backend.setEditorFont(previousFont); });
+        backend.setEditorFont(QFontDatabase::applicationFontFamilies(font).first());
+        QQmlEngine engine; engine.rootContext()->setContextProperty("backend", &backend);
+        QQmlComponent component(&engine, QUrl::fromLocalFile(QFINDTESTDATA("../src/Main.qml")));
+        QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+        QScopedPointer<QObject> root(component.create());
+        auto *window = qobject_cast<QQuickWindow *>(root.data()); QVERIFY(window);
+        auto *source = root->findChild<QObject *>("sourceEditor");
+        auto *view = root->findChild<QQuickItem *>("previewEditor");
+        auto *projection = root->findChild<LivePreview *>();
+        QVERIFY(source && view && projection);
+        if (QGuiApplication::platformName() != "offscreen")
+            QVERIFY(QTest::qWaitForWindowExposed(window));
+        const QString text = "Testing background\n\n```json\n{\"this\":\"that\"}\n```\n";
+        source->setProperty("text", text); source->setProperty("cursorPosition", text.size());
+        root->setProperty("readMode", true);
+        for (bool dark : {true, false}) {
+            backend.setDarkMode(dark);
+            for (qreal zoom : {1.0, 1.6}) {
+                backend.setTextZoom(zoom);
+                QCoreApplication::processEvents(); QCoreApplication::processEvents();
+                QTRY_COMPARE(projection->codeBlockPanels().size(), 1);
+                auto *document = view->property("textDocument").value<QQuickTextDocument *>()->textDocument();
+                const auto block = document->find("\"this\"").block(); QVERIFY(block.isValid());
+                QRectF cursor;
+                QVERIFY(QMetaObject::invokeMethod(view, "positionToRectangle", Q_RETURN_ARG(QRectF, cursor), Q_ARG(int, block.position())));
+                const auto panel = projection->codeBlockPanels().first().toMap();
+                QVERIFY(panel.value("y").toReal() <= cursor.top());
+                QVERIFY(panel.value("y").toReal() + panel.value("height").toReal() >= cursor.bottom());
+                if (QGuiApplication::platformName() != "offscreen") {
+                    const auto image = window->grabWindow(); QVERIFY(!image.isNull());
+                    const QPointF point = view->mapToScene(QPointF(view->width() - 20, cursor.bottom() - 2));
+                    const qreal scale = image.width() / qreal(window->width());
+                    QCOMPARE(image.pixelColor(qRound(point.x() * scale), qRound(point.y() * scale)),
+                             QColor(dark ? "#252525" : "#eeeeee"));
+                }
+                QCOMPARE(source->property("text").toString(), text);
+            }
+        }
+        QVERIFY(!source->property("canUndo").toBool());
+    }
     void horizontalRulesRevealMarkdownOnPhysicalClick() {
         QTemporaryDir directory;
         QVERIFY(directory.isValid());

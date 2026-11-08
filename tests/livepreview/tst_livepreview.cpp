@@ -21,6 +21,7 @@
 #include <QClipboard>
 #include <QMimeData>
 #include <QSignalSpy>
+#include <QSignalBlocker>
 #include <QScopeGuard>
 #include "../../src/mermaidrenderer.h"
 #include "../../src/livepreview.h"
@@ -106,6 +107,79 @@ private slots:
         controller->setReadMode(false); flush();
         QCOMPARE(source->toPlainText(), text);
         QVERIFY(!source->isUndoAvailable());
+    }
+    void manyCodePanelsBatchTheirSpacingUpdates() {
+        QString text = "Before\n";
+        for (int i = 0; i < 300; ++i) text += "```text\nvalue\n```\n";
+        text += "After\n";
+        source->setPlainText(text); source->clearUndoRedoStacks();
+        select(sourceItem, text.size(), text.size()); controller->refresh(); flush();
+        QCOMPARE(controller->codeBlockPanels().size(), 300);
+        auto *layout = view->documentLayout();
+        { // Invalidate presentation-only spacing, without measuring the fixture setup.
+            QSignalBlocker layoutSignals(layout);
+            QTextCursor batch(view); batch.beginEditBlock();
+            for (auto block = view->begin(); block.isValid(); block = block.next()) {
+                auto format = block.blockFormat(); format.setTopMargin(0); format.setBottomMargin(0);
+                QTextCursor cursor(block); cursor.setBlockFormat(format);
+            }
+            batch.endEditBlock();
+        }
+        QSignalSpy updates(layout, &QAbstractTextDocumentLayout::update);
+        layout->update(QRectF()); flush();
+        QVERIFY(updates.count() > 0);
+        QVERIFY2(updates.count() < 12, qPrintable(QString::number(updates.count())));
+        QCOMPARE(controller->codeBlockPanels().size(), 300);
+        const auto panels = controller->codeBlockPanels();
+        updates.clear(); select(sourceItem, text.size() - 2, text.size() - 2); flush();
+        QCOMPARE(controller->codeBlockPanels(), panels);
+        QVERIFY2(updates.count() < 12, qPrintable(QString("caret refresh updates: %1").arg(updates.count())));
+        QCOMPARE(source->toPlainText(), text);
+        QVERIFY(!source->isUndoAvailable());
+    }
+    void paddedCodePanelsLeaveRoomForProseAndAdjacentBlocks() {
+        const QString text = "Before\n```json\n{\"x\":true}\n```\n```text\nnext\n```\nAfter\n";
+        source->setPlainText(text); source->clearUndoRedoStacks();
+        select(sourceItem, text.size(), text.size());
+        for (int pixels : {16, 28}) {
+            QFont font = view->defaultFont(); font.setPixelSize(pixels);
+            viewItem->setProperty("font", font);
+            for (bool read : {false, true}) {
+                controller->setReadMode(read); controller->refresh(); flush();
+                const auto panels = controller->codeBlockPanels();
+                QCOMPARE(panels.size(), 2);
+                const auto a = panels[0].toMap(), b = panels[1].toMap();
+                QVERIFY(a.value("y").toReal() + a.value("height").toReal() < b.value("y").toReal());
+                QRectF before, after;
+                QVERIFY(QMetaObject::invokeMethod(viewItem, "positionToRectangle", Q_RETURN_ARG(QRectF, before), Q_ARG(int, 0)));
+                QVERIFY(QMetaObject::invokeMethod(viewItem, "positionToRectangle", Q_RETURN_ARG(QRectF, after), Q_ARG(int, view->find("After").position() - 1)));
+                QVERIFY(before.bottom() < a.value("y").toReal());
+                QVERIFY(b.value("y").toReal() + b.value("height").toReal() < after.top());
+                const auto code = view->find("\"x\"").block();
+                QRectF line;
+                QVERIFY(QMetaObject::invokeMethod(viewItem, "positionToRectangle", Q_RETURN_ARG(QRectF, line), Q_ARG(int, code.position())));
+                QVERIFY(line.top() - a.value("y").toReal() >= pixels / 2);
+                QVERIFY(a.value("width").toReal() > viewItem->property("width").toReal() + 12);
+                QCOMPARE(source->toPlainText(), text);
+                QVERIFY(!source->isUndoAvailable());
+            }
+        }
+        source->setPlainText("```text\nedge\n```");
+        select(sourceItem, source->characterCount() - 1, source->characterCount() - 1);
+        for (bool read : {false, true}) {
+            controller->setReadMode(read); controller->refresh(); flush();
+            const auto panel = controller->codeBlockPanels().first().toMap();
+            QVERIFY(panel.value("y").toReal() >= 0);
+            QVERIFY(panel.value("y").toReal() + panel.value("height").toReal()
+                    <= viewItem->property("contentHeight").toReal());
+        }
+        source->setPlainText("Only prose"); flush();
+        for (bool read : {false, true}) {
+            controller->setReadMode(read); controller->refresh(); flush();
+            QVERIFY(controller->codeBlockPanels().isEmpty());
+            QCOMPARE(view->rootFrame()->frameFormat().topMargin(), view->documentMargin());
+            QCOMPARE(view->rootFrame()->frameFormat().bottomMargin(), view->documentMargin());
+        }
     }
     void codePanelsCoverNativeFontBoundsAcrossMarginsAndZoom() {
         const int id = QFontDatabase::addApplicationFont(QFINDTESTDATA("../../fonts/IBMPlexMono-Regular.ttf"));

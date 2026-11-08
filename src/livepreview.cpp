@@ -9,10 +9,12 @@
 #include <QGuiApplication>
 #include <QInputMethodEvent>
 #include <QInputMethod>
+#include <QFontMetricsF>
 #include <QKeyEvent>
 #include <QQuickTextDocument>
 #include <QScopedValueRollback>
 #include <QScopeGuard>
+#include <QSignalBlocker>
 #include <QTextBlock>
 #include <QTextCursor>
 #include <QTextImageFormat>
@@ -21,6 +23,7 @@
 #include <QSet>
 #include <QTimer>
 #include <algorithm>
+#include <cmath>
 
 namespace {
 constexpr qsizetype MaxProjectionBytes = 32 * 1024 * 1024;
@@ -607,6 +610,9 @@ void LivePreview::scheduleCodeBlockPanels() {
 }
 void LivePreview::updateCodeBlockPanels() {
     if (!m_view || !m_viewItem) return;
+    // Keep the last geometry during transient layout suspension; do not let
+    // spacing edits recreate partial lines while the document cannot lay out.
+    if (m_view->pageSize() == QSizeF(0, 0)) return;
     QList<QPair<int, int>> groups = m_readCodeBlocks;
     if (!m_readMode) {
         groups.clear();
@@ -630,7 +636,51 @@ void LivePreview::updateCodeBlockPanels() {
                 groups.append({first, block.blockNumber()});
         }
     }
+    const qreal lineHeight = QFontMetricsF(qvariant_cast<QFont>(m_viewItem->property("font"))).height();
+    const qreal paddingY = std::ceil(lineHeight / 2);
+    const qreal paddingX = std::ceil(lineHeight * 0.75);
+    const qreal gap = std::ceil(lineHeight / 3);
+    // Reserve visual-only paragraph space so padded decorations cannot cover
+    // neighboring prose or each other. The Markdown and its undo stay untouched.
+    QScopedValueRollback<bool> guard(m_guard, true);
     auto *layout = m_view->documentLayout();
+    QSignalBlocker layoutSignals(layout);
+    QTextCursor batch(m_view);
+    batch.beginEditBlock();
+    bool spacingChanged = false;
+    // Qt ignores the first block's top margin; reserve document-edge space in
+    // the existing root frame as well (no new frames or source positions).
+    auto frame = m_view->rootFrame()->frameFormat();
+    const qreal edgeTop = !groups.isEmpty() && groups.first().first == 0
+        ? qMax(m_view->documentMargin(), paddingY + gap) : m_view->documentMargin();
+    const qreal edgeBottom = !groups.isEmpty() && groups.last().second == m_view->blockCount() - 1
+        ? qMax(m_view->documentMargin(), paddingY + gap) : m_view->documentMargin();
+    if (frame.topMargin() != edgeTop || frame.bottomMargin() != edgeBottom) {
+        frame.setTopMargin(edgeTop); frame.setBottomMargin(edgeBottom);
+        m_view->rootFrame()->setFrameFormat(frame);
+        spacingChanged = true;
+    }
+    for (int i = 0; i < groups.size(); ++i) {
+        const auto &group = groups.at(i);
+        const bool previousCode = i > 0 && groups.at(i - 1).second + 1 == group.first;
+        const bool nextCode = i + 1 < groups.size() && group.second + 1 == groups.at(i + 1).first;
+        for (bool first : {true, false}) {
+            const auto block = m_view->findBlockByNumber(first ? group.first : group.second);
+            if (!block.isValid()) continue;
+            auto format = block.blockFormat();
+            const qreal space = paddingY * ((first ? previousCode : nextCode) ? 2 : 1) + gap;
+            if ((first ? format.topMargin() : format.bottomMargin()) >= space) continue;
+            if (first) format.setTopMargin(space);
+            else format.setBottomMargin(space);
+            QTextCursor cursor(block);
+            cursor.setBlockFormat(format);
+            spacingChanged = true;
+        }
+    }
+    batch.endEditBlock();
+    layoutSignals.unblock();
+    if (spacingChanged)
+        m_view->markContentsDirty(0, m_view->characterCount());
     layout->documentSize();
     const qreal left = m_viewItem->property("leftPadding").toReal() - m_view->documentMargin();
     // QTextLayout positions already include the document margin. Qt Quick's
@@ -654,13 +704,13 @@ void LivePreview::updateCodeBlockPanels() {
         // that destroys otherwise valid background delegates. A subsequent
         // layout notification will supply the completed geometry.
         if (!a || !b || !a->lineCount() || !b->lineCount()) return;
-        const qreal y = top + a->position().y() + a->lineAt(0).y();
+        const qreal y = top + a->position().y() + a->lineAt(0).y() - paddingY;
         const auto endLine = b->lineAt(b->lineCount() - 1);
-        const qreal bottom = top + b->position().y() + endLine.y() + endLine.height();
-        const qreal x = left + bounds.left() - 6;
+        const qreal bottom = top + b->position().y() + endLine.y() + endLine.height() + paddingY;
+        const qreal x = left + bounds.left() - paddingX;
         panels.append(QVariantMap{{"x", x}, {"y", y},
             {"width", qMax(qreal(0), m_viewItem->property("width").toReal()
-                         - m_viewItem->property("rightPadding").toReal() + 6 - x)},
+                         - m_viewItem->property("rightPadding").toReal() + paddingX - x)},
             {"height", bottom - y}});
     }
     if (panels != m_codeBlockPanels) {

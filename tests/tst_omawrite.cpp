@@ -80,7 +80,7 @@ class OmawriteTest : public QObject {
     }
 
 private slots:
-    void readCodePanelCoversNativeTextAtDifferentZooms() {
+    void codePanelsHaveNativePaddingInBothModesAtDifferentZooms() {
         QTemporaryDir directory; QVERIFY(directory.isValid());
         const int font = QFontDatabase::addApplicationFont(QFINDTESTDATA("../fonts/IBMPlexMono-Regular.ttf"));
         QVERIFY(font >= 0);
@@ -102,28 +102,34 @@ private slots:
             QVERIFY(QTest::qWaitForWindowExposed(window));
         const QString text = "Testing background\n\n```json\n{\"this\":\"that\"}\n```\n";
         source->setProperty("text", text); source->setProperty("cursorPosition", text.size());
-        root->setProperty("readMode", true);
         for (bool dark : {true, false}) {
             backend.setDarkMode(dark);
-            for (qreal zoom : {1.0, 1.6}) {
-                backend.setTextZoom(zoom);
-                QCoreApplication::processEvents(); QCoreApplication::processEvents();
-                QTRY_COMPARE(projection->codeBlockPanels().size(), 1);
-                auto *document = view->property("textDocument").value<QQuickTextDocument *>()->textDocument();
-                const auto block = document->find("\"this\"").block(); QVERIFY(block.isValid());
-                QRectF cursor;
-                QVERIFY(QMetaObject::invokeMethod(view, "positionToRectangle", Q_RETURN_ARG(QRectF, cursor), Q_ARG(int, block.position())));
-                const auto panel = projection->codeBlockPanels().first().toMap();
-                QVERIFY(panel.value("y").toReal() <= cursor.top());
-                QVERIFY(panel.value("y").toReal() + panel.value("height").toReal() >= cursor.bottom());
-                if (QGuiApplication::platformName() != "offscreen") {
-                    const auto image = window->grabWindow(); QVERIFY(!image.isNull());
-                    const QPointF point = view->mapToScene(QPointF(view->width() - 20, cursor.bottom() - 2));
-                    const qreal scale = image.width() / qreal(window->width());
-                    QCOMPARE(image.pixelColor(qRound(point.x() * scale), qRound(point.y() * scale)),
-                             QColor(dark ? "#252525" : "#eeeeee"));
+            for (bool read : {false, true}) {
+                root->setProperty("readMode", read);
+                for (qreal zoom : {1.0, 1.6}) {
+                    backend.setTextZoom(zoom);
+                    QCoreApplication::processEvents(); QCoreApplication::processEvents();
+                    QTRY_COMPARE(projection->codeBlockPanels().size(), 1);
+                    auto *document = view->property("textDocument").value<QQuickTextDocument *>()->textDocument();
+                    const auto block = document->find("\"this\"").block(); QVERIFY(block.isValid());
+                    QRectF first, last;
+                    const int firstPosition = read ? block.position() : block.previous().position();
+                    const int lastPosition = read ? block.position() : block.next().position();
+                    QVERIFY(QMetaObject::invokeMethod(view, "positionToRectangle", Q_RETURN_ARG(QRectF, first), Q_ARG(int, firstPosition)));
+                    QVERIFY(QMetaObject::invokeMethod(view, "positionToRectangle", Q_RETURN_ARG(QRectF, last), Q_ARG(int, lastPosition)));
+                    const auto panel = projection->codeBlockPanels().first().toMap();
+                    const qreal pixels = qvariant_cast<QFont>(view->property("font")).pixelSize();
+                    QVERIFY(first.top() - panel.value("y").toReal() >= pixels / 2);
+                    QVERIFY(panel.value("y").toReal() + panel.value("height").toReal() - last.bottom() >= pixels / 2);
+                    if (QGuiApplication::platformName() != "offscreen") {
+                        const auto image = window->grabWindow(); QVERIFY(!image.isNull());
+                        const QPointF point = view->mapToScene(QPointF(view->width() - 20, last.bottom() + pixels / 4));
+                        const qreal scale = image.width() / qreal(window->width());
+                        QCOMPARE(image.pixelColor(qRound(point.x() * scale), qRound(point.y() * scale)),
+                                 QColor(dark ? "#252525" : "#eeeeee"));
+                    }
+                    QCOMPARE(source->property("text").toString(), text);
                 }
-                QCOMPARE(source->property("text").toString(), text);
             }
         }
         QVERIFY(!source->property("canUndo").toBool());

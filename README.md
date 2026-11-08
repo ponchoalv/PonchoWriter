@@ -9,7 +9,8 @@ This is the [ponchoalv fork](https://github.com/ponchoalv/omawrite) of
 [example document](docs/preview-example.md), and
 [test guide](docs/testing.md),
 [language highlighting guide](docs/syntax-highlighting.md),
-[desktop spelling guide](docs/spellchecking.md), and
+[desktop spelling guide](docs/spellchecking.md),
+[file/window routing guide](docs/opening-files-and-windows.md), and
 [Windows, macOS and Linux installation guide](docs/install.md).
 
 ## Fork additions
@@ -21,6 +22,7 @@ This is the [ponchoalv fork](https://github.com/ponchoalv/omawrite) of
 - macOS F1 key labels, nonconflicting Replace/fullscreen shortcuts and a bundled app icon.
 - Optional image name/folder and Locate actions in the image context menu; current-document changes are undoable.
 - Minimal Edit-only spelling underlines and suggestions using Sonnet Core with native macOS/Windows dictionaries or system Hunspell on Linux; no autocorrect or dictionary downloads.
+- Single-process multiwindow routing: focus an already-open file, open other files separately, and protect owned Save As targets. Native macOS file-open events and cross-platform local IPC share the same router.
 - Lightweight selection word counts, per-file position memory, cross-platform Reveal, and selection-aware HTML copying. See the [writing guide](docs/writing-and-shortcuts.md); code-block overflow remains a [future TODO](docs/TODO.md).
 
 The screenshots below are from upstream, before these fork additions.
@@ -35,7 +37,7 @@ The **upstream** app is available through the Omarchy Package Repository as `oma
 
 ## Command line
 
-`omawrite` opens an empty document and `omawrite FILE` opens a Markdown file.
+`omawrite FILE ...` routes files to the running app: existing documents are focused, other files get separate windows. Without filenames, it starts an untitled window if closed or activates the running app. Cmd/Ctrl+N always creates an untitled window. On macOS use `open -a /path/to/omawrite.app /path/to/note.md`, without `-n` or `--args`; see [opening files](docs/opening-files-and-windows.md).
 `omawrite --help` and `omawrite --version` answer in the terminal without opening a window.
 
 ## Shortcuts

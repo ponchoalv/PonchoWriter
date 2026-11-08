@@ -24,6 +24,10 @@
 #include "cli.h"
 
 #include "backend.h"
+#include "windowmanager.h"
+#include "fileopenrequests.h"
+#include <QFileOpenEvent>
+#include <QScopeGuard>
 #include "markdownhighlighter.h"
 #include "livepreview.h"
 #include "spellingcontroller.h"
@@ -76,6 +80,133 @@ class OmawriteTest : public QObject {
     }
 
 private slots:
+    void forwardsNativeFileEventsDeliveredAfterStartupAndWaitsForQuiet() {
+        FileOpenRequests events(qApp);
+        QSignalSpy requests(&events, &FileOpenRequests::filesRequested);
+        QSignalSpy idle(&events, &FileOpenRequests::forwardingIdle);
+        QElapsedTimer elapsed; elapsed.start();
+        events.activate(true);
+        const QString path = QDir::temp().absoluteFilePath("delayed native note.md");
+        QTimer::singleShot(180, &events, [&] { QCoreApplication::postEvent(qApp, new QFileOpenEvent(path)); });
+        QTRY_COMPARE(requests.count(), 1);
+        QCOMPARE(requests.first().first().toStringList(), QStringList{path});
+        QCOMPARE(idle.count(), 0);
+        QTRY_COMPARE(idle.count(), 1);
+        QVERIFY(elapsed.elapsed() >= 550);
+        // A primary has no exit timer, even after later Finder events.
+        events.activate(false);
+        QFileOpenEvent later(path);
+        QCoreApplication::sendEvent(qApp, &later);
+        QTRY_COMPARE(requests.count(), 2);
+        QTest::qWait(450);
+        QCOMPARE(idle.count(), 1);
+    }
+
+    void routesFilesWithoutReplacingDraftsAndReleasesAcceptedWindows() {
+        const QString oldName = QCoreApplication::applicationName();
+        QCoreApplication::setApplicationName(oldName + "-routing");
+        const QString state = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+        const auto cleanup = qScopeGuard([&] { QDir(state).removeRecursively(); QCoreApplication::setApplicationName(oldName); });
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        const QString first = directory.filePath("first note.md");
+        const QString second = directory.filePath("second.md");
+        { QFile file(first); QVERIFY(file.open(QIODevice::WriteOnly)); file.write("first source"); }
+        { QFile file(second); QVERIFY(file.open(QIODevice::WriteOnly)); file.write("second source"); }
+        WindowManager manager;
+        manager.start({first});
+        QCOMPARE(manager.windows().size(), 1);
+        auto *a = manager.windows().first();
+        auto *backend = manager.backendFor(a);
+        QCOMPARE(backend->m_document->toPlainText(), QString("first source"));
+        auto *blank = manager.newWindow();
+        QVERIFY(blank);
+        auto *draft = manager.backendFor(blank);
+        auto *source = blank->findChild<QObject *>("sourceEditor");
+        QVERIFY(source);
+        source->setProperty("text", "untitled draft stays here");
+        QTRY_VERIFY(draft->modified());
+        QVERIFY(!blank->close());
+        auto *question = blank->findChild<QObject *>("unsavedChangesDialog");
+        QVERIFY(question);
+        QTRY_VERIFY(question->property("visible").toBool());
+        QVERIFY(QMetaObject::invokeMethod(question, "reject"));
+        QTRY_VERIFY(!question->property("visible").toBool());
+        QCOMPARE(manager.windows().size(), 2); // Cancel did not release the draft.
+        draft->open(QUrl::fromLocalFile(second)); // Routed picker: no replacement/prompt.
+        QCOMPARE(manager.windows().size(), 3);
+        QCOMPARE(draft->m_document->toPlainText(), QString("untitled draft stays here"));
+        QCOMPARE(manager.openFile(QUrl::fromLocalFile(first)), a);
+        QCOMPARE(manager.openFile(QUrl::fromLocalFile(directory.filePath("./first note.md"))), a);
+#ifndef Q_OS_WIN
+        const QString alias = directory.filePath("alias.md");
+        QVERIFY(QFile::link(first, alias));
+        QCOMPARE(manager.openFile(QUrl::fromLocalFile(alias)), a);
+#endif
+        QCOMPARE(manager.windows().size(), 3);
+        QImage image(2, 2, QImage::Format_ARGB32); image.fill(Qt::black);
+        QGuiApplication::clipboard()->setImage(image);
+        const QString markdown = draft->pasteClipboardImage();
+        QVERIFY(!markdown.isEmpty());
+        const QString protectedDraft = QString("untitled draft stays here\n\n") + markdown;
+        source->setProperty("text", protectedDraft);
+        QSignalSpy failed(draft, &Backend::saveFailed);
+        draft->saveAs(QUrl::fromLocalFile(first));
+        QCOMPARE(failed.count(), 1);
+        QVERIFY(draft->fileUrl().isEmpty());
+        QCOMPARE(draft->m_document->toPlainText(), protectedDraft);
+        QVERIFY(!QFileInfo::exists(directory.filePath("img"))); // Guard ran before copying assets.
+        QFile original(first); QVERIFY(original.open(QIODevice::ReadOnly)); QCOMPARE(original.readAll(), QByteArray("first source"));
+        QPointer<Backend> gone = backend;
+        QPointer<QWindow> goneWindow = a;
+        QVERIFY(a->close());
+        QTRY_VERIFY(gone.isNull() && goneWindow.isNull());
+        QCOMPARE(manager.windows().size(), 2);
+        QVERIFY(manager.openFile(QUrl::fromLocalFile(first)));
+        QCOMPARE(manager.windows().size(), 3);
+        const auto count = manager.windows().size();
+        draft->newWindow();
+        QCOMPARE(manager.windows().size(), count + 1);
+    }
+
+    void startupRecoveryKeepsDuplicateDraftsAndNewWindowsStayBlank() {
+        const QString oldName = QCoreApplication::applicationName();
+        QCoreApplication::setApplicationName(oldName + "-routing-recovery");
+        const QString state = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+        const auto cleanup = qScopeGuard([&] { QDir(state).removeRecursively(); QCoreApplication::setApplicationName(oldName); });
+        QVERIFY(QDir().mkpath(state));
+        QTemporaryDir directory;
+        const QString path = directory.filePath("owned.md");
+        { QFile file(path); QVERIFY(file.open(QIODevice::WriteOnly)); file.write("disk baseline"); }
+        const auto snapshot = [&](int slot, const QString &text) {
+            QFile file(QDir(state).filePath(QString("recovery-%1.json").arg(slot)));
+            if (!file.open(QIODevice::WriteOnly)) return false;
+            return file.write(QJsonDocument(QJsonObject{{"fileUrl", QUrl::fromLocalFile(path).toString()}, {"text", text}}).toJson()) > 0;
+        };
+        QVERIFY(snapshot(0, "draft one")); QVERIFY(snapshot(1, "draft two"));
+        WindowManager manager;
+        manager.start({path});
+        QCOMPARE(manager.windows().size(), 2);
+        auto *first = manager.backendFor(manager.windows().first());
+        auto *second = manager.backendFor(manager.windows().last());
+        QCOMPARE(first->m_document->toPlainText(), QString("draft one"));
+        QCOMPARE(second->m_document->toPlainText(), QString("draft two"));
+        QVERIFY(first->m_autoSaveSuspended && second->m_autoSaveSuspended);
+        QSignalSpy failed(second, &Backend::saveFailed);
+        second->save();
+        QCOMPARE(failed.count(), 1);
+        QVERIFY(second->modified());
+        QFile file(path); QVERIFY(file.open(QIODevice::ReadOnly)); QCOMPARE(file.readAll(), QByteArray("disk baseline")); file.close();
+        QVERIFY(snapshot(2, "later orphan, not a New Window"));
+        auto *fresh = manager.backendFor(manager.newWindow());
+        QVERIFY(fresh); QVERIFY(fresh->fileUrl().isEmpty()); QVERIFY(!fresh->modified());
+        QCOMPARE(fresh->m_document->toPlainText(), QString());
+        QVERIFY(QFileInfo::exists(QDir(state).filePath("recovery-2.json")));
+        first->save();
+        QVERIFY(!first->modified());
+        QVERIFY(file.open(QIODevice::ReadOnly)); QCOMPARE(file.readAll(), QByteArray("draft one"));
+    }
+
     void initTestCase() {
         qmlRegisterType<LivePreview>("Omawrite", 1, 0, "LivePreview");
         QCoreApplication::setApplicationVersion(QStringLiteral("1.2.3-test"));
@@ -705,7 +836,7 @@ private slots:
 
     void answersHelpBeforeOpeningAWindow() {
         const QString usage = Cli::usage();
-        QVERIFY(usage.contains(QStringLiteral("omawrite [FILE]")));
+        QVERIFY(usage.contains(QStringLiteral("omawrite [FILE ...]")));
         QVERIFY(usage.contains(QStringLiteral("-h, --help")));
         QVERIFY(usage.contains(QStringLiteral("-v, --version")));
 

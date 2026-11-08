@@ -2,6 +2,12 @@
 
 This is the user guide for [ponchoalv/omawrite](https://github.com/ponchoalv/omawrite), a fork of [omacom/omawrite](https://github.com/omacom/omawrite). Markdown remains the file format; this is not a rich-text document format or an Obsidian plugin.
 
+## Files and windows
+
+Opening a file already owned by this app activates its existing window without reloading. A different file opens separately; the file picker no longer replaces or discards the originating draft. Cmd/Ctrl+N always opens a fresh untitled window. Save As cannot overwrite a file owned by another window. Recovery drafts retain independent slots and do not get consumed by New Window.
+
+On macOS, prefer `open -a "/path/to/omawrite.app" "/path/to/note.md"` rather than `-n` or `--args`. Windows/Linux executable launches forward file requests through the same local Qt broker. Quit older, un-routed copies before using this build. See the [cross-platform opening guide](opening-files-and-windows.md) for commands, failure/recovery behavior and test limits.
+
 ## macOS key names
 
 Qt normally maps a source-code `Ctrl` modifier to **Command** on macOS and `Meta` to the physical **Control** key. The F1 reference now formats labels for the running platform. It also calls Alt **Option** on a Mac.

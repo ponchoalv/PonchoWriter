@@ -13,7 +13,8 @@ ApplicationWindow {
     height: 820
     minimumWidth: 720
     minimumHeight: 520
-    visible: true
+    visible: !backend.routesFileOpen
+    signal windowCloseAccepted()
     title: (backend.modified ? "* " : "") + backend.fileName + " - Omawrite"
 
     readonly property bool darkMode: backend.darkMode
@@ -335,6 +336,8 @@ ApplicationWindow {
     onClosing: function(close) {
         if (closeConfirmed || !backend.modified) {
             win.rememberPosition();
+            backend.finishClosing();
+            win.windowCloseAccepted();
             return;
         }
 
@@ -345,7 +348,7 @@ ApplicationWindow {
     }
 
     function requestOpen(url) {
-        if (!backend.modified) {
+        if (backend.routesFileOpen || !backend.modified) {
             backend.open(url);
             return;
         }
@@ -1700,7 +1703,7 @@ ApplicationWindow {
         if (geometry.y >= 0) y = geometry.y;
         width = geometry.width;
         height = geometry.height;
-        if (geometry.maximized) showMaximized();
+        if (geometry.maximized && !backend.routesFileOpen) showMaximized();
         Qt.callLater(function() { if (!win.positionReady && win.pendingReadingPosition === null) win.restoreFilePosition(); });
     }
 

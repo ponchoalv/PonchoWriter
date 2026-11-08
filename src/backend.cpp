@@ -40,6 +40,7 @@
 #include <QJsonArray>
 #include <QLockFile>
 #include <QSaveFile>
+#include <QScopedValueRollback>
 #include <QTextBlock>
 #include <QTextBlockFormat>
 #include <QTextCursor>
@@ -137,9 +138,11 @@ QString Backend::normalizedLinkUrl(const QString &clipboardText) {
     return url.toString();
 }
 
-Backend::Backend(QObject *parent) : Backend(std::unique_ptr<SpellingDictionary>(), parent) {}
+Backend::Backend(QObject *parent, bool recoverDraft)
+    : Backend(std::unique_ptr<SpellingDictionary>(), parent, recoverDraft) {}
 
-Backend::Backend(std::unique_ptr<SpellingDictionary> dictionary, QObject *parent) : QObject(parent) {
+Backend::Backend(std::unique_ptr<SpellingDictionary> dictionary, QObject *parent, bool recoverDraft)
+    : QObject(parent), m_recoverDraft(recoverDraft) {
     connect(QGuiApplication::clipboard(), &QClipboard::dataChanged, this, &Backend::clipboardChanged);
     m_spelling = dictionary ? new SpellingController(std::move(dictionary), this)
                             : new SpellingController(this);
@@ -170,7 +173,7 @@ Backend::Backend(std::unique_ptr<SpellingDictionary> dictionary, QObject *parent
     QDir().mkpath(stateDirectory);
     // Claim an orphaned snapshot before taking an empty slot. This ensures a
     // crash in window 2 is still recovered even if window 1 exited normally.
-    for (int pass = 0; pass < 2 && !m_recoveryLock; ++pass) {
+    for (int pass = recoverDraft ? 0 : 1; pass < 2 && !m_recoveryLock; ++pass) {
         for (int slot = 0; slot < 100; ++slot) {
             const QString base = QDir(stateDirectory).filePath(
                 QStringLiteral("recovery-%1").arg(slot));
@@ -346,7 +349,7 @@ void Backend::attachDocument(QObject *textDocument) {
             });
 
     applyDocumentTypography();
-    restoreRecovery();
+    if (m_recoverDraft) restoreRecovery();
 }
 
 void Backend::openDialog() {
@@ -354,6 +357,7 @@ void Backend::openDialog() {
 }
 
 void Backend::open(const QUrl &url) {
+    if (m_openRouter && !m_bypassRouting) { m_openRouter(url); return; }
     if (!url.isLocalFile()) {
         setStatus(QStringLiteral("Only local files can be opened."));
         return;
@@ -424,6 +428,7 @@ void Backend::discardRecovery() {
 // starts a blank document that the first save writes to that path. Opening
 // from the file picker or reloading still requires the file to be there.
 void Backend::openOrStartFile(const QUrl &requestedUrl) {
+    QScopedValueRollback<bool> bypass(m_bypassRouting, true);
     // A relative path names a file in the directory Omawrite was started
     // from; a recovery draft must not resolve it against another one later.
     const QFileInfo info(requestedUrl.toLocalFile());
@@ -457,6 +462,7 @@ void Backend::openOrStartFile(const QUrl &requestedUrl) {
 }
 
 void Backend::reloadFromDisk() {
+    QScopedValueRollback<bool> bypass(m_bypassRouting, true);
     if (m_fileUrl.isLocalFile())
         open(m_fileUrl);
 }
@@ -519,11 +525,20 @@ void Backend::printDocument() {
     }
 }
 
-void Backend::newWindow() {
-    const bool started = QProcess::startDetached(QCoreApplication::applicationFilePath(),
-                                                 QStringList());
-    if (!started)
-        setStatus(QStringLiteral("Could not open a new window."));
+void Backend::newWindow() { emit newWindowRequested(); }
+
+void Backend::setOpenRouter(std::function<void(const QUrl &)> router) {
+    m_openRouter = std::move(router);
+    emit routesFileOpenChanged();
+}
+
+bool Backend::hasRecoverySnapshot() const { return QFileInfo::exists(m_recoveryPath); }
+
+void Backend::finishClosing() {
+    m_autoSaveHeld = true;
+    m_autoSaveTimer.stop();
+    m_fileCheckTimer.stop();
+    clearRecovery();
 }
 
 void Backend::copyAsHtml(int start, int end, QObject *renderedDocument) {
@@ -1216,6 +1231,11 @@ void Backend::saveTo(const QUrl &url) {
         return;
     }
 
+    if (m_writeGuard && !m_writeGuard(url)) {
+        setStatus(QStringLiteral("This file is already open in another window. Choose a different Save As name."));
+        emit saveFailed();
+        return;
+    }
     QString attachmentError;
     if (!materializeAttachments(url, &attachmentError)) {
         setStatus(attachmentError);
@@ -1387,8 +1407,10 @@ void Backend::restoreRecovery() {
         return;
     const QJsonDocument json = QJsonDocument::fromJson(file.readAll());
     if (!json.isObject() || !json.object().contains(QStringLiteral("text"))) {
-        // Unreadable now means unreadable every launch; do not keep claiming it.
-        file.remove();
+        // Preserve malformed bytes for manual recovery without claiming the
+        // same broken snapshot on every launch.
+        file.rename(m_recoveryPath + QStringLiteral(".invalid-")
+                    + QUuid::createUuid().toString(QUuid::WithoutBraces));
         return;
     }
     const QJsonObject recovery = json.object();

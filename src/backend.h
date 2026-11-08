@@ -13,6 +13,7 @@
 #include <QUrl>
 #include <QVariantList>
 #include <memory>
+#include <functional>
 
 class MarkdownHighlighter;
 class SpellingController;
@@ -29,6 +30,7 @@ class Backend : public QObject {
     Q_PROPERTY(bool modified READ modified NOTIFY modifiedChanged)
     Q_PROPERTY(QString status READ status NOTIFY statusChanged)
     Q_PROPERTY(int wordCount READ wordCount NOTIFY wordCountChanged)
+    Q_PROPERTY(bool routesFileOpen READ routesFileOpen NOTIFY routesFileOpenChanged)
     Q_PROPERTY(int selectionWordCount READ selectionWordCount NOTIFY selectionWordCountChanged)
     Q_PROPERTY(bool darkMode READ darkMode WRITE setDarkMode NOTIFY darkModeChanged)
     Q_PROPERTY(qreal textScale READ textScale NOTIFY textScaleChanged)
@@ -43,9 +45,9 @@ class Backend : public QObject {
     Q_PROPERTY(bool clipboardImageAvailable READ clipboardImageAvailable NOTIFY clipboardChanged)
 
 public:
-    explicit Backend(QObject *parent = nullptr);
+    explicit Backend(QObject *parent = nullptr, bool recoverDraft = true);
     // Deterministic dictionary seam for isolated source/action integration tests.
-    explicit Backend(std::unique_ptr<SpellingDictionary> dictionary, QObject *parent = nullptr);
+    explicit Backend(std::unique_ptr<SpellingDictionary> dictionary, QObject *parent = nullptr, bool recoverDraft = true);
     ~Backend() override;
 
     void setParentWindow(QWindow *window);
@@ -98,6 +100,12 @@ public:
     Q_INVOKABLE void printDocument();
     Q_INVOKABLE void copyAsHtml(int start = -1, int end = -1, QObject *renderedDocument = nullptr);
     Q_INVOKABLE void newWindow();
+    Q_INVOKABLE void finishClosing();
+    bool hasRecoverySnapshot() const;
+    bool hasRecoveryStorage() const { return !m_recoveryPath.isEmpty(); }
+    bool routesFileOpen() const { return bool(m_openRouter); }
+    void setOpenRouter(std::function<void(const QUrl &)> router);
+    void setWriteGuard(std::function<bool(const QUrl &)> guard) { m_writeGuard = std::move(guard); }
     Q_INVOKABLE QString clipboardUrl() const;
     Q_INVOKABLE QString clipboardText() const;
     bool clipboardImageAvailable() const;
@@ -129,6 +137,8 @@ public:
 
 signals:
     void clipboardChanged();
+    void routesFileOpenChanged();
+    void newWindowRequested();
     void fileUrlChanged();
     void attachmentUrlsChanged();
     void modifiedChanged();
@@ -227,6 +237,10 @@ private:
     bool m_hasKnownFileContents = false;
     bool m_autoSaveSuspended = false;
     bool m_autoSaveHeld = false;
+    bool m_recoverDraft = true;
+    bool m_bypassRouting = false;
+    std::function<void(const QUrl &)> m_openRouter;
+    std::function<bool(const QUrl &)> m_writeGuard;
     QString m_recoveryPath;
     std::unique_ptr<QLockFile> m_recoveryLock;
     QMap<QString, QString> m_stagedAttachments; // logical relative path -> immutable storage ID

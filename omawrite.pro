@@ -11,6 +11,7 @@ include(spellchecking.pri)
 TEMPLATE = app
 macx {
     ICON = assets/omawrite.icns
+    QMAKE_INFO_PLIST = assets/Info.plist
     syntaxNotices.files = $$PWD/third_party/ksyntaxhighlighting
     syntaxNotices.path = Contents/Resources/third_party
     spellNotices.files = $$PWD/third_party/sonnet
@@ -20,6 +21,9 @@ macx {
 
 HEADERS += \
     src/backend.h \
+    src/windowmanager.h \
+    src/instancebroker.h \
+    src/fileopenrequests.h \
     src/spellingcontroller.h \
     src/spellingprose.h \
     src/cli.h \
@@ -31,6 +35,9 @@ HEADERS += \
 
 SOURCES += \
     src/main.cpp \
+    src/windowmanager.cpp \
+    src/instancebroker.cpp \
+    src/fileopenrequests.cpp \
     src/backend.cpp \
     src/spellingcontroller.cpp \
     src/spellingprose.cpp \

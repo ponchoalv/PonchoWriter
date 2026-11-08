@@ -29,7 +29,7 @@ CMake defaults to Unix Makefiles on these Unix instructions; Ninja is optional. 
 
 The engine is MIT-licensed, but embedded definition data has mixed GPL/LGPL/other licenses: **not everything bundled is MIT**. See `third_party/ksyntaxhighlighting/README.md` and its `LICENSES/` files for upstream notices. A local build is **not a redistribution-ready release**; resource/license/source auditing remains required. Sonnet adds LGPL obligations, including static-library relinking requirements; see `third_party/sonnet/README.md`. Historical Arch packaging is disabled pending that audit. Deployment commands below describe local deployment mechanics, not permission or readiness to redistribute binaries.
 
-Verified on macOS arm64 / Qt 6.12.0 on 2026-11-07: **275 checks passed, 0 failed across eleven suites**, with 2 native-render bodies skipped offscreen. Separate native Mac runs passed OS-dictionary smoke, spelling suggestions/correction/undo, keyboard/menu image paste and 100 threaded rendered mode switches. The app rebuilt with static syntax/Sonnet resources and upstream notices. No native Learn or personal-dictionary changes were performed. See [test details](testing.md). Windows/Linux remain unverified.
+Verified on macOS arm64 / Qt 6.12.0 on 2026-11-08: **321 checks passed, 0 failed across twelve suites**, with 2 native-render bodies skipped offscreen. Separate native Mac runs passed OS-dictionary smoke, spelling suggestions/correction/undo, keyboard/menu image paste and 100 threaded rendered mode switches. The app rebuilt with static syntax/Sonnet resources and upstream notices. No native Learn or personal-dictionary changes were performed. See [test details](testing.md). Windows/Linux remain unverified.
 
 ## 1. Windows (first-time installation)
 
@@ -218,8 +218,9 @@ If the executable is at the build root, use `tst_omawrite.exe` instead. For MSVC
 | `tests/spellchecking/spellchecking.pro` | `tst_spellchecking` |
 | `tests/spellchecking/integration.pro` | `tst_spellingintegration` |
 | `tests/spellchecking/main.pro` | `tst_spelling_main` |
+| `tests/instancebroker/instancebroker.pro` | `tst_instancebroker` |
 
-The last three suites cover spelling classification/controller, projection and Main.qml integration; build each project in another fresh directory with the same pattern. For the eighth (code-highlighting) suite specifically, from the repository root in the same configured CMD environment:
+The three spelling suites cover classification/controller, projection and Main.qml integration; the final broker suite covers local IPC and subprocess forwarding. Build each project in another fresh directory with the same pattern. For the eighth (code-highlighting) suite specifically, from the repository root in the same configured CMD environment:
 
 ```bat
 set "REPO=%CD%"
@@ -392,7 +393,13 @@ make -j4
 QT_QPA_PLATFORM=offscreen ./tst_omawrite
 ```
 
-On macOS the test may instead be `./tst_omawrite.app/Contents/MacOS/tst_omawrite`; use the path actually generated. Repeat all eleven projects/targets in the Windows test table in separate directories, using absolute project paths if convenient. This manual core test alone is **not** the complete suite. The app output is `build-new-kit/omawrite` on Linux or `build-new-kit/omawrite.app` on macOS.
+On macOS the test may instead be `./tst_omawrite.app/Contents/MacOS/tst_omawrite`; use the path actually generated. Repeat all twelve projects/targets in the Windows test table in separate directories, using absolute project paths if convenient. This manual core test alone is **not** the complete suite. The app output is `build-new-kit/omawrite` on Linux or `build-new-kit/omawrite.app` on macOS.
+
+## Opening files after installation
+
+The current build routes file requests to one running process: an already-open canonical file is focused without reloading its draft, while a different file gets its own window. **New window** still creates an untitled window. Run the executable with multiple file paths, or use the OS's Open With association. The macOS bundle declares Markdown document support but does not forcibly replace your preferred editor.
+
+Quit older copies first; an earlier app in `/Applications` cannot participate in this new routing protocol. macOS `open -a … --args …` is only a launch-time argument mechanism; use `open -a "/path/to/omawrite.app" "/path/to/note.md"` for a native document-open request or call the bundle executable directly. See [Opening files and windows](opening-files-and-windows.md), including `open -n`, recovery and desktop focus limits. Windows/Linux behavior is source-supported but has not been run here.
 
 ## 4. Optional Mermaid rendering and feature boundaries
 

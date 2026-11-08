@@ -97,6 +97,7 @@ private:
     QTextCharFormat m_boldFormat;
     QTextCharFormat m_italicFormat;
     QTextCharFormat m_codeFormat;
+    QTextCharFormat m_blockCodeFormat;
     QTextCharFormat m_fenceFormat;
     QTextCharFormat m_quoteFormat;
     QTextCharFormat m_linkFormat;

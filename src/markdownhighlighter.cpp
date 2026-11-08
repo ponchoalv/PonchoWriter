@@ -283,7 +283,9 @@ void MarkdownHighlighter::rebuildFormats() {
         m_codeFormat.setBackground(QColor(m_customCodeBackground));
 
     // A fence recedes the way a heading's `#` does, over the panel it opens.
-    m_fenceFormat = m_codeFormat;
+    m_blockCodeFormat = m_codeFormat;
+    m_blockCodeFormat.clearBackground(); // One native presentation panel, not glyph strips.
+    m_fenceFormat = m_blockCodeFormat;
     m_fenceFormat.setForeground(marker);
 
     m_quoteFormat = QTextCharFormat();
@@ -343,12 +345,12 @@ void MarkdownHighlighter::highlightBlock(const QString &text) {
         const bool closing = closesFence(text, fence / 2 + 3,
                                          fence % 2 ? QLatin1Char('~') : QLatin1Char('`'));
         setCurrentBlockState(closing ? Prose : previous);
-        setFormat(0, text.length(), closing ? m_fenceFormat : m_codeFormat);
+        setFormat(0, text.length(), closing ? m_fenceFormat : m_blockCodeFormat);
         const auto *context = dynamic_cast<const CodeBlockData *>(currentBlock().previous().userData());
         if (!closing && context) {
             const auto line = m_codeHighlighter.tokenize(text, context->language, context->state);
             for (const auto &token : line.tokens) {
-                QTextCharFormat style = m_codeFormat;
+                QTextCharFormat style = m_blockCodeFormat;
                 style.merge(token.format);
                 setFormat(token.offset, token.length, style);
             }

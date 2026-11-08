@@ -198,7 +198,7 @@ private slots:
         QVERIFY(at(body, 0).foreground() != original.foreground());
         QCOMPARE(at(body, 0).background().color(), QColor("#ffad42"));
         highlighter.setSearch("", -1);
-        QCOMPARE(at(body, 0).background().color(), QColor("#abcdef"));
+        QCOMPARE(at(body, 0).background().style(), Qt::NoBrush); // Fenced fill is a presentation panel.
         QCOMPARE(doc.toPlainText(), source);
         QVERIFY(!doc.isUndoAvailable());
         QTextCursor cursor(&doc); cursor.movePosition(QTextCursor::End); cursor.insertText("!");

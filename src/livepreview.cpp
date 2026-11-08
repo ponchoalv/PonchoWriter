@@ -117,7 +117,8 @@ void styleReadDocument(QTextDocument &document, const QString &source,
             // whole editor may itself use a monospace writing font.
             if (code || (existing.hasProperty(QTextFormat::FontFixedPitch) && existing.fontFixedPitch())) {
                 patch.setForeground(foreground);
-                patch.setBackground(codeBackground);
+                patch.setBackground(code && format.hasProperty(QTextFormat::BlockCodeFence)
+                                    ? QBrush(Qt::NoBrush) : QBrush(codeBackground));
                 patch.setFontFamilies(document.defaultFont().families());
             }
             if (existing.isAnchor() && !existing.anchorHref().isEmpty()) {
@@ -287,6 +288,10 @@ void LivePreview::attach(QObject *sourceItem, QObject *viewItem) {
     connect(viewItem, SIGNAL(selectionEndChanged()), this, SLOT(viewSelectionChanged()));
     connect(m_source, &QTextDocument::contentsChanged, this, &LivePreview::sourceTextChanged);
     connect(m_view, &QTextDocument::contentsChange, this, &LivePreview::viewContentsChanged);
+    connect(m_view->documentLayout(), &QAbstractTextDocumentLayout::documentSizeChanged,
+            this, &LivePreview::scheduleCodeBlockPanels);
+    connect(m_view->documentLayout(), &QAbstractTextDocumentLayout::update,
+            this, &LivePreview::scheduleCodeBlockPanels);
     connect(viewItem, SIGNAL(widthChanged()), this, SLOT(sourceTextChanged()));
     sourceSelectionChanged();
     rebuild();
@@ -525,8 +530,12 @@ void LivePreview::buildReadDocument(const QString &source) {
                       m_viewItem->property("previewAccent").value<QColor>(),
                       m_viewItem->property("previewDark").toBool());
     clearViewResources();
-    highlightReadCode(rendered, markdown, m_viewItem->property("previewDark").toBool());
+    const auto codeGroups = highlightReadCode(rendered, markdown, m_viewItem->property("previewDark").toBool());
     m_view->setHtml(rendered.toHtml());
+    // Carry explicit fence boundaries across HTML only when block identities
+    // survive. Adjacent same-language fences must remain separate panels.
+    m_readCodeBlocks = rendered.blockCount() == m_view->blockCount()
+        && rendered.toPlainText() == m_view->toPlainText() ? codeGroups : QList<QPair<int, int>>{};
     // Qt's HTML round-trip can lose the smallest heading's relative size.
     // Keep every heading on the same Markdown scale used by Edit highlighting.
     for (QTextBlock block = m_view->begin(); block.isValid(); block = block.next()) {
@@ -582,6 +591,65 @@ void LivePreview::completeProjectionLayout() {
     if (!invalidImages.isEmpty())
         layout->documentSize();
     m_viewText = documentText(m_view);
+    updateCodeBlockPanels();
+}
+void LivePreview::scheduleCodeBlockPanels() {
+    if (m_panelsPending) return;
+    m_panelsPending = true;
+    QTimer::singleShot(0, this, [this] {
+        m_panelsPending = false;
+        // Geometry is read-only and must follow wrapped IME preedit as well;
+        // source/projection rebuilding remains deferred until composition ends.
+        if (!m_guard) updateCodeBlockPanels();
+    });
+}
+void LivePreview::updateCodeBlockPanels() {
+    if (!m_view || !m_viewItem) return;
+    QList<QPair<int, int>> groups = m_readCodeBlocks;
+    if (!m_readMode) {
+        groups.clear();
+        int first = -1;
+        for (auto block = m_view->begin(); block.isValid(); block = block.next()) {
+            if (first < 0 && block.userState() >= MarkdownHighlighter::InsideFence)
+                first = block.blockNumber();
+            if (first >= 0 && (block.userState() < MarkdownHighlighter::InsideFence || !block.next().isValid())) {
+                groups.append({first, block.blockNumber()});
+                first = -1;
+            }
+        }
+    }
+    auto *layout = m_view->documentLayout();
+    layout->documentSize();
+    const qreal left = m_viewItem->property("leftPadding").toReal() - m_view->documentMargin();
+    qreal top = m_viewItem->property("topPadding").toReal() - m_view->documentMargin();
+    const qreal spare = m_viewItem->property("height").toReal()
+        - m_viewItem->property("topPadding").toReal() - m_viewItem->property("bottomPadding").toReal()
+        - m_viewItem->property("contentHeight").toReal();
+    const int alignment = m_viewItem->property("verticalAlignment").toInt();
+    if (alignment == Qt::AlignVCenter) top += spare / 2;
+    else if (alignment == Qt::AlignBottom) top += spare;
+    QVariantList panels;
+    for (const auto &group : groups) {
+        const auto first = m_view->findBlockByNumber(group.first);
+        const auto last = m_view->findBlockByNumber(group.second);
+        if (!first.isValid() || !last.isValid()) continue;
+        const QRectF bounds = layout->blockBoundingRect(first);
+        layout->blockBoundingRect(last);
+        const auto *a = first.layout(), *b = last.layout();
+        if (!a || !b || !a->lineCount() || !b->lineCount()) continue;
+        const qreal y = top + a->position().y() + a->lineAt(0).y();
+        const auto endLine = b->lineAt(b->lineCount() - 1);
+        const qreal bottom = top + b->position().y() + endLine.y() + endLine.height();
+        const qreal x = left + bounds.left() - 6;
+        panels.append(QVariantMap{{"x", x}, {"y", y},
+            {"width", qMax(qreal(0), m_viewItem->property("width").toReal()
+                         - m_viewItem->property("rightPadding").toReal() + 6 - x)},
+            {"height", bottom - y}});
+    }
+    if (panels != m_codeBlockPanels) {
+        m_codeBlockPanels = panels;
+        emit codeBlockPanelsChanged();
+    }
 }
 void LivePreview::rebuild() {
     if (!m_source || !m_view || m_guard || m_composing)

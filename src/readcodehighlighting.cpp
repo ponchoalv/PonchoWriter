@@ -35,6 +35,7 @@ QList<Fence> fences(const QString &markdown) {
     QList<Fence> result;
     Fence current;
     int length = 0, indent = 0, quotes = 0;
+    int listContentIndent = 0, listQuoteDepth = 0;
     QChar marker;
     static const QRegularExpression list(QStringLiteral("^\\s*(?:[-+*]|[0-9]+[.)])\\s+"));
     for (QString line : markdown.split(QLatin1Char('\n'))) {
@@ -52,8 +53,18 @@ QList<Fence> fences(const QString &markdown) {
             continue;
         }
         const int depth = quotePrefix(line);
+        if (depth != listQuoteDepth) listContentIndent = 0;
+        listQuoteDepth = depth;
         const auto item = list.match(line);
-        const int listIndent = item.hasMatch() ? item.capturedLength() : 0;
+        int listIndent = 0;
+        if (item.hasMatch()) {
+            listContentIndent = listIndent = item.capturedLength();
+        } else if (!line.trimmed().isEmpty()) {
+            int leading = 0;
+            while (leading < line.size() && line.at(leading) == QLatin1Char(' ')) ++leading;
+            if (leading >= listContentIndent) listIndent = listContentIndent;
+            else listContentIndent = 0;
+        }
         line.remove(0, listIndent);
         const QString trimmed = line.trimmed();
         length = MarkdownHighlighter::openingFenceLength(line);
@@ -70,10 +81,18 @@ QList<Fence> fences(const QString &markdown) {
 }
 }
 
-void highlightReadCode(QTextDocument &document, const QString &markdown, bool dark) {
+QList<QPair<int, int>> highlightReadCode(QTextDocument &document, const QString &markdown, bool dark) {
     QList<QTextBlock> imported;
     for (auto block = document.begin(); block.isValid(); block = block.next())
         if (block.blockFormat().hasProperty(QTextFormat::BlockCodeFence)) imported.append(block);
+    QList<QPair<int, int>> fallback;
+    for (const auto &block : imported) {
+        const int number = block.blockNumber();
+        if (!fallback.isEmpty() && fallback.last().second + 1 == number)
+            fallback.last().second = number;
+        else
+            fallback.append({number, number});
+    }
     auto sourceFences = fences(markdown);
     int sourceLines = 0;
     for (const auto &fence : sourceFences) sourceLines += fence.lines.size();
@@ -91,12 +110,13 @@ void highlightReadCode(QTextDocument &document, const QString &markdown, bool da
             expectedLanguages.append(languageToken(fence.info));
         }
     }
-    if (expectedLines.size() != imported.size()) return;
+    if (expectedLines.size() != imported.size()) return fallback;
     for (int i = 0; i < imported.size(); ++i)
         if (imported.at(i).text() != expectedLines.at(i)
             || languageToken(imported.at(i).blockFormat().stringProperty(QTextFormat::BlockCodeLanguage)) != expectedLanguages.at(i))
-            return; // Container/parser disagreement: preserve plain code.
+            return fallback; // Native code geometry remains safe even without source metadata.
     CodeHighlighter highlighter(dark);
+    QList<QPair<int, int>> groups;
     int next = 0;
     for (const Fence &fence : sourceFences) {
         // Qt's properties cannot distinguish adjacent same-language fences.
@@ -104,6 +124,7 @@ void highlightReadCode(QTextDocument &document, const QString &markdown, bool da
         const int count = fence.lines.size();
         const int found = next;
         next += count;
+        if (count) groups.append({imported.at(found).blockNumber(), imported.at(next - 1).blockNumber()});
         if (!definition.isValid()) continue;
         KSyntaxHighlighting::State state;
         for (int i = 0; i < count; ++i) {
@@ -118,4 +139,5 @@ void highlightReadCode(QTextDocument &document, const QString &markdown, bool da
             }
         }
     }
+    return groups;
 }

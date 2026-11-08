@@ -80,6 +80,64 @@ class OmawriteTest : public QObject {
     }
 
 private slots:
+    void codeBlockPanelsAreContinuousDecorationsInBothThemes() {
+        QTemporaryDir directory;
+        Backend backend;
+        backend.m_recoveryPath = directory.filePath("recovery.json");
+        QQmlEngine engine;
+        engine.rootContext()->setContextProperty("backend", &backend);
+        QQmlComponent component(&engine, QUrl::fromLocalFile(QFINDTESTDATA("../src/Main.qml")));
+        QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+        QScopedPointer<QObject> root(component.create());
+        auto *window = qobject_cast<QQuickWindow *>(root.data());
+        QVERIFY(window);
+        auto *source = root->findChild<QObject *>("sourceEditor");
+        auto *view = root->findChild<QQuickItem *>("previewEditor");
+        QVERIFY(source && view);
+        const auto panels = [&] {
+            QList<QQuickItem *> result;
+            for (auto *item : view->childItems())
+                if (item->objectName() == "codeBlockPanel") result.append(item);
+            return result;
+        };
+        const QString text = "Before.\n\n```cpp\nint value = 1;\n\n// comment\n```\n\nAfter.\n";
+        source->setProperty("text", text);
+        source->setProperty("cursorPosition", text.size());
+        for (bool dark : {true, false}) {
+            backend.setDarkMode(dark);
+            for (bool read : {false, true}) {
+                root->setProperty("readMode", read);
+                QCoreApplication::processEvents();
+                QCoreApplication::processEvents();
+                QTRY_COMPARE(panels().size(), 1);
+                auto *panel = panels().first();
+                QTRY_COMPARE(panel->property("color").value<QColor>(), QColor(dark ? "#252525" : "#eeeeee"));
+                QVERIFY(panel->z() < 0);
+                QVERIFY(panel->width() >= view->width());
+                QVERIFY(panel->height() > 3 * view->property("font").value<QFont>().pixelSize());
+                QVERIFY(panel->property("radius").toReal() > 0);
+                const auto border = panel->property("border").value<QObject *>();
+                QVERIFY(border);
+                QCOMPARE(border->property("width").toReal(), 0.5);
+                if (QGuiApplication::platformName() != "offscreen") {
+                    QVERIFY(QTest::qWaitForWindowExposed(window));
+                    const auto fillIsRendered = [&] {
+                        const QImage frame = window->grabWindow();
+                        if (frame.isNull()) return false;
+                        const QPointF point = panel->mapToScene(QPointF(panel->width() - 20, panel->height() / 2));
+                        const QPoint pixel(qRound(point.x() * frame.width() / window->width()),
+                                           qRound(point.y() * frame.height() / window->height()));
+                        if (!frame.rect().contains(pixel)) return false;
+                        const QColor actual = frame.pixelColor(pixel), expected = panel->property("color").value<QColor>();
+                        return qAbs(actual.red() - expected.red()) <= 3
+                            && qAbs(actual.green() - expected.green()) <= 3 && qAbs(actual.blue() - expected.blue()) <= 3;
+                    };
+                    QTRY_VERIFY(fillIsRendered()); // Empty right-hand area is filled, not just glyph strips.
+                }
+                QCOMPARE(source->property("text").toString(), text);
+            }
+        }
+    }
     void forwardsNativeFileEventsDeliveredAfterStartupAndWaitsForQuiet() {
         FileOpenRequests events(qApp);
         QSignalSpy requests(&events, &FileOpenRequests::filesRequested);
@@ -1813,7 +1871,7 @@ private slots:
         for (const QTextLayout::FormatRange &range : fenced) {
             QCOMPARE(range.start, covered);
             covered += range.length;
-            QVERIFY(range.format.background().style() != Qt::NoBrush);
+            QCOMPARE(range.format.background().style(), Qt::NoBrush); // Shared block panel, not glyph strips.
             QVERIFY(!range.format.fontItalic());
             QVERIFY(range.format.fontPointSize() != 1.0); // No hidden Markdown markers.
             QVERIFY(range.format.foreground().color() != range.format.background().color());

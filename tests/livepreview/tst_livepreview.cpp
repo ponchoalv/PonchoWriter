@@ -84,6 +84,70 @@ private slots:
         flush();
     }
     void cleanup() { controller.reset(); root.reset(); }
+    void codePanelsCoverBlankAndWrappedLinesWithoutChangingSource() {
+        const QString text = "before `inline`\n\n```cpp\nint value = 1;\n\n// " + QString(180, 'x')
+            + "\n```\n```unknown-language\nplain\n```\n\nafter\n\n~~~\nunfinished\n";
+        source->setPlainText(text);
+        source->clearUndoRedoStacks();
+        select(sourceItem, text.size(), text.size());
+        for (bool read : {false, true, false}) {
+            controller->setReadMode(read);
+            controller->refresh(); flush();
+            const auto panels = controller->codeBlockPanels();
+            QCOMPARE(panels.size(), 3);
+            for (const auto &panel : panels) {
+                const auto r = panel.toMap();
+                QVERIFY(r.value("width").toReal() >= viewItem->property("width").toReal());
+                QVERIFY(r.value("height").toReal() > 0);
+            }
+            const auto first = panels.first().toMap();
+            const auto blank = view->find("int value").block().next();
+            QCOMPARE(blank.text(), QString());
+            view->documentLayout()->blockBoundingRect(blank);
+            const qreal blankY = blank.layout()->position().y() - view->documentMargin();
+            QVERIFY(first.value("y").toReal() <= blankY);
+            QVERIFY(first.value("y").toReal() + first.value("height").toReal()
+                    >= blankY + blank.layout()->lineAt(0).height());
+            QVERIFY(first.value("height").toReal() > 4 * 20); // Includes blank + wrapped lines.
+            viewItem->setProperty("width", 220); controller->refresh(); flush();
+            QVERIFY(controller->codeBlockPanels().first().toMap().value("height").toReal()
+                    > first.value("height").toReal());
+            viewItem->setProperty("width", 550); controller->refresh(); flush();
+            QCOMPARE(source->toPlainText(), text);
+            QVERIFY(!source->isUndoAvailable());
+        }
+        source->setPlainText("ordinary prose"); controller->refresh(); flush();
+        QVERIFY(controller->codeBlockPanels().isEmpty());
+    }
+    void codePanelsFollowWrappedPreeditWithoutRebuilding() {
+        const QString text = "```text\nx\n```\n\n```text\nsecond\n```\n";
+        source->setPlainText(text); source->clearUndoRedoStacks();
+        select(sourceItem, text.indexOf("\nx\n") + 2, text.indexOf("\nx\n") + 2);
+        controller->refresh(); flush();
+        QCOMPARE(controller->codeBlockPanels().size(), 2);
+        const auto before = controller->codeBlockPanels();
+        QSignalSpy rebuilds(controller.get(), &LivePreview::projectionChanged);
+        QInputMethodEvent preedit(QString(200, 'a'), {});
+        QCoreApplication::sendEvent(viewItem, &preedit); flush();
+        QTRY_VERIFY(controller->codeBlockPanels().first().toMap().value("height").toReal()
+                    > before.first().toMap().value("height").toReal());
+        QVERIFY(controller->codeBlockPanels().last().toMap().value("y").toReal()
+                > before.last().toMap().value("y").toReal());
+        QCOMPARE(rebuilds.count(), 0);
+        QCOMPARE(source->toPlainText(), text);
+        QInputMethodEvent cancel(QString(), {});
+        QCoreApplication::sendEvent(viewItem, &cancel); flush();
+        QTRY_COMPARE(controller->codeBlockPanels(), before);
+        QCOMPARE(source->toPlainText(), text);
+        QVERIFY(!source->isUndoAvailable());
+    }
+    void readPanelsKeepContainerAndAdjacentFenceBoundaries() {
+        const QString text = "- item\n\n    ```cpp\n    int nested = 1;\n    ```\n\n```py\nfirst = 1\n```\n```py\nsecond = 2\n```\n";
+        source->setPlainText(text); select(sourceItem, text.size(), text.size());
+        controller->setReadMode(true); controller->refresh(); flush();
+        QCOMPARE(controller->codeBlockPanels().size(), 3);
+        QCOMPARE(source->toPlainText(), text);
+    }
     void richImageRestylesCoalesceLayoutNotifications() {
         QTemporaryDir directory;
         QImage image(160, 100, QImage::Format_ARGB32_Premultiplied);

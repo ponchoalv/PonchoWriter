@@ -1351,6 +1351,24 @@ ApplicationWindow {
                 onCursorRectangleChanged: if (!win.projectionChanging && !win.restoringReadingPosition && !livePreview.readMode) editorFlick.ensureCursorVisible()
                 onLinkActivated: function(link) { Qt.openUrlExternally(link); }
 
+                Repeater {
+                    model: livePreview.codeBlockPanels
+                    delegate: Rectangle {
+                        required property var modelData
+                        objectName: "codeBlockPanel"
+                        z: -1
+                        x: modelData.x
+                        y: modelData.y
+                        width: modelData.width
+                        height: modelData.height
+                        radius: 4
+                        color: win.darkMode ? "#252525" : "#eeeeee"
+                        border.width: 0.5
+                        border.color: Qt.rgba(win.textColor.r, win.textColor.g, win.textColor.b, 0.12)
+                        antialiasing: true
+                    }
+                }
+
                 Text {
                     anchors.left: parent.left
                     anchors.top: parent.top

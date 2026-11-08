@@ -16,6 +16,7 @@ class LivePreview : public QObject {
     Q_PROPERTY(bool readMode READ readMode WRITE setReadMode NOTIFY readModeChanged)
     Q_PROPERTY(QObject *resolver READ resolver WRITE setResolver)
     Q_PROPERTY(QObject *spelling READ spelling WRITE setSpelling)
+    Q_PROPERTY(QVariantList codeBlockPanels READ codeBlockPanels NOTIFY codeBlockPanelsChanged)
 public:
     struct Segment {
         int sourceStart, sourceEnd, viewStart, viewEnd;
@@ -42,8 +43,10 @@ public:
     static int toSource(const QList<Segment> &segments, int position);
     static int toView(const QList<Segment> &segments, int position);
     const QList<Segment> &segments() const { return m_segments; }
+    QVariantList codeBlockPanels() const { return m_codeBlockPanels; }
 signals:
     void readModeChanged();
+    void codeBlockPanelsChanged();
     void projectionAboutToChange();
     void projectionChanged();
 private slots:
@@ -62,6 +65,11 @@ private:
     void buildReadDocument(const QString &source);
     void clearViewResources();
     void completeProjectionLayout();
+    void updateCodeBlockPanels();
+    void scheduleCodeBlockPanels();
+    QVariantList m_codeBlockPanels;
+    QList<QPair<int, int>> m_readCodeBlocks;
+    bool m_panelsPending = false;
     QPointer<QObject> m_sourceItem, m_viewItem, m_resolver;
     QPointer<QTextDocument> m_source, m_view;
     MarkdownHighlighter *m_highlighter = nullptr;

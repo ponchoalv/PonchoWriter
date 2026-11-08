@@ -608,14 +608,24 @@ void LivePreview::updateCodeBlockPanels() {
     QList<QPair<int, int>> groups = m_readCodeBlocks;
     if (!m_readMode) {
         groups.clear();
-        int first = -1;
+        // Highlighting can temporarily reset QTextBlock::userState while a
+        // caret/selection change restyles the document. Decorations must follow
+        // the visible text, not that deferred syntax-highlighter lifecycle.
+        int first = -1, length = 0;
+        QChar marker;
         for (auto block = m_view->begin(); block.isValid(); block = block.next()) {
-            if (first < 0 && block.userState() >= MarkdownHighlighter::InsideFence)
+            const QString text = block.text();
+            if (first < 0) {
+                length = MarkdownHighlighter::openingFenceLength(text);
+                if (!length) continue;
                 first = block.blockNumber();
-            if (first >= 0 && (block.userState() < MarkdownHighlighter::InsideFence || !block.next().isValid())) {
+                marker = text.trimmed().front();
+            } else if (MarkdownHighlighter::closesFence(text, length, marker)) {
                 groups.append({first, block.blockNumber()});
                 first = -1;
             }
+            if (first >= 0 && !block.next().isValid())
+                groups.append({first, block.blockNumber()});
         }
     }
     auto *layout = m_view->documentLayout();
@@ -636,7 +646,10 @@ void LivePreview::updateCodeBlockPanels() {
         const QRectF bounds = layout->blockBoundingRect(first);
         layout->blockBoundingRect(last);
         const auto *a = first.layout(), *b = last.layout();
-        if (!a || !b || !a->lineCount() || !b->lineCount()) continue;
+        // Do not publish a partial/empty replacement model during relayout:
+        // that destroys otherwise valid background delegates. A subsequent
+        // layout notification will supply the completed geometry.
+        if (!a || !b || !a->lineCount() || !b->lineCount()) return;
         const qreal y = top + a->position().y() + a->lineAt(0).y();
         const auto endLine = b->lineAt(b->lineCount() - 1);
         const qreal bottom = top + b->position().y() + endLine.y() + endLine.height();

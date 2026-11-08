@@ -119,6 +119,32 @@ private slots:
         source->setPlainText("ordinary prose"); controller->refresh(); flush();
         QVERIFY(controller->codeBlockPanels().isEmpty());
     }
+    void codePanelsDoNotDependOnTransientSyntaxStates() {
+        const QString text = "before\n\n```cpp\nint value = 1;\n\n// code\n```\n\nafter\n";
+        source->setPlainText(text); source->clearUndoRedoStacks();
+        select(sourceItem, text.size(), text.size()); controller->refresh(); flush();
+        QCOMPARE(controller->codeBlockPanels().size(), 1);
+        const auto before = controller->codeBlockPanels();
+        // Syntax state is an asynchronous implementation detail, not whether
+        // the unchanged visible Markdown still contains a fenced block.
+        for (auto block = view->begin(); block.isValid(); block = block.next())
+            block.setUserState(-1);
+        view->documentLayout()->update(QRectF()); flush();
+        QCOMPARE(controller->codeBlockPanels(), before);
+        const QSizeF page = view->pageSize();
+        view->setPageSize(QSizeF(0, 0));
+        view->documentLayout()->update(QRectF()); flush();
+        QCOMPARE(view->findBlockByNumber(2).layout()->lineCount(), 0);
+        QCOMPARE(controller->codeBlockPanels(), before); // Never publish partial geometry.
+        view->setPageSize(page);
+        view->markContentsDirty(0, view->characterCount());
+        view->documentLayout()->update(QRectF()); flush();
+        QCOMPARE(controller->codeBlockPanels(), before);
+        QCOMPARE(source->toPlainText(), text);
+        QVERIFY(!source->isUndoAvailable());
+        source->setPlainText("plain prose"); flush();
+        QVERIFY(controller->codeBlockPanels().isEmpty()); // Genuine removal still clears it.
+    }
     void codePanelsFollowWrappedPreeditWithoutRebuilding() {
         const QString text = "```text\nx\n```\n\n```text\nsecond\n```\n";
         source->setPlainText(text); source->clearUndoRedoStacks();

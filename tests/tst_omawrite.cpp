@@ -122,6 +122,8 @@ private slots:
                 if (QGuiApplication::platformName() != "offscreen") {
                     QVERIFY(QTest::qWaitForWindowExposed(window));
                     const auto fillIsRendered = [&] {
+                        if (panels().size() != 1) return false;
+                        const auto *panel = panels().first();
                         const QImage frame = window->grabWindow();
                         if (frame.isNull()) return false;
                         const QPointF point = panel->mapToScene(QPointF(panel->width() - 20, panel->height() / 2));
@@ -133,6 +135,27 @@ private slots:
                             && qAbs(actual.green() - expected.green()) <= 3 && qAbs(actual.blue() - expected.blue()) <= 3;
                     };
                     QTRY_VERIFY(fillIsRendered()); // Empty right-hand area is filled, not just glyph strips.
+                    if (!read) {
+                        auto *projection = root->findChild<LivePreview *>();
+                        QVERIFY(projection);
+                        bool stayedVisible = true;
+                        const auto watch = connect(projection, &LivePreview::codeBlockPanelsChanged, projection, [&] {
+                            stayedVisible &= projection->codeBlockPanels().size() == 1;
+                        });
+                        const auto stopWatching = qScopeGuard([&] { QObject::disconnect(watch); });
+                        for (int repeat = 0; repeat < 4; ++repeat) {
+                            for (int position : {0, int(text.indexOf("int value")), int(text.indexOf("// comment")), int(text.indexOf("```cpp"))}) {
+                                QRectF cursor;
+                                QVERIFY(QMetaObject::invokeMethod(view, "positionToRectangle", Q_RETURN_ARG(QRectF, cursor), Q_ARG(int, position)));
+                                QTest::mouseClick(window, Qt::LeftButton, Qt::NoModifier,
+                                    view->mapToScene(cursor.center() + QPointF(2, 0)).toPoint());
+                                QTest::qWait(30);
+                                QTRY_COMPARE(panels().size(), 1);
+                                QTRY_VERIFY(fillIsRendered());
+                                QVERIFY(stayedVisible); // No transient removal followed by recovery.
+                            }
+                        }
+                    }
                 }
                 QCOMPARE(source->property("text").toString(), text);
             }

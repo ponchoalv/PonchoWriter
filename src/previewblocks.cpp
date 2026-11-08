@@ -3,6 +3,7 @@
 
 #include <QAbstractTextDocumentLayout>
 #include <QFile>
+#include <QFontMetricsF>
 #include <QImageReader>
 #include <QPainter>
 #include <QRegularExpression>
@@ -205,8 +206,40 @@ QList<Block> parse(const QString &source) {
         const int end = lines.at(last).end;
         result.append({start, end, kind, source.mid(start, end - start), path});
     };
+    bool htmlComment = false;
+    QString htmlTag;
     for (int i = 0; i < lines.size();) {
         const QString &text = lines.at(i).text;
+        // Do not project Markdown-looking lines inside literal HTML/comments.
+        static const QRegularExpression htmlStart(QStringLiteral("^ {0,3}<([A-Za-z][A-Za-z0-9-]*)(?:[ >\\t/])"));
+        const auto tag = htmlStart.match(text);
+        if (htmlComment) {
+            htmlComment = !text.contains(QStringLiteral("-->"));
+            ++i;
+            continue;
+        }
+        if (!htmlTag.isEmpty()) {
+            const bool literal = htmlTag == "pre" || htmlTag == "script" || htmlTag == "style" || htmlTag == "textarea";
+            if ((!literal && text.trimmed().isEmpty())
+                || text.contains(QStringLiteral("</") + htmlTag + QLatin1Char('>'), Qt::CaseInsensitive))
+                htmlTag.clear();
+            ++i;
+            continue;
+        }
+        if (text.trimmed().startsWith(QStringLiteral("<!--"))) {
+            htmlComment = !text.contains(QStringLiteral("-->"));
+            ++i;
+            continue;
+        }
+        if (tag.hasMatch()) {
+            htmlTag = tag.captured(1).toLower();
+            static const QStringList voidTags = {"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr"};
+            if (text.contains(QStringLiteral("</") + htmlTag + QLatin1Char('>'), Qt::CaseInsensitive)
+                || text.trimmed().endsWith(QStringLiteral("/>")) || voidTags.contains(htmlTag))
+                htmlTag.clear();
+            ++i;
+            continue;
+        }
         const int fenceLength = MarkdownHighlighter::openingFenceLength(text);
         if (fenceLength) {
             const QString trimmed = text.trimmed();
@@ -221,6 +254,16 @@ QList<Block> parse(const QString &source) {
             if (mermaid)
                 append(i, last, Kind::Mermaid);
             i = last + 1;
+            continue;
+        }
+        // A blank/start boundary avoids turning Setext heading underlines into
+        // rules. Other ambiguous container syntax stays editable Markdown.
+        static const QRegularExpression horizontalRule(QStringLiteral("^ {0,3}(?:-[ \\t]*){3,}$"));
+        if (horizontalRule.match(text).hasMatch()
+            && (i == 0 || lines.at(i - 1).text.trimmed().isEmpty()
+                || horizontalRule.match(lines.at(i - 1).text).hasMatch())) {
+            append(i, i, Kind::HorizontalRule);
+            ++i;
             continue;
         }
         QString path;
@@ -246,6 +289,20 @@ QList<Block> parse(const QString &source) {
         ++i;
     }
     return result;
+}
+
+QImage renderHorizontalRule(const QFont &font, const QColor &foreground, int maxWidth) {
+    if (maxWidth <= 0)
+        return {};
+    QImage image(qMin(maxWidth, 8192), qMax(12, int(std::ceil(QFontMetricsF(font).height()))),
+                 QImage::Format_ARGB32_Premultiplied);
+    image.fill(Qt::transparent);
+    QPainter painter(&image);
+    QColor color = foreground;
+    color.setAlphaF(color.alphaF() * 0.5);
+    painter.setPen(color);
+    painter.drawLine(0, image.height() / 2, image.width() - 1, image.height() / 2);
+    return image;
 }
 
 QImage renderTable(const QString &markdown, const QFont &font,

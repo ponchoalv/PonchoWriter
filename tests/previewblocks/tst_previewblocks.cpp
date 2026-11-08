@@ -8,6 +8,27 @@ using namespace PreviewBlocks;
 class PreviewBlocksTest : public QObject {
     Q_OBJECT
 private slots:
+    void horizontalRules() {
+        const auto rules = parse(QStringLiteral("---\n\ntext\n\n  - - - \n\n```\n---\n```\n"));
+        QCOMPARE(rules.size(), 2);
+        QCOMPARE(rules[0].kind, Kind::HorizontalRule);
+        QCOMPARE(rules[0].markdown, QString("---"));
+        QCOMPARE(rules[1].kind, Kind::HorizontalRule);
+        QVERIFY(parse(QStringLiteral("heading\n---\n")).isEmpty()); // Setext heading, not a rule.
+        QVERIFY(parse(QStringLiteral("    ---\n\n--\n\n\\---\n")).isEmpty());
+        QVERIFY(parse(QStringLiteral("<!--\n\n---\n\n-->\n")).isEmpty());
+        QVERIFY(parse(QStringLiteral("<pre>\n\n---\n\n</pre>\n")).isEmpty());
+        QCOMPARE(parse(QStringLiteral("`<!--`\n\n---\n")).size(), 1);
+        QCOMPARE(parse(QStringLiteral("<!-- comment -->\n\n---\n")).size(), 1);
+        QCOMPARE(parse(QStringLiteral("<div>\n\n---\n")).size(), 1);
+        QVERIFY(parse(QStringLiteral("<pre>\n<img/>\n\n---\n</pre>\n")).isEmpty());
+        const auto image = renderHorizontalRule(QFont(), Qt::black, 400);
+        QCOMPARE(image.width(), 400);
+        QVERIFY(image.height() >= 12);
+        QVERIFY(image.pixelColor(0, image.height() / 2).alpha() > 0);
+        QVERIFY(image.pixelColor(399, image.height() / 2).alpha() > 0);
+        QCOMPARE(image.pixelColor(0, 0).alpha(), 0);
+    }
     void tables() {
         const QString source = QString::fromUtf8("😀 before\r\n")
             + QStringLiteral("| A \\| B | `x|y` |\r\n| :--- | ---: |\r\n| c | d |\r\nafter\n");

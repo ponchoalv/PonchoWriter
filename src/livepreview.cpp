@@ -433,7 +433,9 @@ QImage LivePreview::imageFor(const PreviewBlocks::Block &block) {
     if (m_images.contains(key))
         return m_images.value(key);
     QImage image;
-    if (block.kind == PreviewBlocks::Kind::Table)
+    if (block.kind == PreviewBlocks::Kind::HorizontalRule)
+        image = PreviewBlocks::renderHorizontalRule(font, foreground, width);
+    else if (block.kind == PreviewBlocks::Kind::Table)
         image = PreviewBlocks::renderTable(block.markdown, font, foreground, background, width);
     else if (block.kind == PreviewBlocks::Kind::Image)
         image = PreviewBlocks::loadImage(url, width);

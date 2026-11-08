@@ -62,7 +62,7 @@ Usual cut/copy/paste/select-all keys come from Qt's text editor. There is no use
 
 Use the upper-right **book/pencil** button or Cmd+Shift+M (Ctrl+Shift+M on Linux).
 
-**Edit** keeps ordinary Markdown text editable. Supported inactive pipe tables and standalone local image paragraphs become native visual blocks. Click a block to reveal its source; move away to render it again. Selections crossing a block reveal source rather than copying an opaque picture. Headings and existing inline emphasis retain caret-aware markers.
+**Edit** keeps ordinary Markdown text editable. Supported inactive pipe tables and standalone local image paragraphs become native visual blocks. Click a block to reveal its source; move away to render it again. Selections crossing a block reveal source rather than copying an opaque picture. Standalone `---` separators (at the start or after a blank line) also render as full-width rules while inactive; clicking/navigating onto the line or selecting across it reveals the original Markdown. Code/HTML literals and Setext heading underlines are not converted into rules. Headings and existing inline emphasis retain caret-aware markers.
 
 Body paragraphs use softer, theme-aware contrast while headings retain the stronger theme foreground. Text stays regular-weight unless Markdown calls for emphasis; links and selections keep their own colors rather than being faded with the whole editor.
 

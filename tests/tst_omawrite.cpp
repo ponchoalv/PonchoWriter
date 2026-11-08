@@ -80,6 +80,39 @@ class OmawriteTest : public QObject {
     }
 
 private slots:
+    void horizontalRulesRevealMarkdownOnPhysicalClick() {
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        Backend backend; backend.m_recoveryPath = directory.filePath("recovery.json");
+        QQmlEngine engine; engine.rootContext()->setContextProperty("backend", &backend);
+        QQmlComponent component(&engine, QUrl::fromLocalFile(QFINDTESTDATA("../src/Main.qml")));
+        QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+        QScopedPointer<QObject> root(component.create());
+        auto *window = qobject_cast<QQuickWindow *>(root.data()); QVERIFY(window);
+        auto *source = root->findChild<QObject *>("sourceEditor");
+        auto *view = root->findChild<QQuickItem *>("previewEditor");
+        QVERIFY(source && view);
+        if (QGuiApplication::platformName() != "offscreen")
+            QVERIFY(QTest::qWaitForWindowExposed(window));
+        // attach() supplies the safe presentation document on a queued turn.
+        const auto document = [view] { return view->property("textDocument").value<QQuickTextDocument *>()->textDocument(); };
+        const QString text = "Before.\n\n---\n\nAfter.\n";
+        source->setProperty("text", text);
+        for (bool dark : {false, true}) {
+            backend.setDarkMode(dark);
+            source->setProperty("cursorPosition", text.size());
+            QTRY_COMPARE(document()->toPlainText().count(QChar::ObjectReplacementCharacter), 1);
+            const int object = document()->toPlainText().indexOf(QChar::ObjectReplacementCharacter);
+            QRectF rectangle;
+            QVERIFY(QMetaObject::invokeMethod(view, "positionToRectangle", Q_RETURN_ARG(QRectF, rectangle), Q_ARG(int, object)));
+            QTest::mouseClick(window, Qt::LeftButton, Qt::NoModifier,
+                view->mapToScene(QPointF(view->width() / 2, rectangle.center().y())).toPoint());
+            QTRY_VERIFY(!document()->toPlainText().contains(QChar::ObjectReplacementCharacter));
+            QVERIFY(document()->toPlainText().contains("---"));
+            QCOMPARE(source->property("text").toString(), text);
+            QVERIFY(!source->property("canUndo").toBool());
+        }
+    }
     void codeBlockPanelsAreContinuousDecorationsInBothThemes() {
         QTemporaryDir directory;
         Backend backend;

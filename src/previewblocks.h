@@ -9,7 +9,7 @@
 
 namespace PreviewBlocks {
 
-enum class Kind { Table, Image, Mermaid };
+enum class Kind { Table, Image, Mermaid, HorizontalRule };
 
 struct Block {
     int start = 0;
@@ -26,6 +26,7 @@ struct Block {
 // Fenced content is ignored except exact, case-sensitive "mermaid" info strings;
 // an unclosed Mermaid fence extends to EOF. Reference images are not recognized.
 QList<Block> parse(const QString &source);
+QImage renderHorizontalRule(const QFont &font, const QColor &foreground, int maxWidth);
 QImage renderTable(const QString &markdown, const QFont &font,
                    const QColor &foreground, const QColor &background, int maxWidth);
 // Local file URLs or relative paths only; no network or data URLs. Input is

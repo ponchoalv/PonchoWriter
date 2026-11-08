@@ -84,6 +84,28 @@ private slots:
         flush();
     }
     void cleanup() { controller.reset(); root.reset(); }
+    void inactiveHorizontalRulesRevealSourceAndKeepUndo() {
+        const QString text = "before\n\n---\n\nafter\n\n```\n---\n```\n";
+        source->setPlainText(text); source->clearUndoRedoStacks();
+        select(sourceItem, text.size(), text.size());
+        QCOMPARE(view->toPlainText().count(QChar::ObjectReplacementCharacter), 1);
+        const int object = view->toPlainText().indexOf(QChar::ObjectReplacementCharacter);
+        QTextCursor cursor(view); cursor.setPosition(object); cursor.movePosition(QTextCursor::NextCharacter, QTextCursor::KeepAnchor);
+        QVERIFY(cursor.charFormat().isImageFormat());
+        QCOMPARE(cursor.charFormat().toImageFormat().width(), viewItem->property("width").toReal() - 8);
+        select(viewItem, object, object); // Same source activation used by pointer/keyboard navigation.
+        QVERIFY(!view->toPlainText().contains(QChar::ObjectReplacementCharacter));
+        QVERIFY(view->toPlainText().contains("---"));
+        select(sourceItem, text.size(), text.size());
+        QCOMPARE(view->toPlainText().count(QChar::ObjectReplacementCharacter), 1);
+        const int rule = text.indexOf("---");
+        select(sourceItem, rule - 1, rule + 4);
+        QVERIFY(!view->toPlainText().contains(QChar::ObjectReplacementCharacter));
+        controller->setReadMode(true); flush();
+        controller->setReadMode(false); flush();
+        QCOMPARE(source->toPlainText(), text);
+        QVERIFY(!source->isUndoAvailable());
+    }
     void codePanelsCoverBlankAndWrappedLinesWithoutChangingSource() {
         const QString text = "before `inline`\n\n```cpp\nint value = 1;\n\n// " + QString(180, 'x')
             + "\n```\n```unknown-language\nplain\n```\n\nafter\n\n~~~\nunfinished\n";

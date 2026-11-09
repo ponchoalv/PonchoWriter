@@ -1413,6 +1413,10 @@ ApplicationWindow {
                 cursorDelegate: Item {}
                 clip: true
                 property bool caretOn: true
+                readonly property rect displayCursorRectangle: {
+                    var offsets = livePreview.blockOffsets; // Re-evaluate after native horizontal layout.
+                    return livePreview.visualCursorRectangle(cursorRectangle);
+                }
                 function restartCaret() {
                     caretOn = true;
                     if (activeFocus && !win.readMode && Qt.styleHints.cursorFlashTime > 0) caretBlink.restart();
@@ -1434,10 +1438,10 @@ ApplicationWindow {
                 Rectangle {
                     objectName: "visibleEditorCaret"
                     z: 3
-                    x: presentation.cursorRectangle.x
-                    y: presentation.cursorRectangle.y
+                    x: presentation.displayCursorRectangle.x
+                    y: presentation.displayCursorRectangle.y
                     width: 1
-                    height: presentation.cursorRectangle.height
+                    height: presentation.displayCursorRectangle.height
                     color: win.textColor
                     visible: presentation.activeFocus && !win.readMode && presentation.caretOn && livePreview.imeCursorVisible
                         && presentation.selectionStart === presentation.selectionEnd
@@ -1446,7 +1450,7 @@ ApplicationWindow {
                 }
                 onLinkActivated: function(link) { if (win.readMode) Qt.openUrlExternally(link); }
                 function updateViewport() {
-                    livePreview.setViewport(Math.max(0, editorFlick.contentY - y), editorFlick.height);
+                    livePreview.setViewport(editorFlick.contentY - y, editorFlick.height);
                 }
                 onYChanged: updateViewport()
                 Connections {

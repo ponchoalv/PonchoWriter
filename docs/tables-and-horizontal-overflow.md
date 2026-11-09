@@ -8,7 +8,8 @@ Supported root-level pipe tables appear as native grids in **Edit**. Click a cel
 
 - **Tab / Shift+Tab:** finish the current edit and move between cells.
 - **Enter:** commit; **Escape:** discard the current cell draft.
-- **⋯:** insert a row below, delete a non-header row, insert a column to the right, or delete a column while retaining at least one.
+- **⋯:** align the last edited column **left / center / right**, insert a row below, delete a non-header row, insert a column to the right, or delete a column while retaining at least one. Alignment updates the Markdown separator (`:---`, `:---:`, `---:`) as one canonical undo operation; there is no separate alignment shortcut.
+- Cells grow horizontally while typing/preediting (up to a 4,096px live width), reveal the cursor and hide their rendered text while the native editor is active. Long menu labels have font-measured space rather than a fixed narrow popup.
 - **Source:** reveal the original pipe Markdown in the same document. It does not wrap; use its local horizontal scrollbar. **Grid** returns to the grid, as does moving the source caret/selection outside the table.
 - Selecting across a table reveals source so whole-document selections, copying, deletion and undo retain Markdown semantics.
 
@@ -20,9 +21,9 @@ The editor commits pending cells before Save, Save As, mode changes, printing, o
 
 Wide code blocks use unwrapped native text and an independent horizontal scrollbar in **both modes**. Raw table source uses the same overflow controls. Prose still wraps normally. Horizontal wheel/trackpad gestures scroll the hovered block; vertical gestures remain document scrolling outside the grid. Taller grids have their own vertical scrollbar, within a bounded table viewport.
 
-Horizontal scrolling changes presentation only. Code selection, source offsets, syntax colors, canonical undo and IME remain native. Caret navigation reveals the active code column; manually dragging the scrollbar does not immediately snap it back. Offsets are clamped when a wider window makes them unnecessary. Code Copy still omits fences/language tags.
+Horizontal scrolling changes presentation only. Code selection, source offsets, syntax colors, canonical undo and IME remain native. Caret navigation reveals the active code column; manually dragging the scrollbar does not immediately snap it back. Offsets are clamped when a wider window makes them unnecessary. A tall block's scrollbar stays at the visible viewport bottom while you are inside that block; you do not have to scroll to its final line. Moving to either end of a code line (Cmd+Left / Cmd+Right on macOS) reveals that end, without changing source or disabling viewport rendering. Code Copy still omits fences/language tags.
 
-**Read** tables remain native selectable `QTextTable` content with local horizontal scrolling. They are not replaced with pictures or editable cell widgets. Switch to Edit to change cells.
+**Read** tables remain native selectable `QTextTable` content with local horizontal scrolling. They are not replaced with pictures or editable cell widgets. Scroll changes publish native layout invalidation, so glyphs move with the scrollbar instead of remaining at cached coordinates. Switch to Edit to change cells.
 
 ## Scope and scaling
 
@@ -34,6 +35,6 @@ Horizontal scrolling changes presentation only. Code selection, source offsets, 
 
 ## Verification (2026-11-09)
 
-macOS arm64, Qt 6.12: **356 passed, zero failures, three normal-run skips** across twelve suites. Tests cover canonical cell/structural undo, escaped pipes and Unicode, bounded/unsafe input, stale replacement rejection, draft recovery, raw-source transitions, native no-wrap selection/IME, independent offsets and resize clamping. A 1,500-row × 8-column UI fixture checks that fewer than 500 delegates exist rather than 12,008 cell widgets.
+macOS arm64, Qt 6.12: **357 passed, zero failures, three normal-run skips** across twelve suites. Tests cover canonical cell/structural undo, escaped pipes and Unicode, bounded/unsafe input, stale replacement rejection, draft recovery, raw-source transitions, native no-wrap selection/IME, independent offsets and resize clamping. A 1,500-row × 8-column UI fixture checks that fewer than 500 delegates exist rather than 12,008 cell widgets.
 
-Four native Cocoa UI bodies passed (six checks including setup/cleanup): cell typing, Tab, IME, rejected drafts, virtualization, code Copy, padded panels and large-code scroll stability. Both separate threaded-render bodies passed (six checks), including 100 mode switches. The development app rebuilt as 0.7.2. Windows/Linux compilation and platform interaction remain unverified; this is not a signed/notarized binary release.
+Five native Cocoa UI bodies passed (seven checks including setup/cleanup): live cell growth, hidden underlying cell text, alignment/undo, Tab, IME, rejected drafts, virtualization, physical Cmd+Left/Right, scrollbar placement both mid-document and at document start, Read-table glyph movement in an actual window capture, code Copy, padded panels and large-code scroll stability. Both separate threaded-render bodies passed (six checks), including 100 mode switches. The development app rebuilt as 0.7.2. Windows/Linux compilation and platform interaction remain unverified; this is not a signed/notarized binary release.

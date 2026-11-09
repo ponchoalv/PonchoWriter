@@ -42,6 +42,8 @@ public:
     Q_INVOKABLE void attach(QObject *sourceItem, QObject *viewItem);
     Q_INVOKABLE void refresh();
     Q_INVOKABLE void setViewport(qreal top, qreal height);
+    Q_PROPERTY(qreal viewportBottom READ viewportBottom NOTIFY viewportChanged)
+    qreal viewportBottom() const { return m_viewportHeight < 0 ? -1 : m_viewportTop + m_viewportHeight; }
     Q_INVOKABLE QString linkAtPoint(qreal x, qreal y) const;
     Q_INVOKABLE void copySource();
     Q_INVOKABLE bool copyCodeBlock(int panelIndex);
@@ -52,6 +54,7 @@ public:
     Q_PROPERTY(bool tableDraftsPending READ tableDraftsPending NOTIFY tableDraftsChanged)
     bool tableDraftsPending() const;
     Q_INVOKABLE void scrollBlock(int id, qreal offset);
+    Q_INVOKABLE QRectF visualCursorRectangle(const QRectF &native) const;
     Q_INVOKABLE void prepareFormatting();
     Q_INVOKABLE void setSearchHighlight(const QString &query, int currentMatchStart);
     Q_INVOKABLE QString imagePathAt(int viewPosition) const;
@@ -78,6 +81,7 @@ signals:
     void listMarkersChanged();
     void tablePanelsChanged();
     void tableDraftsChanged();
+    void viewportChanged();
     void blockOffsetsChanged();
     void projectionAboutToChange();
     void projectionChanged();

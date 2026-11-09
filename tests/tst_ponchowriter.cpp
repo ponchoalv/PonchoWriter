@@ -10,6 +10,7 @@
 #include <QFont>
 #include <QFontDatabase>
 #include <QAbstractTextDocumentLayout>
+#include <QTextTable>
 #include <QTextBlock>
 #include <QTextDocument>
 #include <QTextLayout>
@@ -38,6 +39,7 @@
 #include <QScopeGuard>
 #include "markdownhighlighter.h"
 #include "livepreview.h"
+#include "markdowntablemodel.h"
 #include "spellingcontroller.h"
 
 // Counts QML "Binding loop detected" warnings while it is alive, forwarding
@@ -154,6 +156,13 @@ private slots:
         QTest::mouseClick(window, Qt::LeftButton, Qt::NoModifier, grid->mapToScene(QPointF(25, row * 1.5)).toPoint());
         QTRY_VERIFY(root->property("activeTableCell").value<QObject *>());
         QPointer<QObject> field = root->property("activeTableCell").value<QObject *>();
+        QQuickItem *display = nullptr;
+        for (auto *item : visualDescendants(grid)) if (item->objectName() == "tableCellDisplay" && !item->isVisible()) { display = item; break; }
+        QVERIFY(display && !display->isVisible()); // No old glyphs beneath the transparent edit field.
+        const qreal narrowWidth = field->property("width").toReal();
+        QTest::keyClick(window, Qt::Key_A, Qt::ControlModifier);
+        for (int n = 0; n < 60; ++n) QTest::keyClick(window, Qt::Key_W);
+        QTRY_VERIFY(field->property("width").toReal() > narrowWidth + 200);
         QTest::keyClick(window, Qt::Key_A, Qt::ControlModifier);
         for (const char c : QByteArray("changed")) QTest::keyClick(window, c);
         QCOMPARE(field->property("text").toString(), QString("changed"));
@@ -168,6 +177,14 @@ private slots:
         QTRY_VERIFY(root->property("activeTableCell").value<QObject *>() != field.data());
         QTest::keyClick(window, Qt::Key_Escape); QCoreApplication::processEvents();
         QVERIFY(QMetaObject::invokeMethod(source, "undo")); QTRY_COMPARE(document->toPlainText(), original); QVERIFY(!document->isUndoAvailable());
+        auto *alignedModel = qobject_cast<MarkdownTableModel *>(projection->tablePanels().first().toMap()["model"].value<QObject *>()); QVERIFY(alignedModel);
+        QTRY_COMPARE(alignedModel->data(alignedModel->index(1, 0), MarkdownTableModel::MarkdownRole).toString(), QString("one"));
+        auto *actions = root->findChild<QObject *>("tableActionsMenu"); QVERIFY(actions);
+        QVERIFY(actions->property("width").toReal() >= QFontMetricsF(qvariant_cast<QFont>(actions->property("font"))).horizontalAdvance("Discard pending cell edits") + 40);
+        auto *alignCenter = root->findChild<QObject *>("alignColumnCenter"); QVERIFY(alignCenter);
+        QVERIFY(QMetaObject::invokeMethod(alignCenter, "triggered"));
+        QTRY_VERIFY(document->toPlainText().contains(":---:"));
+        QVERIFY(QMetaObject::invokeMethod(source, "undo")); QTRY_COMPARE(document->toPlainText(), original);
         const auto panelId = projection->tablePanels().first().toMap()["id"].toInt();
         projection->setTableSource(panelId, true); QTRY_VERIFY(projection->tablePanels().isEmpty());
         QTRY_VERIFY(qvariant_cast<QQuickTextDocument *>(view->property("textDocument"))->textDocument()->toPlainText().contains("| A | B |"));
@@ -203,6 +220,72 @@ private slots:
         for (auto *item : visualDescendants(view->parentItem())) if (item->objectName() == "tableCellDelegate") ++delegates;
         QVERIFY(delegates > 0 && delegates < 500); // Not 12,008 rich-text delegates.
         QCOMPARE(document->toPlainText(), large);
+    }
+    void overflowScrollbarsTrackViewportAndCaretBothDirections() {
+        QTemporaryDir directory; QVERIFY(directory.isValid());
+        Backend backend; backend.m_recoveryPath = directory.filePath("recovery.json");
+        QQmlEngine engine; engine.rootContext()->setContextProperty("backend", &backend);
+        QQmlComponent component(&engine, QUrl::fromLocalFile(QFINDTESTDATA("../src/Main.qml")));
+        QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+        QScopedPointer<QObject> root(component.create());
+        auto *window = qobject_cast<QQuickWindow *>(root.data()); QVERIFY(window);
+        auto *source = root->findChild<QObject *>("sourceEditor");
+        auto *view = root->findChild<QQuickItem *>("previewEditor");
+        auto *flick = root->findChild<QQuickItem *>("editorScroll");
+        auto *projection = root->findChild<LivePreview *>(); QVERIFY(source && view && flick && projection);
+        if (QGuiApplication::platformName() != "offscreen") QVERIFY(QTest::qWaitForWindowExposed(window));
+        QString text = "before\n\n```text\n";
+        for (int n = 0; n < 400; ++n) text += QString("line%1 ").arg(n) + QString("wide_identifier ").repeated(35) + "\n";
+        text += "```\n\nafter";
+        source->setProperty("text", text); source->setProperty("cursorPosition", text.indexOf("line200 "));
+        QTRY_COMPARE(projection->codeBlockPanels().size(), 1); QTest::qWait(30);
+        view->forceActiveFocus();
+        view->setProperty("cursorPosition", text.indexOf("line200 "));
+        const bool cocoa = QGuiApplication::platformName() == "cocoa";
+        QTest::keyClick(window, cocoa ? Qt::Key_Right : Qt::Key_End, cocoa ? Qt::ControlModifier : Qt::NoModifier);
+        const auto id = projection->codeBlockPanels().first().toMap()["id"].toInt();
+        QTRY_VERIFY(projection->blockOffsets().value(QString::number(id)).toReal() > 100);
+        QTest::keyClick(window, cocoa ? Qt::Key_Left : Qt::Key_Home, cocoa ? Qt::ControlModifier : Qt::NoModifier);
+        QTRY_VERIFY(projection->blockOffsets().value(QString::number(id)).toReal() < 1);
+        QVERIFY(view->property("displayCursorRectangle").toRectF().x() >= -1);
+        flick->setProperty("contentY", flick->property("contentY").toReal() + 120);
+        QTest::qWait(30);
+        QQuickItem *bar = nullptr;
+        for (auto *item : visualDescendants(view->parentItem())) if (item->objectName() == "blockHorizontalScrollBar" && item->isVisible()) { bar = item; break; }
+        QVERIFY(bar);
+        const auto viewport = flick->mapRectToScene(QRectF(0, 0, flick->width(), flick->height()));
+        const auto scrollRect = bar->mapRectToScene(QRectF(0, 0, bar->width(), bar->height()));
+        QVERIFY(qAbs(scrollRect.bottom() - viewport.bottom()) < 3); // Not thousands of pixels below us.
+        source->setProperty("cursorPosition", 0); flick->setProperty("contentY", 0); QTest::qWait(30);
+        // The document's positive top inset must not push the pinned bar below
+        // the viewport when the viewport origin is negative in text coordinates.
+        bar = nullptr;
+        for (auto *item : visualDescendants(view->parentItem())) if (item->objectName() == "blockHorizontalScrollBar" && item->isVisible()) { bar = item; break; }
+        QVERIFY(bar);
+        QVERIFY(qAbs(bar->mapRectToScene(QRectF(0, 0, bar->width(), bar->height())).bottom() - viewport.bottom()) < 3);
+        const QString tableText = "before\n\n| Left heading | Right heading |\n| --- | --- |\n| " + QString("W").repeated(160) + " | right cell |\n\nafter";
+        source->setProperty("text", tableText); source->setProperty("cursorPosition", 0);
+        root->setProperty("readMode", true);
+        QTRY_VERIFY(!projection->tableScrollPanels().isEmpty()); flick->setProperty("contentY", 0); QTest::qWait(30);
+        auto *doc = qvariant_cast<QQuickTextDocument *>(view->property("textDocument"))->textDocument();
+        QTextTable *table = nullptr;
+        for (auto *frame : doc->rootFrame()->childFrames()) if ((table = qobject_cast<QTextTable *>(frame))) break;
+        QVERIFY(table);
+        const auto beforeBounds = doc->documentLayout()->frameBoundingRect(table);
+        const auto region = view->mapRectToScene(beforeBounds.adjusted(0, 0, 0, -20)).toAlignedRect().intersected(QRect(0, 0, window->width(), window->height()));
+        QImage before;
+        if (QGuiApplication::platformName() != "offscreen") { before = window->grabWindow(); QVERIFY(!before.isNull()); }
+        QSignalSpy redraw(doc->documentLayout(), &QAbstractTextDocumentLayout::update);
+        const int tableId = projection->tableScrollPanels().first().toMap()["id"].toInt();
+        projection->scrollBlock(tableId, 150);
+        QTRY_VERIFY(redraw.size() > 0); QTest::qWait(30);
+        const auto afterBounds = doc->documentLayout()->frameBoundingRect(table);
+        QVERIFY(qAbs(afterBounds.left() - beforeBounds.left() + 150) < 1);
+        if (!before.isNull()) QVERIFY(before.copy(region) != window->grabWindow().copy(region)); // Native glyphs actually moved.
+        const auto header = doc->documentLayout()->blockBoundingRect(table->cellAt(0, 0).firstCursorPosition().block());
+        const auto body = doc->documentLayout()->blockBoundingRect(table->cellAt(1, 0).firstCursorPosition().block());
+        QVERIFY(header.bottom() <= body.top());
+        QCOMPARE(qvariant_cast<QQuickTextDocument *>(source->property("textDocument"))->textDocument()->toPlainText(), tableText);
     }
     void codePanelHoverCopyAndReadLanguageUseQtClipboard() {
         QTemporaryDir directory; QVERIFY(directory.isValid());

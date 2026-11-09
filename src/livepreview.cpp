@@ -371,6 +371,7 @@ void LivePreview::setViewport(qreal top, qreal height) {
     if (!std::isfinite(top) || !std::isfinite(height) || height < 0) return;
     if (m_viewportTop == top && m_viewportHeight == height) return;
     m_viewportTop = top; m_viewportHeight = height;
+    emit viewportChanged();
     scheduleCodeBlockPanels();
 }
 void LivePreview::recordViewChange(int position, int removed, const QString &added) {
@@ -924,7 +925,7 @@ QPair<int, int> LivePreview::visibleBlocks() const {
 }
 void LivePreview::updateCodeBlockPanels() {
     if (!m_view || !m_viewItem || m_view->pageSize() == QSizeF(0, 0)
-        || (!m_readMode && !m_viewSyncedSource)) return;
+        || (m_pending && !m_guard) || (!m_readMode && !m_viewSyncedSource)) return;
     const auto &groups = m_readMode ? m_readCodeBlocks : m_editCodeGroups;
     const qreal lineHeight = QFontMetricsF(qvariant_cast<QFont>(m_viewItem->property("font"))).height();
     const qreal paddingY = std::ceil(lineHeight / 2), paddingTop = paddingY + 24;
@@ -979,7 +980,7 @@ void LivePreview::updateCodeBlockPanels() {
         const int caret = m_viewItem->property("cursorPosition").toInt();
         if (m_revealOverflowCaret && !m_readMode && m_viewItem->property("activeFocus").toBool()
             && caret >= first.position() && caret < last.position() + last.length()) {
-            const qreal cx = m_viewItem->property("cursorRectangle").toRectF().x();
+            const qreal cx = visualCursorRectangle(m_viewItem->property("cursorRectangle").toRectF()).x();
             const qreal viewport = m_viewItem->property("width").toReal() - 8;
             const qreal offset = qBound(qreal(0), overflow.offset + (cx < 4 ? cx - 4 : cx > viewport ? cx - viewport : 0), qMax(qreal(0), contentWidth - viewport));
             if (qAbs(offset - overflow.offset) > 0.5) { m_revealOverflowCaret = false; scrollBlock(overflow.id, offset); return; }

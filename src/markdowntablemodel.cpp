@@ -69,7 +69,7 @@ int MarkdownTableModel::columnCount(const QModelIndex &parent) const
 
 QHash<int, QByteArray> MarkdownTableModel::roleNames() const
 {
-    return {{MarkdownRole, "markdown"}, {HtmlRole, "html"}, {HeaderRole, "header"}};
+    return {{MarkdownRole, "markdown"}, {HtmlRole, "html"}, {HeaderRole, "header"}, {AlignmentRole, "alignment"}};
 }
 
 QVariant MarkdownTableModel::data(const QModelIndex &index, int role) const
@@ -87,6 +87,8 @@ QVariant MarkdownTableModel::data(const QModelIndex &index, int role) const
         return cell.html;
     case HeaderRole:
         return index.row() == 0;
+    case AlignmentRole:
+        return columnAlignment(index.column());
     default:
         return {};
     }
@@ -261,6 +263,8 @@ void MarkdownTableModel::setSource(const QString &markdown, const QFont &font)
         lines.clear();
         rows.clear();
     }
+    const bool alignmentChanged = m_lines.size() > 1 && lines.size() > 1
+        && m_source.mid(m_lines.at(1).offset, m_lines.at(1).length) != markdown.mid(lines.at(1).offset, lines.at(1).length);
     const bool fontChanged = !m_initialized || m_font != font;
     const bool sameShape = rows.size() == m_rows.size()
         && (rows.isEmpty() || rows.first().size() == m_rows.first().size());
@@ -307,6 +311,8 @@ void MarkdownTableModel::setSource(const QString &markdown, const QFont &font)
         for (const auto &cell : changed)
             emit dataChanged(index(cell.first, cell.second), index(cell.first, cell.second),
                              {Qt::DisplayRole, MarkdownRole, HtmlRole});
+        if (alignmentChanged && rowCount() && columnCount())
+            emit dataChanged(index(0, 0), index(rowCount() - 1, columnCount() - 1), {AlignmentRole});
     }
 }
 
@@ -378,6 +384,31 @@ qreal MarkdownTableModel::columnWidth(int column) const
         m_widths[column] = width;
     }
     return m_widths.at(column);
+}
+
+int MarkdownTableModel::columnAlignment(int column) const
+{
+    if (column < 0 || column >= columnCount() || m_lines.size() < 2) return Qt::AlignLeft;
+    const auto range = m_lines.at(1).fields.at(column);
+    const QString token = m_source.mid(range.offset, range.length).trimmed();
+    if (token.endsWith(':')) return token.startsWith(':') ? Qt::AlignHCenter : Qt::AlignRight;
+    return Qt::AlignLeft;
+}
+
+bool MarkdownTableModel::setColumnAlignment(int column, const QString &alignment)
+{
+    if (column < 0 || column >= columnCount() || m_lines.size() < 2) return false;
+    QString token;
+    if (alignment == "left") token = ":---";
+    else if (alignment == "center") token = ":---:";
+    else if (alignment == "right") token = "---:";
+    else return false;
+    const auto range = m_lines.at(1).fields.at(column);
+    int start = range.offset, end = start + range.length;
+    while (start < end && m_source.at(start).isSpace()) ++start;
+    while (end > start && m_source.at(end - 1).isSpace()) --end;
+    if (m_source.mid(start, end - start) == token) return true;
+    return requestReplacement(start, end - start, token);
 }
 
 bool MarkdownTableModel::protectCell(const QString &value, QString &result)

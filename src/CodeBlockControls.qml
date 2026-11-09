@@ -19,6 +19,7 @@ Item {
     HoverHandler { id: codeHover }
     BlockOverflow {
         anchors.fill: parent
+        viewportBottom: controls.preview.viewportBottom < 0 ? height : controls.preview.viewportBottom - controls.y
         contentWidth: controls.modelData.contentWidth
         viewportWidth: controls.modelData.viewportWidth
         offset: controls.preview.blockOffsets[controls.modelData.id] || 0

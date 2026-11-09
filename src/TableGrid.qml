@@ -16,6 +16,15 @@ Rectangle {
     property var activeEditor: null
     property string error: ""
     property bool restored: false
+    property int currentColumn: 0
+    property int currentRow: 0
+    property var editingWidths: ({})
+    function expandColumn(column, text) {
+        var width = Math.min(4096, Math.ceil(metrics.advanceWidth(text)) + 40);
+        if (width <= (editingWidths[column] || tableModel.columnWidth(column))) return;
+        var widths = editingWidths; widths[column] = width; editingWidths = widths;
+        grid.forceLayout();
+    }
     readonly property var tableModel: modelData.model
     x: modelData.x
     y: modelData.y
@@ -64,10 +73,13 @@ Rectangle {
             focusPolicy: Qt.NoFocus
             height: 26
             onClicked: actions.popup()
+            FontMetrics { id: menuMetrics; font: actions.font }
             Menu {
                 id: actions
-                MenuItem { text: "Insert row below"; onTriggered: if (panel.commitCell()) Qt.callLater(function() { panel.tableModel.insertRow(Math.max(0, grid.currentRow)); }); }
-                MenuItem { text: "Delete row"; enabled: grid.currentRow > 0; onTriggered: if (panel.commitCell()) Qt.callLater(function() { panel.tableModel.removeRow(grid.currentRow); }); }
+                objectName: "tableActionsMenu"
+                width: Math.max(320, menuMetrics.advanceWidth("Discard pending cell edits") + 80)
+                MenuItem { text: "Insert row below"; onTriggered: if (panel.commitCell()) Qt.callLater(function() { panel.tableModel.insertRow(Math.max(0, panel.currentRow)); }); }
+                MenuItem { text: "Delete row"; enabled: panel.currentRow > 0; onTriggered: if (panel.commitCell()) Qt.callLater(function() { panel.tableModel.removeRow(panel.currentRow); }); }
                 MenuItem {
                     text: "Copy pending cell drafts"
                     enabled: Object.keys(panel.tableModel.drafts).length > 0
@@ -82,8 +94,12 @@ Rectangle {
                     }
                 }
                 MenuSeparator {}
-                MenuItem { text: "Insert column to the right"; onTriggered: if (panel.commitCell()) Qt.callLater(function() { panel.tableModel.insertColumn(Math.max(0, grid.currentColumn)); }); }
-                MenuItem { text: "Delete column"; enabled: grid.columns > 1; onTriggered: if (panel.commitCell()) Qt.callLater(function() { panel.tableModel.removeColumn(grid.currentColumn); }); }
+                MenuItem { objectName: "alignColumnLeft"; text: "Align column left"; onTriggered: if (panel.commitCell()) panel.tableModel.setColumnAlignment(panel.currentColumn, "left"); }
+                MenuItem { objectName: "alignColumnCenter"; text: "Align column center"; onTriggered: if (panel.commitCell()) panel.tableModel.setColumnAlignment(panel.currentColumn, "center"); }
+                MenuItem { objectName: "alignColumnRight"; text: "Align column right"; onTriggered: if (panel.commitCell()) panel.tableModel.setColumnAlignment(panel.currentColumn, "right"); }
+                MenuSeparator {}
+                MenuItem { text: "Insert column to the right"; onTriggered: if (panel.commitCell()) Qt.callLater(function() { panel.tableModel.insertColumn(Math.max(0, panel.currentColumn)); }); }
+                MenuItem { text: "Delete column"; enabled: grid.columns > 1; onTriggered: if (panel.commitCell()) Qt.callLater(function() { panel.tableModel.removeColumn(panel.currentColumn); }); }
             }
         }
     }
@@ -100,7 +116,7 @@ Rectangle {
         boundsBehavior: Flickable.StopAtBounds
         editTriggers: TableView.SingleTapped | TableView.EditKeyPressed
         selectionModel: ItemSelectionModel { model: grid.model }
-        columnWidthProvider: function(column) { return panel.tableModel.columnWidth(column); }
+        columnWidthProvider: function(column) { return Math.max(panel.tableModel.columnWidth(column), panel.editingWidths[column] || 0); }
         rowHeightProvider: function(row) { return Math.ceil(metrics.height) + 16; }
         FontMetrics { id: metrics; font: panel.editorFont }
         onContentWidthChanged: Qt.callLater(panel.restorePosition)
@@ -121,6 +137,8 @@ Rectangle {
             required property string html
             required property bool header
             required property bool current
+            required property bool editing
+            required property int alignment
             implicitWidth: 100
             implicitHeight: Math.ceil(metrics.height) + 16
             color: current ? Qt.rgba(panel.foreground.r, panel.foreground.g, panel.foreground.b, 0.08) : panel.backgroundColor
@@ -128,6 +146,9 @@ Rectangle {
             border.color: panel.borderColor
             clip: true
             Text {
+                objectName: "tableCellDisplay"
+                visible: !cell.editing
+                horizontalAlignment: cell.alignment
                 anchors.fill: parent
                 anchors.margins: 8
                 text: panel.tableModel.drafts[cell.row + ":" + cell.column] ? panel.tableModel.drafts[cell.row + ":" + cell.column].text : cell.html
@@ -145,6 +166,18 @@ Rectangle {
                 font: panel.editorFont
                 text: cell.markdown
                 selectByMouse: true
+                horizontalAlignment: cell.alignment
+                background: Rectangle { color: panel.backgroundColor; border.color: field.activeFocus ? field.palette.highlight : panel.borderColor; border.width: 1 }
+                function revealCursor() {
+                    if (!activeFocus) return;
+                    var p = mapToItem(grid, cursorRectangle.x, 0);
+                    var x = grid.contentX;
+                    if (p.x < 8) x += p.x - 8;
+                    else if (p.x + cursorRectangle.width > grid.width - 8) x += p.x + cursorRectangle.width - grid.width + 8;
+                    grid.contentX = Math.max(0, Math.min(x, grid.contentWidth - grid.width));
+                }
+                onCursorRectangleChanged: Qt.callLater(revealCursor)
+                onPreeditTextChanged: { panel.expandColumn(cell.column, text + preeditText); Qt.callLater(revealCursor); }
                 property string original: ""
                 property var revision: 0
                 function storeDraft() {
@@ -172,7 +205,7 @@ Rectangle {
                     panel.error = "";
                     return true;
                 }
-                onTextEdited: { committed = false; storeDraft(); }
+                onTextEdited: { committed = false; storeDraft(); panel.expandColumn(cell.column, text); Qt.callLater(revealCursor); }
                 onEditingFinished: if (!discarded) commit()
                 TableView.onCommit: commit()
                 Keys.priority: Keys.BeforeItem
@@ -188,6 +221,7 @@ Rectangle {
                     revision = panel.tableModel.draftRevision;
                     original = draft ? draft.original : cell.markdown;
                     if (draft) text = draft.text;
+                    panel.currentColumn = cell.column; panel.currentRow = cell.row;
                     panel.activeEditor = field;
                     panel.editorChanged(field);
                     selectAll();

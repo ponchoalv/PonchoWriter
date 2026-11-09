@@ -108,6 +108,12 @@ private slots:
             model.setSource(table, QFont());
         };
         apply(); QVERIFY(table.contains(QString::fromUtf8("😀 \\| literal")));
+        QCOMPARE(model.columnAlignment(1), int(Qt::AlignRight));
+        QVERIFY(model.setColumnAlignment(1, "center")); apply();
+        QCOMPARE(model.columnAlignment(1), int(Qt::AlignHCenter)); QVERIFY(table.contains(":---:"));
+        QVERIFY(model.setColumnAlignment(1, "left")); apply(); QCOMPARE(model.columnAlignment(1), int(Qt::AlignLeft));
+        QVERIFY(!model.setColumnAlignment(-1, "left")); QVERIFY(!model.setColumnAlignment(0, "bogus"));
+        QVERIFY(model.setColumnAlignment(1, "right")); apply();
         accept = false; QVERIFY(!model.setCell(1, 1, "stale")); request.clear(); accept = true;
         QVERIFY(!model.setCell(0, 0, "line\nbreak"));
         QVERIFY(!model.removeRow(0));
@@ -159,6 +165,16 @@ private slots:
         controller->scrollBlock(panel["id"].toInt(), 150); flush();
         QCOMPARE(controller->blockOffsets().value(QString::number(panel["id"].toInt())).toReal(), qreal(150));
         QVERIFY(body.blockFormat().textIndent() < 0); QCOMPARE(source->toPlainText(), text);
+        select(viewItem, body.position(), body.position());
+        const auto native = viewItem->property("cursorRectangle").toRectF();
+        QVERIFY(controller->visualCursorRectangle(native).x() < -100); // Not clamped to the left edge.
+        QInputMethodEvent preedit(QString::fromUtf8("かな"), {}); QCoreApplication::sendEvent(viewItem, &preedit); flush();
+        QVERIFY(controller->m_composing);
+        const auto composingRect = viewItem->property("cursorRectangle").toRectF();
+        QCOMPARE(controller->visualCursorRectangle(composingRect), composingRect); // Includes native IME cursor/preedit.
+        QInputMethodEvent cancel; QCoreApplication::sendEvent(viewItem, &cancel); flush();
+        QSignalSpy redraw(view->documentLayout(), &QAbstractTextDocumentLayout::update);
+        controller->scrollBlock(panel["id"].toInt(), 100); flush(); QVERIFY(redraw.size() > 0);
         select(viewItem, body.position() + 5, body.position() + 15);
         QCOMPARE(viewItem->property("selectedText").toString(), longLine.mid(5, 10));
         for (bool read : {true, false}) {

@@ -103,6 +103,7 @@ Item {
             y: modelData.y
             width: modelData.width
             height: modelData.height
+            viewportBottom: decoration.preview.viewportBottom < 0 ? height : decoration.preview.viewportBottom - y
             contentWidth: modelData.contentWidth
             viewportWidth: width
             offset: decoration.preview.blockOffsets[modelData.id] || 0

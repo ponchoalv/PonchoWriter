@@ -127,6 +127,8 @@ void LivePreview::styleOverflow() {
     QSignalBlocker layoutSignals(m_view->documentLayout());
     QTextCursor batch(m_view); batch.beginEditBlock();
     QList<QTextBlock> wanted;
+    int firstDirty = m_view->characterCount(), lastDirty = 0;
+    const auto dirty = [&](int first, int last) { firstDirty = qMin(firstDirty, first); lastDirty = qMax(lastDirty, last); };
     const auto &groups = m_readMode ? m_readCodeBlocks : m_editCodeGroups;
     for (const auto &group : groups) {
         const auto first = m_view->findBlockByNumber(group.first), last = m_view->findBlockByNumber(group.second);
@@ -137,6 +139,7 @@ void LivePreview::styleOverflow() {
             if (!f.hasProperty(OverflowIndent)) f.setProperty(OverflowIndent, f.textIndent());
             const qreal indent = f.doubleProperty(OverflowIndent) - record.offset;
             if (!f.nonBreakableLines() || f.textIndent() != indent || !b.blockFormat().hasProperty(OverflowIndent)) {
+                dirty(b.position(), b.position() + b.length());
                 f.setNonBreakableLines(true); f.setTextIndent(indent); QTextCursor(b).setBlockFormat(f);
             }
         }
@@ -148,10 +151,10 @@ void LivePreview::styleOverflow() {
             auto f = table->format();
             f.setWidth(QTextLength(QTextLength::VariableLength, 0)); f.setLeftMargin(-record.offset);
             f.setBottomMargin(qMax(qreal(16), f.bottomMargin()));
-            if (table->format() != f) table->setFormat(f);
+            if (table->format() != f) { dirty(table->firstPosition(), table->lastPosition() + 1); table->setFormat(f); }
             for (auto b = table->firstCursorPosition().block(); b.isValid() && b.position() <= table->lastPosition(); b = b.next()) {
                 wanted.append(b); auto bf = b.blockFormat();
-                if (!bf.nonBreakableLines()) { bf.setNonBreakableLines(true); QTextCursor(b).setBlockFormat(bf); }
+                if (!bf.nonBreakableLines()) { dirty(b.position(), b.position() + b.length()); bf.setNonBreakableLines(true); QTextCursor(b).setBlockFormat(bf); }
             }
         }
     }
@@ -162,19 +165,50 @@ void LivePreview::styleOverflow() {
     for (const auto &b : m_unwrapped) if (b.isValid() && b.document() == m_view && !current.contains(b.blockNumber())) {
         auto f = b.blockFormat(); f.setNonBreakableLines(false);
         if (f.hasProperty(OverflowIndent)) { f.setTextIndent(f.doubleProperty(OverflowIndent)); f.clearProperty(OverflowIndent); }
-        QTextCursor(b).setBlockFormat(f);
+        dirty(b.position(), b.position() + b.length()); QTextCursor(b).setBlockFormat(f);
     }
     for (const auto &b : m_unwrapped) if (b.isValid() && b.document() != m_view) wanted.append(b);
     m_unwrapped = wanted;
     batch.endEditBlock();
+    layoutSignals.unblock();
+    if (lastDirty > firstDirty) m_view->markContentsDirty(firstDirty, lastDirty - firstDirty);
     for (auto it = m_overflows.begin(); it != m_overflows.end();) {
         if (!it->first.isValid()) { m_blockOffsets.remove(QString::number(it->id)); it = m_overflows.erase(it); }
         else ++it;
     }
 }
 
+QRectF LivePreview::visualCursorRectangle(const QRectF &native) const {
+    if (!m_view || !m_viewItem || m_readMode || m_composing) return native;
+    const int cursor = m_viewItem->property("cursorPosition").toInt();
+    const auto block = m_view->findBlock(cursor);
+    const auto *layout = block.layout();
+    if (!layout || layout->lineCount() != 1 || !block.blockFormat().hasProperty(OverflowIndent)) return native;
+    // ManualWrap clamps negative cursorToX positions. Re-measure just this
+    // native line with NoWrap to recover the true offscreen caret, including
+    // font formats, tabs and bidi; the source and native document stay intact.
+    const auto line = layout->lineAt(0);
+    QTextLayout logical(block.text(), m_view->defaultFont());
+    auto option = layout->textOption(); option.setWrapMode(QTextOption::NoWrap);
+    logical.setTextOption(option); logical.setFormats(layout->formats());
+    logical.beginLayout(); auto measured = logical.createLine();
+    if (!measured.isValid()) { logical.endLayout(); return native; }
+    measured.setLineWidth(line.width()); logical.endLayout();
+    const int position = cursor - block.position();
+    QRectF result = native;
+    // cursorPositionChanged can precede cursorRectangleChanged. Do not use
+    // the possibly previous caret's x as an origin for navigation decisions.
+    const qreal left = m_viewItem->property("leftPadding").toReal();
+    qreal alignment = m_viewItem->property("width").toReal() - left
+        - m_viewItem->property("rightPadding").toReal() - m_viewItem->property("contentWidth").toReal();
+    const int horizontal = m_viewItem->property("effectiveHorizontalAlignment").toInt();
+    alignment = horizontal == Qt::AlignHCenter ? alignment / 2 : horizontal == Qt::AlignRight ? alignment : 0;
+    result.moveLeft(left + qMax(qreal(0), alignment) + layout->position().x() + line.x() + measured.cursorToX(position));
+    return result;
+}
+
 void LivePreview::scrollBlock(int id, qreal offset) {
-    if (!std::isfinite(offset) || m_composing || m_pending || !m_view) return;
+    if (!std::isfinite(offset) || m_composing || (m_pending && !m_guard) || !m_view) return;
     for (auto &item : m_overflows) if (item.id == id && item.first.isValid() && item.first.document() == m_view) {
         const qreal width = qMax(qreal(1), m_viewItem->property("width").toReal() - 8);
         offset = qBound(qreal(0), offset, qMax(qreal(0), item.width - width));

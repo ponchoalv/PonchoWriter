@@ -8,6 +8,9 @@ Item {
     property real contentWidth: width
     property real viewportWidth: width
     property real offset: 0
+    // Local coordinates: keep the bar at the visible block bottom, not the
+    // distant end of a tall native paragraph group.
+    property real viewportBottom: height
     signal scrollRequested(real offset)
     WheelHandler {
         acceptedModifiers: Qt.NoModifier
@@ -20,13 +23,13 @@ Item {
     }
     ScrollBar {
         objectName: "blockHorizontalScrollBar"
-        anchors.bottom: parent.bottom
+        y: Math.max(0, Math.min(parent.height, overflow.viewportBottom) - height)
         anchors.horizontalCenter: parent.horizontalCenter
         width: Math.min(parent.width, overflow.viewportWidth)
         height: 14
         orientation: Qt.Horizontal
         policy: ScrollBar.AlwaysOn
-        visible: overflow.contentWidth > overflow.viewportWidth + 0.5
+        visible: overflow.viewportBottom > 0 && overflow.contentWidth > overflow.viewportWidth + 0.5
         active: hovered || pressed
         focusPolicy: Qt.NoFocus
         size: Math.min(1, overflow.viewportWidth / Math.max(1, overflow.contentWidth))

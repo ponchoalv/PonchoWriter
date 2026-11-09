@@ -16,7 +16,7 @@ class MarkdownTableModel : public QAbstractTableModel
     Q_PROPERTY(qreal scrollY MEMBER m_scrollY NOTIFY scrollPositionChanged)
 
 public:
-    enum Role { MarkdownRole = Qt::UserRole + 1, HtmlRole, HeaderRole };
+    enum Role { MarkdownRole = Qt::UserRole + 1, HtmlRole, HeaderRole, AlignmentRole };
     Q_ENUM(Role)
 
     explicit MarkdownTableModel(QObject *parent = nullptr);
@@ -30,6 +30,8 @@ public:
     }
 
     Q_INVOKABLE qreal columnWidth(int column) const;
+    Q_INVOKABLE int columnAlignment(int column) const;
+    Q_INVOKABLE bool setColumnAlignment(int column, const QString &alignment);
     void acknowledgeReplacement() { m_acknowledged = true; }
     quint64 draftRevision() const { return m_draftRevision; }
     // value is raw inline Markdown. Existing escapes are retained; unescaped

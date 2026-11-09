@@ -2,6 +2,8 @@
 
 This guide builds the **[ponchoalv/omawrite fork](https://github.com/ponchoalv/omawrite)**, branch **`feature/native-live-preview`**, not an upstream binary or an Obsidian plugin. There is no prebuilt fork installer/release promised here. Clone the feature branch explicitly; do not silently substitute the upstream/default branch.
 
+The complete feature checkpoint (`f94d69e`) was also fast-forwarded into the fork's default **`master`** branch on 2026-11-09; the fork has no `main`. The commands below retain the feature branch. For the subsequent source-cache optimization and opt-in native benchmark, start from a clean checkout and use `git fetch origin` then `git switch --track origin/performance/baseline-and-cached-preview` (or switch to that local branch if it already exists). See [performance methodology and results](performance.md); no additional application dependencies are required. Do not discard local work to switch branches.
+
 ## Status and requirements
 
 - **macOS:** development/testing host is Apple Silicon with Homebrew **Qt 6.12.0**. This guide does not claim every GUI/deployment scenario has been tested.
@@ -29,7 +31,7 @@ CMake defaults to Unix Makefiles on these Unix instructions; Ninja is optional. 
 
 The engine is MIT-licensed, but embedded definition data has mixed GPL/LGPL/other licenses: **not everything bundled is MIT**. See `third_party/ksyntaxhighlighting/README.md` and its `LICENSES/` files for upstream notices. A local build is **not a redistribution-ready release**; resource/license/source auditing remains required. Sonnet adds LGPL obligations, including static-library relinking requirements; see `third_party/sonnet/README.md`. Historical Arch packaging is disabled pending that audit. Deployment commands below describe local deployment mechanics, not permission or readiness to redistribute binaries.
 
-Verified on macOS arm64 / Qt 6.12.0 on 2026-11-08: **321 checks passed, 0 failed across twelve suites**, with 2 native-render bodies skipped offscreen. Separate native Mac runs passed OS-dictionary smoke, spelling suggestions/correction/undo, keyboard/menu image paste and 100 threaded rendered mode switches. The app rebuilt with static syntax/Sonnet resources and upstream notices. No native Learn or personal-dictionary changes were performed. See [test details](testing.md). Windows/Linux remain unverified.
+Latest performance-branch verification on macOS arm64 / Qt 6.12.0 on 2026-11-09: **344 checks passed, 0 failed across twelve suites**, with 2 native-render bodies skipped offscreen. Separate native Mac runs passed OS-dictionary smoke, spelling suggestions/correction/undo, keyboard/menu image paste and 100 threaded rendered mode switches. The app rebuilt with static syntax/Sonnet resources and upstream notices. No native Learn or personal-dictionary changes were performed. See [test details](testing.md). Windows/Linux remain unverified.
 
 ## 1. Windows (first-time installation)
 

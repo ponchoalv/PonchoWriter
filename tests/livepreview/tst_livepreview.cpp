@@ -86,6 +86,100 @@ private slots:
         flush();
     }
     void cleanup() { controller.reset(); root.reset(); }
+    void sourceCacheSurvivesCaretGeometryAndFormatting() {
+        const QString text = "before\n\n| A | B |\n| --- | --- |\n| one | two |\n\nafter paragraph\n";
+        source->setPlainText(text);
+        select(sourceItem, text.size(), text.size());
+        const auto reads = controller->m_sourceSnapshotReads;
+        const auto parses = controller->m_sourceParseCount;
+        for (int i = 0; i < text.size(); i += 3) select(sourceItem, i, i);
+        select(sourceItem, 0, text.size());
+        select(sourceItem, text.size(), 0); // backwards selection and object reveal
+        select(sourceItem, text.size(), text.size());
+        viewItem->setProperty("width", 410); flush();
+        QCOMPARE(controller->m_sourceSnapshotReads, reads);
+        QCOMPARE(controller->m_sourceParseCount, parses);
+        QVERIFY(view->toPlainText().contains(QChar::ObjectReplacementCharacter));
+        QCOMPARE(source->toPlainText(), text);
+        // A formatting-only notification may reread but must not reparse.
+        QTextCursor format(source); format.setPosition(0); format.setPosition(3, QTextCursor::KeepAnchor);
+        QTextCharFormat red; red.setForeground(Qt::red); format.mergeCharFormat(red); flush();
+        QCOMPARE(controller->m_sourceParseCount, parses);
+        QFont font = view->defaultFont(); font.setPixelSize(26);
+        viewItem->setProperty("font", font);
+        controller->refresh(); flush();
+        QCOMPARE(view->defaultFont().pixelSize(), 26);
+        QCOMPARE(controller->m_sourceParseCount, parses);
+        QCOMPARE(source->toPlainText(), text);
+    }
+    void sourceCacheInvalidatesGuardedEditsUndoAndSameLengthChanges() {
+        const QString text = QString::fromUtf8("😀 non-breaking\u00a0space\n\nlast\n");
+        source->setPlainText(text);
+        select(sourceItem, text.size(), text.size());
+        source->clearUndoRedoStacks();
+        QCOMPARE(controller->sourceSnapshot(), text);
+        auto parses = controller->m_sourceParseCount;
+        type("x"); // viewContentsChanged writes source while m_guard is true
+        QCOMPARE(controller->sourceSnapshot(), text + "x");
+        QCOMPARE(controller->m_sourceParseCount, parses + 1);
+        source->undo(); flush();
+        QCOMPARE(controller->sourceSnapshot(), text);
+        source->redo(); flush();
+        QCOMPARE(controller->sourceSnapshot(), text + "x");
+        parses = controller->m_sourceParseCount;
+        QTextCursor edit(source); edit.movePosition(QTextCursor::End);
+        edit.movePosition(QTextCursor::PreviousCharacter, QTextCursor::KeepAnchor); edit.insertText("y"); flush();
+        QCOMPARE(controller->sourceSnapshot(), text + "y");
+        QCOMPARE(controller->m_sourceParseCount, parses + 1);
+        // An explicit refresh must recover even from an external signal-blocked edit.
+        { QSignalBlocker blocked(source); source->setPlainText(text + "new"); }
+        controller->refresh(); flush();
+        QCOMPARE(controller->sourceSnapshot(), text + "new");
+        QVERIFY(controller->sourceSnapshot().contains(QChar(0xa0)));
+        source->clear(); flush();
+        QVERIFY(controller->parsedSourceBlocks().isEmpty());
+        parses = controller->m_sourceParseCount;
+        controller->refresh(); flush(); controller->refresh(); flush();
+        QCOMPARE(controller->m_sourceParseCount, parses); // cache empty results too
+    }
+    void sourceCacheReusesReadAndImageParsingAcrossResourceRefresh() {
+        QTemporaryDir directory; QVERIFY(directory.isValid());
+        QImage image(24, 24, QImage::Format_ARGB32_Premultiplied); image.fill(Qt::red);
+        QVERIFY(image.save(directory.filePath("image.png")));
+        ImageResolver resolver; resolver.root = directory.path(); controller->setResolver(&resolver);
+        const QString text = "![Local](image.png)\n\nafter\n";
+        source->setPlainText(text); select(sourceItem, text.size(), text.size());
+        const auto parses = controller->m_sourceParseCount;
+        const auto reads = controller->m_sourceSnapshotReads;
+        for (int i = 0; i < 20; ++i) QCOMPARE(controller->imagePathAt(0), QString("image.png"));
+        QCOMPARE(controller->m_sourceSnapshotReads, reads);
+        QCOMPARE(controller->m_sourceParseCount, parses);
+        controller->setReadMode(true); flush(); controller->setReadMode(false); flush();
+        QCOMPARE(controller->m_sourceParseCount, parses);
+        // Same-length destination replacement must invalidate source-only blocks.
+        image.fill(Qt::green); QVERIFY(image.save(directory.filePath("other.png")));
+        QTextCursor edit = source->find("image.png"); edit.insertText("other.png"); flush();
+        QCOMPARE(controller->imagePathAt(0), QString("other.png"));
+        QCOMPARE(controller->m_sourceParseCount, parses + 1);
+        controller->setReadMode(true); flush();
+        QCOMPARE(controller->imagePathAt(0), QString("other.png"));
+        {
+            QSignalBlocker blocked(source);
+            QTextCursor edit = source->find("other.png"); edit.insertText("image.png");
+        }
+        controller->refresh(); flush();
+        QCOMPARE(controller->imagePathAt(0), QString("image.png"));
+        controller->setReadMode(false); flush();
+        QCOMPARE(controller->imagePathAt(0), QString("image.png"));
+        QCOMPARE(controller->m_sourceParseCount, parses + 2);
+        image.fill(Qt::green); QVERIFY(image.save(directory.filePath("image.png")));
+        controller->refresh(); flush();
+        QCOMPARE(controller->m_sourceParseCount, parses + 2);
+        QTextCursor cursor(view); cursor.setPosition(0); cursor.setPosition(1, QTextCursor::KeepAnchor);
+        const auto name = QUrl(cursor.charFormat().toImageFormat().name());
+        const auto rendered = qvariant_cast<QImage>(view->resource(QTextDocument::ImageResource, name));
+        QVERIFY(!rendered.isNull()); QCOMPARE(rendered.pixelColor(0, 0), QColor(Qt::green));
+    }
     void listMarkersKeepHangingAlignmentAndSource() {
         viewItem->setProperty("width", 260);
         const QString text = "- alpha " + QString("words ").repeated(18)
@@ -266,6 +360,16 @@ private slots:
         QTextCursor cursor(source); cursor.insertText("Before\n"); // Projection has not caught up yet.
         QVERIFY(!controller->copyCodeBlock(0));
         QCOMPARE(QGuiApplication::clipboard()->text(), QString("unchanged"));
+        source->setPlainText("```text\nold\n```\n"); controller->refresh(); flush();
+        {
+            QSignalBlocker blocked(source);
+            QTextCursor edit = source->find("old"); edit.insertText("new");
+        }
+        QVERIFY(!controller->copyCodeBlock(0)); // Guard must inspect fresh text, not the cached snapshot.
+        QCOMPARE(QGuiApplication::clipboard()->text(), QString("unchanged"));
+        controller->refresh(); flush();
+        QVERIFY(controller->copyCodeBlock(0));
+        QCOMPARE(QGuiApplication::clipboard()->text(), QString("new"));
     }
     void manyCodePanelsBatchTheirSpacingUpdates() {
         QString text = "Before\n";
@@ -946,15 +1050,28 @@ private slots:
     }
     void imePreservesSource() {
         select(sourceItem, markdown.size() - 1, markdown.size() - 1);
+        const auto parses = controller->m_sourceParseCount;
         QInputMethodEvent preedit(QString::fromUtf8("に"), {});
         QCoreApplication::sendEvent(viewItem, &preedit); flush();
         QCOMPARE(source->toPlainText(), markdown);
+        QCOMPARE(controller->m_sourceParseCount, parses);
         QInputMethodEvent commit;
         commit.setCommitString(QString::fromUtf8("日本"));
         QCoreApplication::sendEvent(viewItem, &commit); flush();
-        QCOMPARE(source->toPlainText(), QString(markdown).insert(markdown.size() - 1, QString::fromUtf8("日本")));
+        const QString committed = QString(markdown).insert(markdown.size() - 1, QString::fromUtf8("日本"));
+        QCOMPARE(source->toPlainText(), committed);
+        QCOMPARE(controller->sourceSnapshot(), committed);
+        QCOMPARE(controller->m_sourceParseCount, parses + 1);
+        QVERIFY(view->toPlainText().contains(QString::fromUtf8("日本")));
         source->undo(); flush();
         QCOMPARE(source->toPlainText(), markdown);
+        QCOMPARE(controller->sourceSnapshot(), markdown);
+        const auto beforeCancel = controller->m_sourceParseCount;
+        QInputMethodEvent pending(QString::fromUtf8("に"), {});
+        QCoreApplication::sendEvent(viewItem, &pending); flush();
+        QInputMethodEvent cancel(QString(), {}); QCoreApplication::sendEvent(viewItem, &cancel); flush();
+        QCOMPARE(controller->sourceSnapshot(), markdown);
+        QCOMPARE(controller->m_sourceParseCount, beforeCancel);
     }
     void localAndRemoteImages() {
         QTemporaryDir directory;

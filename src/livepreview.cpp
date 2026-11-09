@@ -301,7 +301,7 @@ void LivePreview::attach(QObject *sourceItem, QObject *viewItem) {
             this, &LivePreview::scheduleCodeBlockPanels);
     connect(m_view->documentLayout(), &QAbstractTextDocumentLayout::update,
             this, &LivePreview::scheduleCodeBlockPanels);
-    connect(viewItem, SIGNAL(widthChanged()), this, SLOT(sourceTextChanged()));
+    connect(viewItem, SIGNAL(widthChanged()), this, SLOT(sourceGeometryChanged()));
     sourceSelectionChanged();
     rebuild();
 }
@@ -331,10 +331,36 @@ void LivePreview::viewSelectionChanged() {
     }
     schedule();
 }
+const QString &LivePreview::sourceSnapshot() const {
+    if (m_sourceSnapshotDirty) {
+        const QString text = documentText(m_source);
+        ++m_sourceSnapshotReads;
+        if (text != m_sourceSnapshot) {
+            m_sourceSnapshot = text;
+            m_sourceBlocksValid = false;
+        }
+        m_sourceSnapshotDirty = false;
+    }
+    return m_sourceSnapshot;
+}
+const QList<PreviewBlocks::Block> &LivePreview::parsedSourceBlocks() const {
+    const QString &text = sourceSnapshot();
+    if (!m_sourceBlocksValid) {
+        m_sourceBlocks = PreviewBlocks::parse(text);
+        ++m_sourceParseCount;
+        m_sourceBlocksValid = true; // An empty parse is a valid result too.
+    }
+    return m_sourceBlocks;
+}
 void LivePreview::sourceTextChanged() {
+    // Native edits write the canonical source under m_guard. Invalidate before
+    // the guard check, even for same-length edits. Formatting may notify too;
+    // the snapshot comparison above avoids reparsing unchanged Markdown.
+    m_sourceSnapshotDirty = true;
     if (!m_guard)
         schedule();
 }
+void LivePreview::sourceGeometryChanged() { schedule(); }
 void LivePreview::viewContentsChanged(int position, int removed, int addedCount) {
     if (m_guard || m_readMode || !m_source || !m_view)
         return;
@@ -404,6 +430,8 @@ void LivePreview::schedule() {
     });
 }
 void LivePreview::refresh() {
+    // Explicit refresh also observes source changes made with signals blocked.
+    m_sourceSnapshotDirty = true;
     m_images.clear();
     m_projectionKey.clear();
     schedule();
@@ -478,7 +506,7 @@ void LivePreview::buildReadDocument(const QString &source) {
     rendered.setDefaultFont(m_view->defaultFont());
     QString markdown = source;
     QHash<QString, QImage> diagrams;
-    const auto blocks = PreviewBlocks::parse(source);
+    const auto &blocks = parsedSourceBlocks();
     qsizetype diagramBytes = 0;
     for (auto it = blocks.crbegin(); it != blocks.crend(); ++it) {
         if (it->kind != PreviewBlocks::Kind::Mermaid
@@ -830,7 +858,7 @@ void LivePreview::rebuild() {
     QScopedValueRollback<bool> guard(m_guard, true);
     const auto finishLayout = qScopeGuard([this] { completeProjectionLayout(); });
     m_pending = false;
-    const QString source = documentText(m_source);
+    const QString source = sourceSnapshot();
     m_projectionSource = source;
     m_anchor = qBound(0, m_anchor, int(source.size()));
     m_caret = qBound(0, m_caret, int(source.size()));
@@ -853,7 +881,7 @@ void LivePreview::rebuild() {
     QList<Replacement> replacements;
     const int low = qMin(m_anchor, m_caret), high = qMax(m_anchor, m_caret);
     qsizetype projectionBytes = 0;
-    for (const auto &block : PreviewBlocks::parse(source)) {
+    for (const auto &block : parsedSourceBlocks()) {
         if (replacements.size() >= MaxProjectionObjects || projectionBytes >= MaxProjectionBytes)
             break;
         // Include both endpoints: typing/deleting against an object first
@@ -959,10 +987,10 @@ void LivePreview::prepareEdit() {
         QScopedValueRollback<bool> guard(m_guard, true);
         m_projectionKey.clear();
         clearViewResources();
-        m_view->setPlainText(documentText(m_source));
+        const QString source = sourceSnapshot();
+        m_view->setPlainText(source);
         m_listStyleValid = false;
-        m_segments = {{0, int(m_source->toPlainText().size()), 0,
-                      int(m_source->toPlainText().size()), false}};
+        m_segments = {{0, int(source.size()), 0, int(source.size()), false}};
         m_viewText = documentText(m_view);
         styleEditLists();
         select(m_viewItem, m_anchor, m_caret);
@@ -984,7 +1012,7 @@ QString LivePreview::imagePathAt(int position) const {
         return m_readImagePaths.value(cursor.charFormat().toImageFormat().name());
     }
     const int sourceAt = sourcePosition(position);
-    for (const auto &block : PreviewBlocks::parse(documentText(m_source))) {
+    for (const auto &block : parsedSourceBlocks()) {
         if (block.kind == PreviewBlocks::Kind::Image
             && sourceAt >= block.start && sourceAt < block.end)
             return block.imagePath;

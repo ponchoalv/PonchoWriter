@@ -8,6 +8,7 @@ This is the [ponchoalv fork](https://github.com/ponchoalv/omawrite) of
 [native preview design](docs/live-preview-design.md),
 [example document](docs/preview-example.md), and
 [test guide](docs/testing.md),
+[performance baseline and measurements](docs/performance.md),
 [language highlighting guide](docs/syntax-highlighting.md),
 [desktop spelling guide](docs/spellchecking.md),
 [file/window routing guide](docs/opening-files-and-windows.md), and

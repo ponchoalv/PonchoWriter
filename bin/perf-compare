@@ -1,0 +1,81 @@
+#!/usr/bin/env python3
+"""Compare two complete bin/perf reports (Python 3 stdlib, optional tooling)."""
+import argparse
+import json
+import sys
+
+
+def fixtures(report):
+    rows = report["results"]
+    expected = {"prose", "lists", "code", "images"}
+    if not isinstance(rows, list) or len(rows) != len(expected):
+        raise ValueError("Expected exactly four fixture rows")
+    indexed = {}
+    for row in rows:
+        name = row["fixture"]
+        if name not in expected or name in indexed:
+            raise ValueError("Unknown or duplicate fixture: " + str(name))
+        indexed[name] = row
+        scroll_modes(row)
+    return indexed
+
+
+def scroll_modes(row):
+    scrolling = row["scrolling"]
+    if not isinstance(scrolling, list) or len(scrolling) != 2:
+        raise ValueError("Expected exactly one Edit and one Read scrolling record")
+    modes = {item["mode"]: item for item in scrolling}
+    if set(modes) != {"Edit", "Read"}:
+        raise ValueError("Expected exactly one Edit and one Read scrolling record")
+    return modes
+
+
+def compare(before, after):
+    for report in (before, after):
+        if not isinstance(report, dict) or report.get("complete") is not True or report.get("schema") != 1:
+            raise ValueError("Both reports must be complete schema-1 runs")
+    keys = ("benchmark_configuration_sha", "qt", "syntax_highlighting_version", "sonnet_version",
+            "os", "architecture", "font", "device_pixel_ratio", "window_width", "window_height",
+            "screen_name", "screen_refresh_hz", "graphics_api", "spelling_enabled")
+    mismatches = [key for key in keys if before.get(key) != after.get(key) or key not in before]
+    if mismatches:
+        raise ValueError("Non-comparable environment/configuration: " + ", ".join(mismatches))
+    old, new = fixtures(before), fixtures(after)
+    print("Single-run comparison; repeat runs before claiming a statistically reliable gain.")
+    print("Times are GUI-to-follow-up-submission proxies, not display scan-out latency.")
+    print(f"{'Fixture / operation':29} {'Before ms':>10} {'After ms':>10} {'Change':>9}")
+    for name, row in old.items():
+        updated = new[name]
+        if row["source_characters"] != updated["source_characters"]:
+            raise ValueError("Different source size for " + name)
+        for metric in ("typing", "caret", "mode_switch", "resize"):
+            key = metric + "_to_followup_frame"
+            a, b = row[key]["median_ms"], updated[key]["median_ms"]
+            delta = f"{(b / a - 1) * 100:+.1f}%" if a else "n/a"
+            print(f"{name + ' / ' + metric:29} {a:10.2f} {b:10.2f} {delta:>9}")
+        old_scroll, new_scroll = scroll_modes(row), scroll_modes(updated)
+        for mode in ("Edit", "Read"):
+            a, b = old_scroll[mode], new_scroll[mode]
+            print(f"  {a['mode']} scroll submissions/s: {a['phase_submission_fps']:.1f} -> {b['phase_submission_fps']:.1f}; "
+                  f"max gap ms: {a['max_ms']:.1f} -> {b['max_ms']:.1f}")
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("before")
+    parser.add_argument("after")
+    args = parser.parse_args()
+    try:
+        with open(args.before, encoding="utf-8") as file:
+            before = json.load(file)
+        with open(args.after, encoding="utf-8") as file:
+            after = json.load(file)
+        compare(before, after)
+    except (OSError, ValueError, KeyError, TypeError) as error:
+        print(f"Cannot compare: {error}", file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

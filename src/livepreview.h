@@ -61,7 +61,16 @@ private slots:
     void viewSelectionChanged();
     void viewContentsChanged(int position, int removed, int added);
     void sourceTextChanged();
+    void sourceGeometryChanged();
 private:
+    friend class LivePreviewTest;
+    const QString &sourceSnapshot() const;
+    const QList<PreviewBlocks::Block> &parsedSourceBlocks() const;
+    mutable QString m_sourceSnapshot;
+    mutable QList<PreviewBlocks::Block> m_sourceBlocks;
+    mutable bool m_sourceSnapshotDirty = true, m_sourceBlocksValid = false;
+    // Private regression counters; not QML properties and never drive behavior.
+    mutable quint64 m_sourceSnapshotReads = 0, m_sourceParseCount = 0;
     bool eventFilter(QObject *object, QEvent *event) override;
     void schedule();
     void rebuild();

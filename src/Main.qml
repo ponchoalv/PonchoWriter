@@ -52,6 +52,7 @@ ApplicationWindow {
     property bool awaitingPendingSave: false
     property alias readMode: livePreview.readMode
     onReadModeChanged: {
+        if (presentation) presentation.restartCaret();
         selectionCountDelay.restart();
         if (positionReady && !restoringReadingPosition) positionSaveDelay.restart();
     }
@@ -117,6 +118,7 @@ ApplicationWindow {
         resolver: backend
         spelling: backend.spelling
         onCopyHtmlRequested: win.copyHtml()
+        onFormatCodeRequested: function(fenced) { editor.wrapCode(fenced); }
         onProjectionReady: win.applyReadingPosition()
         onProjectionAboutToChange: {
             win.projectionChanging = true;
@@ -512,6 +514,18 @@ ApplicationWindow {
         sequence: "Ctrl+K"
         context: Qt.WindowShortcut
         onActivated: editor.insertLink()
+    }
+
+    Shortcut {
+        sequence: "Ctrl+T"
+        context: Qt.WindowShortcut
+        onActivated: editor.wrapCode(false)
+    }
+
+    Shortcut {
+        sequence: "Ctrl+Shift+T"
+        context: Qt.WindowShortcut
+        onActivated: editor.wrapCode(true)
     }
 
     Shortcut {
@@ -992,6 +1006,14 @@ ApplicationWindow {
                                                backend.emphasisSpanAt(cursorPosition, marker));
                 }
 
+                function wrapCode(fenced) {
+                    if (win.readMode) return;
+                    presentation.forceActiveFocus();
+                    livePreview.prepareFormatting();
+                    if (fenced) EditorMutations.toggleCodeBlock(editor);
+                    else EditorMutations.toggleInlineCode(editor);
+                }
+
                 function insertLink() {
                     if (win.readMode) return;
                     presentation.forceActiveFocus();
@@ -1351,7 +1373,42 @@ ApplicationWindow {
                 onSelectionStartChanged: selectionCountDelay.restart()
                 onSelectionEndChanged: selectionCountDelay.restart()
                 onSelectedTextChanged: selectionCountDelay.restart()
-                onCursorRectangleChanged: if (!win.projectionChanging && !win.restoringReadingPosition && !livePreview.readMode) editorFlick.ensureCursorVisible()
+                // The native viewport observer latches its internal caret
+                // invisible when scrolling away. A separate item is not
+                // hidden by that private control state on a distant click.
+                cursorDelegate: Item {}
+                property bool caretOn: true
+                function restartCaret() {
+                    caretOn = true;
+                    if (activeFocus && !win.readMode && Qt.styleHints.cursorFlashTime > 0) caretBlink.restart();
+                    else caretBlink.stop();
+                }
+                onActiveFocusChanged: restartCaret()
+                onCursorRectangleChanged: {
+                    restartCaret();
+                    if (!win.projectionChanging && !win.restoringReadingPosition && !livePreview.readMode)
+                        editorFlick.ensureCursorVisible();
+                }
+                Timer {
+                    id: caretBlink
+                    interval: Math.max(1, Qt.styleHints.cursorFlashTime / 2)
+                    repeat: true
+                    running: presentation.activeFocus && !win.readMode && Qt.styleHints.cursorFlashTime > 0
+                    onTriggered: presentation.caretOn = !presentation.caretOn
+                }
+                Rectangle {
+                    objectName: "visibleEditorCaret"
+                    z: 3
+                    x: presentation.cursorRectangle.x
+                    y: presentation.cursorRectangle.y
+                    width: 1
+                    height: presentation.cursorRectangle.height
+                    color: win.textColor
+                    visible: presentation.activeFocus && !win.readMode && presentation.caretOn && livePreview.imeCursorVisible
+                        && presentation.selectionStart === presentation.selectionEnd
+                        && y + height > editorFlick.contentY - presentation.y
+                        && y < editorFlick.contentY - presentation.y + editorFlick.height
+                }
                 onLinkActivated: function(link) { if (win.readMode) Qt.openUrlExternally(link); }
                 function updateViewport() {
                     livePreview.setViewport(Math.max(0, editorFlick.contentY - y), editorFlick.height);

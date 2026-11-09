@@ -81,11 +81,96 @@ private slots:
         source->setPlainText(markdown);
         source->clearUndoRedoStacks();
         controller = std::make_unique<LivePreview>();
+        auto *quick = qvariant_cast<QQuickTextDocument *>(viewItem->property("textDocument"));
+        connect(quick, &QQuickTextDocument::textDocumentChanged, root.get(), [this, quick] {
+            view = quick->textDocument(); // Modes now retain distinct native documents.
+        });
         controller->attach(sourceItem, viewItem);
         view = qvariant_cast<QQuickTextDocument *>(viewItem->property("textDocument"))->textDocument();
         flush();
     }
     void cleanup() { controller.reset(); root.reset(); }
+    void modeSwitchesRetainEditBlocksHighlighterAndCachedRead() {
+        const QString text = QString("Ordinary paragraph with **strong** text.\n\n").repeated(800)
+            + "```cpp\nint answer = 42;\n```\n\nlast";
+        source->setPlainText(text); select(sourceItem, text.size(), text.size());
+        auto *edit = view;
+        const QTextBlock stable = view->findBlockByNumber(600);
+        const auto resets = controller->m_fullResets;
+        controller->setReadMode(true); flush();
+        auto *read = view; QVERIFY(read != edit);
+        QCOMPARE(controller->m_highlighter->document(), edit);
+        const int readRevision = read->revision();
+        for (int n = 0; n < 4; ++n) {
+            controller->setReadMode(false); flush();
+            QCOMPARE(view, edit); QCOMPARE(view->findBlockByNumber(600), stable);
+            QCOMPARE(controller->m_fullResets, resets);
+            QCOMPARE(view->toPlainText(), text);
+            controller->setReadMode(true); flush();
+            QCOMPARE(view, read); QCOMPARE(read->revision(), readRevision);
+        }
+        QTextCursor change(source); change.movePosition(QTextCursor::End); change.insertText(" changed"); flush();
+        controller->setReadMode(false); flush();
+        QCOMPARE(view, edit); QCOMPARE(view->toPlainText(), text + " changed");
+        QCOMPARE(controller->m_fullResets, resets);
+        source->undo(); flush(); QCOMPARE(view->toPlainText(), text);
+    }
+    void retainedEditImagesRefreshAfterReadChanges() {
+        QTemporaryDir directory;
+        QImage image(600, 200, QImage::Format_RGB32); image.fill(Qt::red);
+        QVERIFY(image.save(directory.filePath("image.png")));
+        ImageResolver resolver; resolver.root = directory.path(); controller->setResolver(&resolver);
+        const QString text = "first\n\n![a](image.png)\n\nlast";
+        source->setPlainText(text); select(sourceItem, text.size(), text.size());
+        auto pixelAndWidth = [&] {
+            const int at = view->toPlainText().indexOf(QChar::ObjectReplacementCharacter);
+            QTextCursor cursor(view); cursor.setPosition(at);
+            cursor.movePosition(QTextCursor::NextCharacter, QTextCursor::KeepAnchor);
+            const auto format = cursor.charFormat().toImageFormat();
+            const QImage native = qvariant_cast<QImage>(view->resource(QTextDocument::ImageResource, QUrl(format.name())));
+            return qMakePair(native.pixelColor(0, 0), format.width());
+        };
+        QCOMPARE(pixelAndWidth().first, QColor(Qt::red));
+        controller->setReadMode(true); flush();
+        viewItem->setProperty("width", 250);
+        image.fill(Qt::green); QVERIFY(image.save(directory.filePath("image.png")));
+        controller->refresh(); flush(); controller->setReadMode(false); flush();
+        QCOMPARE(pixelAndWidth().first, QColor(Qt::green));
+        QVERIFY(pixelAndWidth().second <= 250);
+        QCOMPARE(source->toPlainText(), text);
+    }
+    void autoPairsUseOneCanonicalUndoAndRespectImeAndWords() {
+        auto reset = [&](const QString &text) {
+            source->setPlainText(text); select(sourceItem, text.size(), text.size()); source->clearUndoRedoStacks();
+        };
+        reset("plain"); type("["); QCOMPARE(source->toPlainText(), QString("plain[]"));
+        type("{"); QCOMPARE(source->toPlainText(), QString("plain[{}]"));
+        QKeyEvent back(QEvent::KeyPress, Qt::Key_Backspace, Qt::NoModifier);
+        QCoreApplication::sendEvent(viewItem, &back); flush();
+        QCOMPARE(source->toPlainText(), QString("plain[]"));
+        source->undo(); flush(); QCOMPARE(source->toPlainText(), QString("plain[{}]"));
+        select(sourceItem, 7, 7);
+        type("}"); QCOMPARE(source->toPlainText(), QString("plain[{}]"));
+        QCOMPARE(sourceItem->property("cursorPosition").toInt(), 8);
+        reset("hello"); select(sourceItem, 0, 5); type("\"");
+        QCOMPARE(source->toPlainText(), QString("\"hello\""));
+        QCOMPARE(sourceItem->property("selectedText").toString(), QString("hello"));
+        source->undo(); flush(); QCOMPARE(source->toPlainText(), QString("hello")); QVERIFY(!source->isUndoAvailable());
+        reset("don"); type("'"); QCOMPARE(source->toPlainText(), QString("don'"));
+        reset("escaped \\"); type("\""); QCOMPARE(source->toPlainText(), QString("escaped \\\""));
+        reset("");
+        QInputMethodEvent preedit("x", {{QInputMethodEvent::Cursor, 0, 0, {}}});
+        QCoreApplication::sendEvent(viewItem, &preedit); flush(); QVERIFY(!controller->imeCursorVisible());
+        QInputMethodEvent commit; commit.setCommitString("[");
+        QCoreApplication::sendEvent(viewItem, &commit); flush();
+        QVERIFY(controller->imeCursorVisible()); QCOMPARE(source->toPlainText(), QString("["));
+        QCoreApplication::sendEvent(viewItem, &preedit); flush(); QVERIFY(!controller->imeCursorVisible());
+        controller->setReadMode(true); flush();
+        QVERIFY(!controller->m_composing); QVERIFY(controller->imeCursorVisible());
+        controller->setReadMode(false); flush();
+        QVERIFY(view->begin().layout()->preeditAreaText().isEmpty());
+        QCOMPARE(source->toPlainText(), QString("["));
+    }
     void nativeViewportFlagTracksDirectDocumentEdits() {
         auto *item = qobject_cast<QQuickItem *>(viewItem); QVERIFY(item);
         const QString text = QString("ordinary words\n").repeated(800).left(10000);

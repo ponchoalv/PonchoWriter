@@ -119,6 +119,8 @@ private slots:
             sourceHighlighter->setSpellingRanges(ranges);
         });
         preview = std::make_unique<LivePreview>();
+        auto *quick = qvariant_cast<QQuickTextDocument *>(viewItem->property("textDocument"));
+        connect(quick, &QQuickTextDocument::textDocumentChanged, root.get(), [this, quick] { view = quick->textDocument(); });
         preview->setSpelling(spelling.get());
         preview->attach(sourceItem, viewItem);
         view = qvariant_cast<QQuickTextDocument *>(viewItem->property("textDocument"))->textDocument();

@@ -307,6 +307,7 @@ void LivePreview::attach(QObject *sourceItem, QObject *viewItem) {
     document->setParent(viewItem);
     viewQuick->setTextDocument(document);
     m_view = document;
+    m_editDocument = document;
     m_view->setUndoRedoEnabled(false);
     m_highlighter = new MarkdownHighlighter(m_view);
     viewItem->installEventFilter(this);
@@ -324,6 +325,10 @@ void LivePreview::attach(QObject *sourceItem, QObject *viewItem) {
             this, &LivePreview::scheduleCodeBlockPanels);
     connect(viewItem, SIGNAL(widthChanged()), this, SLOT(sourceGeometryChanged()));
     sourceSelectionChanged();
+    if (m_readMode) {
+        QScopedValueRollback<bool> guard(m_guard, true);
+        switchModeDocument(true);
+    }
     rebuild();
 }
 void LivePreview::select(QObject *item, int anchor, int caret) {
@@ -448,6 +453,7 @@ void LivePreview::schedule() {
     });
 }
 void LivePreview::refresh() {
+    ++m_resourceGeneration;
     m_images.clear();
     m_sourceDirty = true; m_styleDirty = true; m_renderDirty = true;
     schedule();
@@ -463,10 +469,59 @@ void LivePreview::setReadMode(bool read) {
         return;
     // Finish native composition before replacing the presentation document.
     QGuiApplication::inputMethod()->commit();
-    m_readMode = read;
-    m_projectionKey.clear();
+    // Synthetic/cancelling input methods need not deliver a commit. Clear
+    // their preedit before parking the native Edit layout.
+    if (m_composing && m_viewItem) { QInputMethodEvent cancel; QCoreApplication::sendEvent(m_viewItem, &cancel); }
+    {
+        QScopedValueRollback<bool> guard(m_guard, true);
+        m_readMode = read;
+        // Qt's readOnly setter moves its control cursor. Deliver it inside
+        // the same selection guard as document attachment, not after ready.
+        emit readModeChanged();
+        if (!m_view) return;
+        m_projectionChanging = true;
+        emit projectionAboutToChange();
+        switchModeDocument(read);
+    }
     rebuild();
-    emit readModeChanged();
+}
+void LivePreview::switchModeDocument(bool read) {
+    auto &old = read ? m_savedEdit : m_savedRead;
+    old.text = m_viewText; old.source = m_projectionSource;
+    old.segments = m_segments; old.resources = m_resourceNames;
+    old.margins = m_panelMargins; old.endpoints = m_codeEndpoints;
+    old.groups = m_editCodeGroups; old.invalidImages = m_invalidImageSlots;
+    old.lineHeight = m_codeLineHeight; old.spacingDirty = m_codeSpacingDirty;
+    if (read && !m_readDocument) {
+        auto *document = new ResourceFreeDocument;
+        document->setParent(m_viewItem);
+        document->setUndoRedoEnabled(false);
+        document->setDefaultFont(m_view->defaultFont());
+        document->setTextWidth(m_view->textWidth());
+        m_readDocument = document;
+        connect(document->documentLayout(), &QAbstractTextDocumentLayout::documentSizeChanged,
+                this, &LivePreview::scheduleCodeBlockPanels);
+        connect(document->documentLayout(), &QAbstractTextDocumentLayout::update,
+                this, &LivePreview::scheduleCodeBlockPanels);
+    }
+    const auto &next = read ? m_savedRead : m_savedEdit;
+    m_view = read ? m_readDocument : m_editDocument;
+    m_viewText = next.text; m_segments = next.segments; m_resourceNames = next.resources;
+    m_panelMargins = next.margins; m_codeEndpoints = next.endpoints;
+    m_editCodeGroups = next.groups; m_invalidImageSlots = next.invalidImages;
+    m_codeLineHeight = next.lineHeight; m_codeSpacingDirty = next.spacingDirty;
+    m_viewSyncedSource = next.source == m_projectionSource;
+    m_renderedRead = read && !m_readStyleKey.isEmpty();
+    m_forceReset = false;
+    // Read is prepared offscreen first; Edit is already a complete native
+    // document, with its original highlighter, blocks and layout intact.
+    if (!read) {
+        // Read may have consumed a resize/theme/refresh notification. Its
+        // render-dirty bit does not validate the retained Edit resources.
+        m_renderDirty = true;
+        auto *quick = qvariant_cast<QQuickTextDocument *>(m_viewItem->property("textDocument"));
+        quick->setTextDocument(m_view);
+    }
 }
 QUrl LivePreview::resolve(const QString &path) const {
     QUrl url;
@@ -515,13 +570,15 @@ void LivePreview::clearViewResources() {
     for (const auto &name : m_resourceNames)
         m_view->addResource(QTextDocument::ImageResource, name, QVariant());
     m_resourceNames.clear();
-    m_readImagePaths.clear();
+    if (m_readMode) m_readImagePaths.clear();
 }
 void LivePreview::buildReadDocument(const QString &source) {
-    m_highlighter->setDocument(nullptr);
     // Import in a plain scratch document, not Qt Quick's resource-loading
     // document. Only sanitized preview: image names reach the visible item.
     ResourceFreeDocument rendered;
+    rendered.setLayoutEnabled(false);
+    m_view->setLayoutEnabled(false);
+    const auto restoreLayout = qScopeGuard([this] { m_view->setLayoutEnabled(true); });
     rendered.setDefaultFont(m_view->defaultFont());
     QString markdown = source;
     QHash<QString, QImage> diagrams;
@@ -625,6 +682,7 @@ void LivePreview::buildReadDocument(const QString &source) {
         m_view->addResource(QTextDocument::ImageResource, resource.first, resource.second);
         m_resourceNames.append(resource.first);
     }
+    m_view->setLayoutEnabled(true);
     m_view->markContentsDirty(0, m_view->characterCount());
 }
 void LivePreview::completeProjectionLayout() {
@@ -958,8 +1016,15 @@ void LivePreview::rebuild() {
     m_mermaid->setGeneration(QString::number(m_sourceGeneration) + QLatin1Char('|') + QString::number(m_viewItem->property("width").toInt())
                             + m_viewItem->property("previewDark").toString());
     if (m_readMode) {
-        if (!m_renderedRead || !m_viewSyncedSource || m_styleDirty || m_renderDirty || !m_invalidImageSlots.isEmpty()) {
-            emit projectionAboutToChange();
+        const QString styleKey = font.toString() + QLatin1Char('|')
+            + m_viewItem->property("width").toString() + m_viewItem->property("color").toString()
+            + m_viewItem->property("previewForeground").toString()
+            + m_viewItem->property("previewBackground").toString()
+            + m_viewItem->property("previewAccent").toString()
+            + m_viewItem->property("previewDark").toString() + QString::number(m_resourceGeneration);
+        if (!m_renderedRead || !m_viewSyncedSource || m_readGeneration != m_sourceGeneration
+            || m_readStyleKey != styleKey || !m_invalidImageSlots.isEmpty()) {
+            if (!m_projectionChanging) { m_projectionChanging = true; emit projectionAboutToChange(); }
             buildReadDocument(m_projectionSource);
             m_panelMargins.clear(); m_codeEndpoints.clear(); m_codeSpacingDirty = true;
             m_viewText = documentText(m_view);
@@ -967,12 +1032,15 @@ void LivePreview::rebuild() {
             m_styleDirty = false; m_renderDirty = false; m_forceReset = false;
             styleCodeBlocks();
             completeProjectionLayout();
-            emit projectionChanged();
+            m_readGeneration = m_sourceGeneration; m_readStyleKey = styleKey;
         }
+        auto *quick = qvariant_cast<QQuickTextDocument *>(m_viewItem->property("textDocument"));
+        if (quick->textDocument() != m_view) quick->setTextDocument(m_view);
+        updateCodeBlockPanels(); updateListMarkers();
+        finishProjectionChange();
         emit projectionReady();
         return;
     }
-    if (m_renderedRead) { m_forceReset = true; m_listStyleValid = false; }
     syncEditProjection();
     styleProjection(fontChanged);
     styleCodeBlocks();
@@ -1196,6 +1264,52 @@ void LivePreview::copySource() {
     cursor.setPosition(m_caret, QTextCursor::KeepAnchor);
     QGuiApplication::clipboard()->setText(cursor.selectedText().replace(QChar::ParagraphSeparator, QLatin1Char('\n')));
 }
+void LivePreview::prepareFormatting() {
+    if (m_readMode) return;
+    QGuiApplication::inputMethod()->commit();
+    if (m_composing && m_viewItem) { QInputMethodEvent cancel; QCoreApplication::sendEvent(m_viewItem, &cancel); }
+    prepareEdit();
+}
+bool LivePreview::autoPair(QKeyEvent *event) {
+    if (m_composing || !m_source || m_viewItem->property("overwriteMode").toBool()
+        || (event->modifiers() & (Qt::ControlModifier | Qt::MetaModifier | Qt::AltModifier))) return false;
+    const int from = qMin(m_anchor, m_caret), to = qMax(m_anchor, m_caret);
+    const QChar before = from > 0 ? m_source->characterAt(from - 1) : QChar();
+    const QChar after = to < m_source->characterCount() - 1 ? m_source->characterAt(to) : QChar();
+    const QString opens = QStringLiteral("[{'\""), closes = QStringLiteral("]}'\"");
+    auto escapedAt = [this](int position) {
+        int escapes = 0;
+        for (int p = position - 1; p >= 0 && m_source->characterAt(p) == QLatin1Char('\\'); --p) ++escapes;
+        return escapes % 2 != 0;
+    };
+    auto replace = [this](int start, int end, const QString &text, int anchor, int caret) {
+        QTextCursor edit(m_source); edit.beginEditBlock(); edit.setPosition(start);
+        edit.setPosition(end, QTextCursor::KeepAnchor); edit.insertText(text); edit.endEditBlock();
+        select(m_sourceItem, anchor, caret);
+    };
+    if (event->key() == Qt::Key_Backspace && from == to && from > 0) {
+        const int index = opens.indexOf(before);
+        if (index < 0 || after != closes[index] || escapedAt(from - 1)) return false;
+        replace(from - 1, to + 1, {}, from - 1, from - 1);
+        return true;
+    }
+    if (event->text().size() != 1) return false;
+    const QChar typed = event->text().front();
+    if (escapedAt(from)) return false;
+    if (from == to && closes.contains(typed) && after == typed) {
+        select(m_sourceItem, to + 1, to + 1);
+        return true;
+    }
+    const int index = opens.indexOf(typed);
+    if (index < 0) return false;
+    const bool quote = typed == QLatin1Char('\'') || typed == QLatin1Char('"');
+    if (from == to && ((quote && (before.isLetterOrNumber() || before == QLatin1Char('_')))
+        || after.isLetterOrNumber() || after == QLatin1Char('_'))) return false;
+    const QString selected = textRange(m_source, from, to - from);
+    replace(from, to, QString(typed) + selected + closes[index],
+        m_anchor <= m_caret ? from + 1 : to + 1, m_anchor <= m_caret ? to + 1 : from + 1);
+    return true;
+}
 bool LivePreview::eventFilter(QObject *object, QEvent *event) {
     if (object != m_viewItem)
         return QObject::eventFilter(object, event);
@@ -1212,6 +1326,11 @@ bool LivePreview::eventFilter(QObject *object, QEvent *event) {
             return true;
         }
         if (m_readMode) return QObject::eventFilter(object, event);
+        if (key->keyCombination() == QKeyCombination(Qt::ControlModifier, Qt::Key_T)
+            || key->keyCombination() == QKeyCombination(Qt::ControlModifier | Qt::ShiftModifier, Qt::Key_T)) {
+            emit formatCodeRequested(key->modifiers().testFlag(Qt::ShiftModifier));
+            return true;
+        }
         // Qt Quick can consume Undo's ShortcutOverride even with the view's
         // undo stack disabled. Always route native undo to the source item.
         if (key->matches(QKeySequence::Undo) || key->matches(QKeySequence::Redo)) {
@@ -1220,11 +1339,19 @@ bool LivePreview::eventFilter(QObject *object, QEvent *event) {
             return true;
         }
         prepareEdit();
+        if (autoPair(key)) return true;
     } else if (!m_readMode && event->type() == QEvent::InputMethod) {
         auto *input = static_cast<QInputMethodEvent *>(event);
         if (!m_composing)
             prepareEdit();
         m_composing = !input->preeditString().isEmpty();
+        bool cursorVisible = true;
+        if (m_composing) for (const auto &attribute : input->attributes())
+            if (attribute.type == QInputMethodEvent::Cursor) cursorVisible = attribute.length != 0;
+        if (cursorVisible != m_imeCursorVisible) {
+            m_imeCursorVisible = cursorVisible;
+            emit imeCursorVisibleChanged();
+        }
         if (m_spelling)
             m_spelling->setComposing(m_composing);
         if (!m_composing) {

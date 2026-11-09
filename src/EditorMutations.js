@@ -88,3 +88,74 @@ function toggleWrap(editor, marker, span) {
                      size, size + selected.length);
     }
 }
+
+// Code delimiters must be longer than literal backtick runs in the body.
+function codeDelimiter(body, minimum) {
+    var runs = body.match(/`+/g) || [];
+    var count = minimum;
+    runs.forEach(function(run) { count = Math.max(count, run.length + 1); });
+    return "`".repeat(count);
+}
+
+function unescapedAt(text, position) {
+    var count = 0;
+    while (position > 0 && text.charAt(--position) === "\\") ++count;
+    return count % 2 === 0;
+}
+
+function singleCodeSpan(text, opening, marker, body) {
+    if (!body.length || body.startsWith("`") || body.endsWith("`") || !unescapedAt(text, opening)) return false;
+    if (marker.length >= 3 && (opening === 0 || text.charAt(opening - 1) === "\n")
+        && body.indexOf("\n") >= 0) return false; // A fenced block, not an inline span.
+    return !(body.match(/`+/g) || []).some(function(run) { return run.length === marker.length; });
+}
+
+function singleCodeBlock(body, marker) {
+    return !(new RegExp("^ {0,3}`{" + marker.length + ",}[ \\t]*$", "m")).test(body);
+}
+
+function toggleInlineCode(editor) {
+    var start = editor.selectionStart, end = editor.selectionEnd;
+    var text = editor.text, body = text.slice(start, end);
+    var wrapped = body.match(/^(`+)([\s\S]*?)\1$/);
+    var left = text.slice(0, start).match(/(`+)( ?)$/);
+    var right = text.slice(end).match(/^( ?)(`+)/);
+    if (wrapped && text.charAt(start - 1) !== "`" && text.charAt(end) !== "`"
+        && singleCodeSpan(text, start, wrapped[1], wrapped[2])) {
+        body = wrapped[2];
+        if (body.startsWith(" ") && body.endsWith(" ") && body.trim().length > 0) body = body.slice(1, -1);
+        replaceRange(editor, start, end, body, 0, body.length);
+    } else if (left && right && left[1] === right[2] && left[2] === right[1]
+        && ((body.length === 0 && unescapedAt(text, start - left[0].length))
+            || singleCodeSpan(text, start - left[0].length, left[1], left[2] + body + right[1]))) {
+        replaceRange(editor, start - left[0].length, end + right[0].length, body, 0, body.length);
+    } else {
+        var marker = codeDelimiter(body, 1);
+        var pad = body.startsWith("`") || body.endsWith("`")
+            || (body.startsWith(" ") && body.endsWith(" ") && body.trim().length > 0) ? " " : "";
+        replaceRange(editor, start, end, marker + pad + body + pad + marker,
+                     marker.length + pad.length, marker.length + pad.length + body.length);
+    }
+}
+
+function toggleCodeBlock(editor) {
+    var start = editor.selectionStart, end = editor.selectionEnd;
+    var text = editor.text, body = text.slice(start, end);
+    var wrapped = body.match(/^(`{3,})[^`\n]*\n([\s\S]*?)\n\1\n?$/);
+    var left = text.slice(0, start).match(/(^|\n)(`{3,})[^`\n]*\n$/);
+    var right = text.slice(end).match(/^\n?(`{3,})(?=\n|$)/);
+    if (wrapped && (start === 0 || text.charAt(start - 1) === "\n")
+        && (end === text.length || text.charAt(end) === "\n") && singleCodeBlock(wrapped[2], wrapped[1])) {
+        replaceRange(editor, start, end, wrapped[2], 0, wrapped[2].length);
+    } else if (left && right && left[2] === right[1] && singleCodeBlock(body, left[2])) {
+        var fenceStart = start - left[0].length + left[1].length;
+        replaceRange(editor, fenceStart, end + right[0].length, body, 0, body.length);
+    } else {
+        var marker = codeDelimiter(body, 3);
+        var prefix = start > 0 && text.charAt(start - 1) !== "\n" ? "\n" : "";
+        var suffix = end < text.length && text.charAt(end) !== "\n" ? "\n" : "";
+        var opening = prefix + marker + "\n";
+        replaceRange(editor, start, end, opening + body + (body.endsWith("\n") ? "" : "\n") + marker + suffix,
+                     opening.length, opening.length + body.length);
+    }
+}

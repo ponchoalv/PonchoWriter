@@ -1,5 +1,7 @@
 # Incremental native editing and the 10,000-line check
 
+Follow-up: [retained Edit/Read documents, viewport-safe caret, pairing and code shortcuts](mode-transitions-and-code-shortcuts.md). The measurements and verification below describe the original incremental-editing checkpoint.
+
 Implemented on `feature/incremental-native-editing`, based directly on `master` at `f94d69e`. The earlier `performance/baseline-and-cached-preview` experiment remains parked: it was **not merged** into this branch.
 
 ## What changed

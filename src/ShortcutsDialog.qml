@@ -43,6 +43,8 @@ Dialog {
         { key: "Ctrl+B", desc: "Bold" },
         { key: "Ctrl+I", desc: "Italic" },
         { key: "Ctrl+Shift+X", desc: "Strikethrough" },
+        { key: "Ctrl+T", desc: "Inline code" },
+        { key: "Ctrl+Shift+T", desc: "Fenced code block" },
         { key: "Ctrl+K", desc: "Link" },
         { key: "Ctrl+Shift+C", desc: "Copy as HTML" },
         { key: "Ctrl+= / Ctrl++", desc: "Increase Text Size" },

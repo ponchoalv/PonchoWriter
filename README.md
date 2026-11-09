@@ -24,6 +24,7 @@ This is the [ponchoalv fork](https://github.com/ponchoalv/omawrite) of
 - Minimal Edit-only spelling underlines and suggestions using Sonnet Core with native macOS/Windows dictionaries or system Hunspell on Linux; no autocorrect or dictionary downloads.
 - Single-process multiwindow routing: focus an already-open file, open other files separately, and protect owned Save As targets. Native macOS file-open events and cross-platform local IPC share the same router.
 - Persistent incremental native Edit projection, resumable metadata/object patches and viewport-aware decorations/glyph rendering; [10,000-line measurement and limits](docs/incremental-native-editing.md).
+- Retained Edit/Read documents for fast return to editing, a viewport-safe caret, conservative bracket/quote pairs and [inline/fenced code shortcuts](docs/mode-transitions-and-code-shortcuts.md).
 - Edit Cmd/Ctrl-click or context **Open Link**; Read retains single-click links.
 - Lightweight selection word counts, per-file position memory, cross-platform Reveal, and selection-aware HTML copying. See the [writing guide](docs/writing-and-shortcuts.md); code-block overflow remains a [future TODO](docs/TODO.md).
 
@@ -57,7 +58,7 @@ The `F1` reference displays platform-specific key names, including Option on Mac
 - `Ctrl+F` searches the document. Use `Enter` or `Ctrl+G` for the next match and `Shift+Enter` for the previous match.
 - `Ctrl+H` opens find and replace on Linux; `Cmd+Option+F` on macOS (leaving `Cmd+H` for Hide App).
 - `Ctrl+Shift+M` (`Cmd+Shift+M` on macOS) toggles Read/Edit.
-- `Ctrl+B`, `Ctrl+I`, and `Ctrl+Shift+X` toggle bold, italic, and strikethrough Markdown. `Ctrl+K` inserts a link.
+- `Ctrl+B`, `Ctrl+I`, and `Ctrl+Shift+X` toggle bold, italic, and strikethrough Markdown. `Ctrl+K` inserts a link. `Ctrl+T` toggles inline code; `Ctrl+Shift+T` adds/removes a fenced block with fences on separate lines. On macOS use Cmd.
 - `Ctrl+=` and `Ctrl+-` change the text size, `Ctrl+0` returns to the default.
   `Ctrl+scroll` does the same.
 - `Ctrl+Shift+C` copies the rendered document as HTML, with plain text as a fallback.

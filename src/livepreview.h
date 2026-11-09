@@ -10,11 +10,13 @@
 class MarkdownHighlighter;
 class MermaidRenderer;
 class SpellingController;
+class QKeyEvent;
 
 // The backend owns source and its undo stack. This document is disposable UI.
 class LivePreview : public QObject {
     Q_OBJECT
     Q_PROPERTY(bool readMode READ readMode WRITE setReadMode NOTIFY readModeChanged)
+    Q_PROPERTY(bool imeCursorVisible READ imeCursorVisible NOTIFY imeCursorVisibleChanged)
     Q_PROPERTY(QObject *resolver READ resolver WRITE setResolver)
     Q_PROPERTY(QObject *spelling READ spelling WRITE setSpelling)
     Q_PROPERTY(QVariantList codeBlockPanels READ codeBlockPanels NOTIFY codeBlockPanelsChanged)
@@ -26,6 +28,7 @@ public:
     };
     explicit LivePreview(QObject *parent = nullptr);
     bool readMode() const { return m_readMode; }
+    bool imeCursorVisible() const { return m_imeCursorVisible; }
     void setReadMode(bool read);
     QObject *resolver() const { return m_resolver; }
     void setResolver(QObject *resolver) { m_resolver = resolver; }
@@ -38,6 +41,7 @@ public:
     Q_INVOKABLE void copySource();
     Q_INVOKABLE bool copyCodeBlock(int panelIndex);
     Q_INVOKABLE void prepareEdit();
+    Q_INVOKABLE void prepareFormatting();
     Q_INVOKABLE void setSearchHighlight(const QString &query, int currentMatchStart);
     Q_INVOKABLE QString imagePathAt(int viewPosition) const;
     Q_INVOKABLE QString imagePathAtPoint(qreal x, qreal y) const;
@@ -53,7 +57,9 @@ public:
     QVariantList listMarkers() const { return m_listMarkers; }
 signals:
     void readModeChanged();
+    void imeCursorVisibleChanged();
     void copyHtmlRequested();
+    void formatCodeRequested(bool fenced);
     void codeBlockPanelsChanged();
     void listMarkersChanged();
     void projectionAboutToChange();
@@ -74,6 +80,7 @@ private:
     QUrl resolve(const QString &path) const;
     QImage imageFor(const PreviewBlocks::Block &block);
     void buildReadDocument(const QString &source);
+    void switchModeDocument(bool read);
     void clearViewResources();
     void completeProjectionLayout();
     void recordViewChange(int position, int removed, const QString &added);
@@ -102,6 +109,7 @@ private:
     void styleEditLists();
     void updateListMarkers();
     int characterAtPoint(qreal x, qreal y) const;
+    bool autoPair(QKeyEvent *event);
     QVariantList m_listMarkers;
     quint64 m_sourceGeneration = 0;
     QFont m_listFont;
@@ -114,7 +122,20 @@ private:
     QStringList m_readCodeLanguages;
     bool m_panelsPending = false;
     QPointer<QObject> m_sourceItem, m_viewItem, m_resolver;
-    QPointer<QTextDocument> m_source, m_view;
+    QPointer<QTextDocument> m_source, m_view, m_editDocument, m_readDocument;
+    struct EditPresentation {
+        QString text, source;
+        QList<Segment> segments;
+        QList<QUrl> resources;
+        QList<QPair<QTextBlock, QPair<qreal, qreal>>> margins;
+        QList<QTextBlock> endpoints;
+        QList<QPair<int, int>> groups;
+        QList<int> invalidImages;
+        qreal lineHeight = -1;
+        bool spacingDirty = true;
+    } m_savedEdit, m_savedRead;
+    QString m_readStyleKey;
+    quint64 m_resourceGeneration = 0, m_readGeneration = 0;
     MarkdownHighlighter *m_highlighter = nullptr;
     QPointer<SpellingController> m_spelling;
     MermaidRenderer *m_mermaid = nullptr;
@@ -127,7 +148,7 @@ private:
     int m_currentMatch = -1;
     int m_anchor = 0, m_caret = 0;
     bool m_guard = false, m_pending = false, m_readMode = false;
-    bool m_composing = false;
+    bool m_composing = false, m_imeCursorVisible = true;
     // Disposable, byte- and count-bounded raster cache.
     QHash<QString, QImage> m_images;
 };

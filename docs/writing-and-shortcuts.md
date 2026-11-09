@@ -32,6 +32,8 @@ Qt normally maps a source-code `Ctrl` modifier to **Command** on macOS and `Meta
 | Bold | Cmd+B | Ctrl+B |
 | Italic | Cmd+I | Ctrl+I |
 | Strikethrough | Cmd+Shift+X | Ctrl+Shift+X |
+| Inline code | Cmd+T | Ctrl+T |
+| Fenced code block | Cmd+Shift+T | Ctrl+Shift+T |
 | Insert Markdown link | Cmd+K | Ctrl+K |
 | Copy selection as HTML (whole document if no selection) | Cmd+Shift+C | Ctrl+Shift+C |
 | Increase text size | Cmd+= or Cmd++ | Ctrl+= or Ctrl++ |
@@ -49,6 +51,12 @@ Usual cut/copy/paste/select-all keys come from Qt's text editor. There is no use
 ## Opening links
 
 In **Edit**, ordinary clicking keeps editing. **Cmd-click on macOS / Ctrl-click elsewhere** opens the link through your OS; right-click a link and choose **Open Link** for the same action. Blank space does not activate the nearest link, and image menus take priority. **Read** keeps ordinary single-click links. Native macOS pointer/context checks pass; Windows/Linux remain untested.
+
+## Code formatting and automatic pairs
+
+**Cmd/Ctrl+T** toggles inline code around the selection; **Cmd/Ctrl+Shift+T** toggles a fenced code block. Empty selections put the caret inside a new pair/block. Fences occupy separate lines, adding newlines around a mid-paragraph selection when needed. Longer backtick delimiters protect literal backticks in the body. Both are Edit-only, retain the body selection and use one canonical undo. Multiple unrelated spans/blocks are wrapped safely rather than having outer delimiters stripped.
+
+Typing `[` / `{` and straight quotes pairs them conservatively. Selections are surrounded; an existing closer is skipped; Backspace inside an empty pair deletes both. Word-interior apostrophes/escapes, paste and IME commit text are not automatically transformed. See [behavior, implementation and verification](mode-transitions-and-code-shortcuts.md).
 
 ## Existing writing behavior
 
@@ -75,6 +83,8 @@ Body paragraphs use softer, theme-aware contrast while headings retain the stron
 **Read** renders supported Markdown without an editing caret. Switching back with the book/pencil button or shortcut preserves the reading viewport and places a new caret near its center, instead of returning to the previous editing caret. Paragraphs and headings retain Edit's blank-line breathing room; wrapped lines, code lines and tight list items stay compact. Links use the same theme accent, and bold, italic and code backgrounds match Edit. Links are clickable. This uses Qt's Markdown/HTML subset, not a web browser: arbitrary web CSS/layout is not supported. Remote images are deliberately not fetched. Unsupported or unavailable visual blocks remain usable source; rendering is never a Markdown conversion on save. One canonical source document owns saving, search, formatting and undo.
 
 Edit now retains its native document during ordinary typing, updates affected parser/style regions and patches only changed visual objects. Decorations and native glyph rendering are viewport-aware for long documents. Source undo, save format and IME safeguards remain; global operations and Read import can still take document-sized work. See the [incremental editing guide and measured 10,000-line result](incremental-native-editing.md), not a blanket constant-latency promise.
+
+Mode switches now retain the native Edit document/highlighter and reuse unchanged Read content. First Read after an edit still performs conversion. An independent viewport-safe caret avoids Qt's offscreen-cursor visibility latch without disabling long-document rendering optimization. See the [mode-switch measurement and limits](mode-transitions-and-code-shortcuts.md).
 
 Try [preview-example.md](preview-example.md) for tables, images, Mermaid and fallback cases.
 

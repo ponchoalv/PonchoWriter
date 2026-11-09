@@ -367,6 +367,106 @@ private slots:
         QTRY_COMPARE(receiver.urls.size(), 3);
         QCOMPARE(source->property("text").toString(), text);
     }
+    void codeShortcutsWrapSafelyAndUseCanonicalUndo() {
+        QTemporaryDir directory; Backend backend; backend.m_recoveryPath = directory.filePath("recovery.json");
+        QQmlEngine engine; engine.rootContext()->setContextProperty("backend", &backend);
+        QQmlComponent component(&engine, QUrl::fromLocalFile(QFINDTESTDATA("../src/Main.qml")));
+        QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+        QScopedPointer<QObject> root(component.create()); auto *window = qobject_cast<QQuickWindow *>(root.data()); QVERIFY(window);
+        auto *source = root->findChild<QObject *>("sourceEditor"); auto *view = root->findChild<QQuickItem *>("previewEditor");
+        auto *projection = root->findChild<LivePreview *>(); QVERIFY(source && view && projection);
+        if (QGuiApplication::platformName() != "offscreen") QVERIFY(QTest::qWaitForWindowExposed(window));
+        const auto format = [&](const QString &text, int from, int to, bool fenced) {
+            source->setProperty("text", text); QTest::qWait(5);
+            QMetaObject::invokeMethod(source, "select", Q_ARG(int, from), Q_ARG(int, to));
+            QCoreApplication::processEvents(); view->forceActiveFocus();
+            QTest::keyClick(window, Qt::Key_T, fenced ? Qt::ControlModifier | Qt::ShiftModifier : Qt::ControlModifier);
+            QCoreApplication::processEvents(); return source->property("text").toString();
+        };
+        QCOMPARE(format("word", 0, 4, false), QString("`word`"));
+        QCOMPARE(source->property("selectedText").toString(), QString("word"));
+        QMetaObject::invokeMethod(source, "undo"); QCoreApplication::processEvents();
+        QCOMPARE(source->property("text").toString(), QString("word"));
+        QCOMPARE(format("`word`", 1, 5, false), QString("word"));
+        QCOMPARE(format("a`b", 0, 3, false), QString("``a`b``"));
+        QCOMPARE(format("`a` and `b`", 0, 11, false), QString("`` `a` and `b` ``"));
+        QCOMPARE(format("``", 0, 2, false), QString("``` `` ```"));
+        QCOMPARE(format("```foo``", 0, 8, false), QString("```` ```foo`` ````"));
+        QCOMPARE(format("`literal", 0, 8, false), QString("`` `literal ``"));
+        QCOMPARE(format("`` `literal ``", 3, 11, false), QString("`literal"));
+        QCOMPARE(format(" x ", 0, 3, false), QString("`  x  `"));
+        QCOMPARE(format("`  x  `", 2, 5, false), QString(" x "));
+        QCOMPARE(format("", 0, 0, false), QString("``"));
+        QCOMPARE(source->property("cursorPosition").toInt(), 1);
+        QCOMPARE(format("before word after", 7, 11, true), QString("before \n```\nword\n```\n after"));
+        QCOMPARE(source->property("selectedText").toString(), QString("word"));
+        QMetaObject::invokeMethod(source, "undo"); QCoreApplication::processEvents();
+        QCOMPARE(source->property("text").toString(), QString("before word after"));
+        QCOMPARE(format("a\nb\n", 0, 4, true), QString("```\na\nb\n```"));
+        QCOMPARE(format("```\na\nb\n```", 4, 8, true), QString("a\nb\n"));
+        QCOMPARE(format("``` literal", 0, 11, true), QString("````\n``` literal\n````"));
+        const QString separate = "```\na\n```\n\n```\nb\n```";
+        QCOMPARE(format(separate, 0, separate.size(), true), QString("````\n") + separate + "\n````");
+        QCOMPARE(format("", 0, 0, true), QString("```\n\n```"));
+        QCOMPARE(source->property("cursorPosition").toInt(), 4);
+        projection->setReadMode(true);
+        const QString before = source->property("text").toString(); view->forceActiveFocus();
+        QTest::keyClick(window, Qt::Key_T, Qt::ControlModifier);
+        QTest::keyClick(window, Qt::Key_T, Qt::ControlModifier | Qt::ShiftModifier);
+        QCOMPARE(source->property("text").toString(), before);
+        projection->setReadMode(false); source->setProperty("text", "word"); QTest::qWait(5);
+        source->setProperty("cursorPosition", 2); QCoreApplication::processEvents(); view->forceActiveFocus();
+        QInputMethodEvent preedit(QString::fromUtf8("に"), {{QInputMethodEvent::Cursor, 0, 0, {}}});
+        QCoreApplication::sendEvent(view, &preedit);
+        QTest::keyClick(window, Qt::Key_T, Qt::ControlModifier);
+        QVERIFY(projection->property("imeCursorVisible").toBool());
+        QCOMPARE(source->property("text").toString(), QString("wo``rd"));
+        QInputMethodEvent commit; commit.setCommitString("Z"); QCoreApplication::sendEvent(view, &commit);
+        QCoreApplication::processEvents(); QCOMPARE(source->property("text").toString(), QString("wo`Z`rd"));
+    }
+    void caretAndNativeTextSurviveDistantScrollAndModeChanges() {
+        QTemporaryDir directory; Backend backend; backend.m_recoveryPath = directory.filePath("recovery.json");
+        QQmlEngine engine; engine.rootContext()->setContextProperty("backend", &backend);
+        QQmlComponent component(&engine, QUrl::fromLocalFile(QFINDTESTDATA("../src/Main.qml")));
+        QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+        QScopedPointer<QObject> root(component.create()); auto *window = qobject_cast<QQuickWindow *>(root.data()); QVERIFY(window);
+        auto *source = root->findChild<QObject *>("sourceEditor"); auto *view = root->findChild<QQuickItem *>("previewEditor");
+        auto *scroll = root->findChild<QQuickItem *>("editorScroll"); auto *projection = root->findChild<LivePreview *>();
+        auto *caret = root->findChild<QQuickItem *>("visibleEditorCaret"); QVERIFY(source && view && scroll && projection && caret);
+        if (QGuiApplication::platformName() != "offscreen") QVERIFY(QTest::qWaitForWindowExposed(window));
+        const QString text = QString("Distant paragraph has visible native glyphs and editable words.\n\n").repeated(700);
+        source->setProperty("text", text); source->setProperty("cursorPosition", 0); QTest::qWait(50);
+        QSignalSpy visibility(window, &QQuickWindow::visibleChanged);
+        for (int n = 0; n < 4; ++n) {
+            if (projection->readMode()) projection->setReadMode(false);
+            const int position = text.indexOf("paragraph", (n % 2 ? text.size() / 4 : text.size() * 3 / 4));
+            QRectF cursor; QVERIFY(QMetaObject::invokeMethod(view, "positionToRectangle", Q_RETURN_ARG(QRectF, cursor), Q_ARG(int, position)));
+            // Old insertion point is outside the viewport before this click.
+            scroll->setProperty("contentY", qMax(qreal(0), view->y() + cursor.center().y() - scroll->height() / 2));
+            QTest::qWait(40);
+            QTest::mouseClick(window, Qt::LeftButton, Qt::NoModifier, view->mapToScene(cursor.center() + QPointF(2, 0)).toPoint());
+            QTRY_VERIFY(qAbs(source->property("cursorPosition").toInt() - position) <= 1);
+            QVERIFY(caret->isVisible()); QVERIFY(view->hasActiveFocus());
+            const QPointF caretPoint = caret->mapToScene(QPointF(0, caret->height() / 2));
+            QVERIFY(caretPoint.y() > 0 && caretPoint.y() < window->height());
+            projection->setReadMode(true); QTest::qWait(40); QVERIFY(!caret->isVisible());
+            if (QGuiApplication::platformName() != "offscreen") {
+                const QImage frame = window->grabWindow(); QVERIFY(!frame.isNull());
+                auto *doc = view->property("textDocument").value<QQuickTextDocument *>()->textDocument();
+                const int hit = doc->documentLayout()->hitTest(QPointF(20, scroll->property("contentY").toReal() - view->y() + scroll->height() / 2), Qt::FuzzyHit);
+                auto block = doc->findBlock(hit); if (block.text().isEmpty()) block = block.next(); QVERIFY(block.isValid());
+                QRectF rect; QVERIFY(QMetaObject::invokeMethod(view, "positionToRectangle", Q_RETURN_ARG(QRectF, rect), Q_ARG(int, block.position())));
+                const QPointF origin = view->mapToScene(rect.topLeft() + QPointF(2, 2));
+                const qreal dpr = window->devicePixelRatio();
+                const QRect area(int(origin.x() * dpr), int(origin.y() * dpr), int(100 * dpr), int((rect.height() - 4) * dpr));
+                QVERIFY(frame.rect().contains(area)); const QColor background = frame.pixelColor(area.topLeft());
+                int ink = 0; for (int y = area.top(); y < area.bottom(); ++y) for (int x = area.left(); x < area.right(); ++x)
+                    if (frame.pixelColor(x, y) != background) ++ink;
+                QVERIFY2(ink > 20, "Read glyphs must be painted before any further scrolling");
+            }
+        }
+        QCOMPARE(visibility.count(), 0); QCOMPARE(source->property("text").toString(), text);
+    }
     void tenThousandLineNativeTypingBenchmark() {
         if (!qEnvironmentVariableIsSet("OMAWRITE_INCREMENTAL_PERF")) QSKIP("Opt-in native 10,000-line benchmark");
         if (QGuiApplication::platformName() == "offscreen" || QGuiApplication::platformName() == "minimal") QSKIP("Requires native rendered frames");
@@ -432,6 +532,38 @@ private slots:
         }
         view->forceActiveFocus();
         QTRY_VERIFY(view->hasActiveFocus());
+        auto submittedAfter = [&](const std::function<void()> &operation, double &milliseconds) {
+            struct Frame { QElapsedTimer clock; std::atomic<bool> armed{false}, synced{false}, done{false}; qint64 ns = 0; };
+            auto frame = std::make_shared<Frame>(); QEventLoop loop;
+            const auto sync = connect(window, &QQuickWindow::afterSynchronizing, window, [frame] {
+                if (frame->armed.load()) frame->synced.store(true);
+            }, Qt::DirectConnection);
+            const QPointer<QEventLoop> safeLoop(&loop);
+            const auto swapped = connect(window, &QQuickWindow::frameSwapped, &loop, [frame, safeLoop, window] {
+                if (frame->synced.load() && !frame->done.load()) {
+                    frame->ns = frame->clock.nsecsElapsed(); frame->done.store(true);
+                    QMetaObject::invokeMethod(window, [safeLoop] { if (safeLoop) safeLoop->quit(); }, Qt::QueuedConnection);
+                }
+            }, Qt::DirectConnection);
+            QTimer timeout; timeout.setSingleShot(true); connect(&timeout, &QTimer::timeout, &loop, &QEventLoop::quit);
+            frame->clock.start(); operation();
+            QTimer::singleShot(0, &loop, [frame, window] { frame->armed.store(true); window->update(); });
+            timeout.start(30000); loop.exec(); disconnect(sync); disconnect(swapped);
+            milliseconds = double(frame->ns) / 1000000.0; return frame->done.load();
+        };
+        QJsonArray modeSamples;
+        if (qEnvironmentVariableIsSet("OMAWRITE_MODE_PERF")) {
+            auto *projection = root->findChild<LivePreview *>(); QVERIFY(projection);
+            QSignalSpy visibility(window, &QQuickWindow::visibleChanged);
+            for (int n = 0; n < 6; ++n) {
+                const bool read = n % 2 == 0; double milliseconds = 0;
+                QVERIFY(submittedAfter([&] { projection->setReadMode(read); }, milliseconds));
+                QCOMPARE(source->property("text").toString(), text);
+                if (!screenName.isEmpty()) QCOMPARE(window->screen()->name(), screenName);
+                modeSamples.append(QJsonObject{{"read", read}, {"ms", milliseconds}});
+            }
+            QCOMPARE(visibility.count(), 0);
+        }
         QJsonArray samples;
         QString expected = text;
         for (int n = 0; n < 12; ++n) {
@@ -449,23 +581,9 @@ private slots:
                 QTRY_COMPARE_WITH_TIMEOUT(view->property("cursorPosition").toInt(), insertion, 30000);
             }
             if (!screenName.isEmpty()) QCOMPARE(window->screen()->name(), screenName);
-            struct Frame { QElapsedTimer clock; std::atomic<bool> armed{false}, synced{false}, done{false}; qint64 ns = 0; };
-            auto frame = std::make_shared<Frame>(); QEventLoop loop;
-            const auto sync = connect(window, &QQuickWindow::afterSynchronizing, window, [frame] {
-                if (frame->armed.load()) frame->synced.store(true);
-            }, Qt::DirectConnection);
-            const QPointer<QEventLoop> safeLoop(&loop);
-            const auto swapped = connect(window, &QQuickWindow::frameSwapped, &loop, [frame, safeLoop, window] {
-                if (frame->synced.load() && !frame->done.load()) {
-                    frame->ns = frame->clock.nsecsElapsed(); frame->done.store(true);
-                    QMetaObject::invokeMethod(window, [safeLoop] { if (safeLoop) safeLoop->quit(); }, Qt::QueuedConnection);
-                }
-            }, Qt::DirectConnection);
-            QTimer timeout; timeout.setSingleShot(true); connect(&timeout, &QTimer::timeout, &loop, &QEventLoop::quit);
-            frame->clock.start(); QTest::keyClick(window, Qt::Key_X);
-            QTimer::singleShot(0, &loop, [frame, window] { frame->armed.store(true); window->update(); });
-            timeout.start(30000); loop.exec(); disconnect(sync); disconnect(swapped);
-            QVERIFY2(frame->done.load(), "No follow-up submitted frame within 30 seconds");
+            double milliseconds = 0;
+            QVERIFY2(submittedAfter([&] { QTest::keyClick(window, Qt::Key_X); }, milliseconds),
+                     "No follow-up submitted frame within 30 seconds");
             expected.insert(text.size() - 1 + n, 'x');
             if (source->property("text").toString() != expected) {
                 const QString actual = source->property("text").toString(); int mismatch = 0;
@@ -474,14 +592,14 @@ private slots:
                         << "actual" << actual.mid(mismatch, 80) << "expected" << expected.mid(mismatch, 80);
             }
             QCOMPARE(source->property("text").toString(), expected);
-            samples.append(double(frame->ns) / 1000000.0);
+            samples.append(milliseconds);
         }
         if (!screenName.isEmpty()) QCOMPARE(window->screen()->name(), screenName);
         QJsonObject result{{"label", qEnvironmentVariable("OMAWRITE_INCREMENTAL_PERF_LABEL")}, {"lines", text.count('\n')},
             {"bytes_utf8", text.toUtf8().size()}, {"fixture_sha256", QString::fromLatin1(QCryptographicHash::hash(text.toUtf8(), QCryptographicHash::Sha256).toHex())},
             {"screen", window->screen()->name()}, {"refresh_hz", window->screen()->refreshRate()}, {"device_pixel_ratio", window->devicePixelRatio()},
             {"font", view->property("font").value<QFont>().toString()},
-            {"typing_to_followup_frame_ms", samples},
+            {"typing_to_followup_frame_ms", samples}, {"mode_to_followup_frame_ms", modeSamples},
             {"qt", QString::fromLatin1(qVersion())}, {"platform", QGuiApplication::platformName()},
             {"scope", "Native Main.qml physical typing to marked follow-up frame submission; spelling disabled; not display latency"}};
         QFile report(qEnvironmentVariable("OMAWRITE_INCREMENTAL_PERF_OUTPUT")); QVERIFY(report.open(QIODevice::WriteOnly));

@@ -47,24 +47,23 @@ void MarkdownHighlighter::propagateCodeState() {
         return;
     m_propagatingCodeState = true;
     QTextDocument *doc = document();
-    const QSizeF pageSize = doc->pageSize();
-    const bool suspend = canSuspendLayout(doc);
-    // Coalesce TextEdit's synchronous size/repaint callbacks too. For rich
-    // documents this avoids quadratic relayout without invalid page geometry.
+    // Incremental lexer convergence must not suspend/dirty the whole native
+    // layout. Only the blocks whose outgoing lexer state changed are visited.
     QSignalBlocker layoutSignals(doc->documentLayout());
-    if (suspend)
-        doc->setPageSize(QSizeF(0, 0));
+    // Coalesce QTextDocument's internal dirty ranges too: blocking signals
+    // alone does not prevent downstream relayout per rehighlightBlock().
+    QTextCursor batch(doc); batch.beginEditBlock();
+    int first = doc->characterCount(), end = 0;
     while (m_pendingCodeBlock.isValid()) {
         const QTextBlock block = m_pendingCodeBlock;
         m_pendingCodeBlock = QTextBlock();
+        first = qMin(first, block.position());
+        end = qMax(end, block.position() + block.length());
         rehighlightBlock(block);
     }
-    if (suspend)
-        doc->setPageSize(pageSize);
+    batch.endEditBlock();
     layoutSignals.unblock();
-    doc->markContentsDirty(0, doc->characterCount());
-    if (QAbstractTextDocumentLayout *layout = doc->documentLayout())
-        layout->documentSize();
+    if (end > first) doc->markContentsDirty(first, end - first);
     m_propagatingCodeState = false;
 }
 
@@ -223,11 +222,13 @@ void MarkdownHighlighter::setSelection(int start, int end) {
         layoutSignals.emplace(doc->documentLayout());
     if (suspend)
         doc->setPageSize(QSizeF(0, 0));
+    QTextCursor batch(doc); batch.beginEditBlock();
     for (const auto &interval : changed) {
         for (QTextBlock block = doc->findBlockByNumber(interval.first);
              block.isValid() && block.blockNumber() <= interval.second; block = block.next())
             rehighlightBlock(block);
     }
+    batch.endEditBlock();
     if (suspend)
         doc->setPageSize(pageSize);
     if (layoutSignals) {
@@ -385,7 +386,7 @@ void MarkdownHighlighter::highlightBlock(const QString &text) {
         // Last among markup styles, so inline links/emphasis cannot restore
         // heading markers that should be hidden (or hide active ones).
         highlightHeadingMarkers(text);
-        const int prefix = m_listMarkers.value(currentBlock().position());
+        const int prefix = currentBlock().blockFormat().intProperty(ListPrefixProperty);
         if (prefix) {
             const int start = currentBlock().position();
             const bool active = !m_caret.isNull() && m_caret.position() >= start && m_caret.position() < start + prefix;
@@ -405,12 +406,6 @@ bool MarkdownHighlighter::searchTouchesPrefix(const QString &text, int prefixLen
     if (query.isEmpty()) return false;
     for (int start : findMatches(text, query)) if (start < prefixLength) return true;
     return false;
-}
-
-void MarkdownHighlighter::setListMarkers(const QHash<int, int> &markers) {
-    if (m_listMarkers == markers) return;
-    m_listMarkers = markers;
-    rehighlightAll();
 }
 
 void MarkdownHighlighter::setSpellingRanges(const QList<Span> &ranges) {

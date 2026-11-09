@@ -22,7 +22,7 @@ public:
     // clears the selection. Call alongside setCaret when the editor selects.
     void setSelection(int start, int end);
     void refreshFont();
-    void setListMarkers(const QHash<int, int> &markers);
+    static constexpr int ListPrefixProperty = QTextFormat::UserProperty + 101;
 
     struct Span {
         int start;
@@ -87,7 +87,6 @@ private:
     void highlightSearch(const QString &text);
     void highlightSpelling(const QString &text);
     QList<Span> m_spellingRanges;
-    QHash<int, int> m_listMarkers;
 
     bool m_darkMode = true;
     QString m_customBackground;

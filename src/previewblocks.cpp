@@ -11,14 +11,9 @@
 #include <QTextDocument>
 #include <QTextOption>
 #include <cmath>
+#include <algorithm>
 
 namespace {
-
-struct Line {
-    int start;
-    int end;
-    QString text;
-};
 
 bool allowedIndent(const QString &text) {
     int spaces = 0;
@@ -188,8 +183,8 @@ constexpr int MaxHeight = 1800;
 
 namespace PreviewBlocks {
 
-QList<Block> parse(const QString &source) {
-    QList<Line> lines;
+void Parser::reset(const QString &source) {
+    m_lines.clear(); m_records.clear(); m_length = source.size(); m_parsedLines = 0;
     for (int start = 0; start < source.size();) {
         int end = source.indexOf(QLatin1Char('\n'), start);
         if (end < 0)
@@ -197,18 +192,152 @@ QList<Block> parse(const QString &source) {
         int contentEnd = end;
         if (contentEnd > start && source.at(contentEnd - 1) == QLatin1Char('\r'))
             --contentEnd;
-        lines.append({start, contentEnd, source.mid(start, contentEnd - start)});
+        m_lines.append({start, contentEnd, source.mid(start, contentEnd - start)});
         start = end + 1;
     }
-    QList<Block> result;
-    auto append = [&](int first, int last, Kind kind, const QString &path = QString()) {
-        const int start = lines.at(first).start;
-        const int end = lines.at(last).end;
-        result.append({start, end, kind, source.mid(start, end - start), path});
+    m_offsets.fill(0, m_lines.size() + 1); m_constructs.clear();
+    State state;
+    for (int line = 0; line < m_lines.size();) {
+        auto record = scan(line, state, source);
+        if (!record.blocks.isEmpty() || !record.fences.isEmpty()) m_constructs.append(m_records.size());
+        m_records.append(record);
+    }
+    collect();
+}
+int Parser::offset(int line) const {
+    int value = 0;
+    for (int i = line + 1; i > 0; i -= i & -i) value += m_offsets[i];
+    return value;
+}
+void Parser::shiftSuffix(int line, int delta) {
+    for (int i = line + 1; i < m_offsets.size(); i += i & -i) m_offsets[i] += delta;
+}
+void Parser::collect() {
+    m_blocks.clear(); m_fences.clear();
+    for (int index : m_constructs) {
+        const auto &record = m_records[index];
+        m_blocks.append(record.blocks); m_fences.append(record.fences);
+    }
+}
+
+void Parser::edit(const QString &source, int position, int removed, int added) {
+    if (m_lines.isEmpty() || position < 0 || removed < 0 || added < 0
+        || position + removed > m_length || source.size() != m_length - removed + added) {
+        reset(source); return;
+    }
+    const auto lineAt = [this](int p) {
+        int low = 0, high = m_lines.size();
+        while (low < high) { const int mid = (low + high) / 2; if (lineStart(mid) <= p) low = mid + 1; else high = mid; }
+        return qMax(0, low - 1);
     };
-    bool htmlComment = false;
-    QString htmlTag;
-    for (int i = 0; i < lines.size();) {
+    const int first = lineAt(position), last = lineAt(position + removed);
+    auto recordIt = std::upper_bound(m_records.cbegin(), m_records.cend(), first,
+        [](int line, const Record &record) { return line < record.first; });
+    int recordAt = qMax(0, int(recordIt - m_records.cbegin()) - 2);
+    const int restart = m_records[recordAt].first;
+    const State initial = m_records[recordAt].before;
+    const int delta = added - removed;
+    const int spanStart = lineStart(first);
+    const int spanEnd = last + 1 < m_lines.size() ? lineStart(last + 1) : m_length;
+    QList<Line> replacement;
+    const int newEnd = spanEnd + delta;
+    for (int start = spanStart; start < newEnd;) {
+        int end = source.indexOf(QLatin1Char('\n'), start);
+        if (end < 0 || end > newEnd) end = newEnd;
+        int contentEnd = end;
+        if (contentEnd > start && source[contentEnd - 1] == QLatin1Char('\r')) --contentEnd;
+        replacement.append({start, contentEnd, source.mid(start, contentEnd - start)});
+        start = end + 1;
+    }
+    const int lineDelta = int(replacement.size()) - (last - first + 1);
+    if (lineDelta) {
+        // Line-number changes rebase the index once; ordinary characters use
+        // logarithmic suffix offsets and retain every unchanged row in place.
+        for (int n = 0; n < m_lines.size(); ++n) { const int d = offset(n); m_lines[n].start += d; m_lines[n].end += d; }
+        m_lines.remove(first, last - first + 1);
+        for (int n = 0; n < replacement.size(); ++n) m_lines.insert(first + n, replacement[n]);
+        m_offsets.fill(0, m_lines.size() + 1);
+    } else {
+        for (int n = 0; n < replacement.size(); ++n) {
+            auto row = replacement[n]; const int d = offset(first + n); row.start -= d; row.end -= d; m_lines[first + n] = row;
+        }
+    }
+    shiftSuffix(first + replacement.size(), delta);
+    // A non-structural edit inside a fence cannot alter its boundaries or
+    // the following parser context. Do not rescan thousands of code lines.
+    int containing = recordAt;
+    while (containing + 1 < m_records.size() && m_records[containing + 1].first <= first) ++containing;
+    const auto &owner = m_records[containing];
+    if (last == first && replacement.size() == 1 && !owner.fences.isEmpty()
+        && first > owner.first && first < owner.last) {
+        const QString opening = m_lines[owner.first].text;
+        if (!MarkdownHighlighter::closesFence(m_lines[first].text,
+                MarkdownHighlighter::openingFenceLength(opening), opening.trimmed().at(0))) {
+            for (int index : m_constructs) {
+                auto &record = m_records[index];
+                for (auto &block : record.blocks) {
+                    if (block.start > position) { block.start += delta; block.end += delta; }
+                    else if (block.end >= position) {
+                        block.end += delta; block.markdown = source.mid(block.start, block.end - block.start);
+                    }
+                }
+                for (auto &fence : record.fences) {
+                    if (fence.first > position) { fence.first += delta; fence.second += delta; }
+                    else if (fence.second >= position) fence.second += delta;
+                }
+            }
+            m_length = source.size(); m_parsedLines = 1; collect(); return;
+        }
+    }
+    int resume = int(std::upper_bound(m_records.cbegin(), m_records.cend(), last,
+        [](int line, const Record &record) { return line < record.first; }) - m_records.cbegin());
+    QList<Record> changed;
+    State state = initial; m_parsedLines = 0;
+    bool converged = false;
+    for (int line = restart; line < m_lines.size();) {
+        while (resume < m_records.size() && m_records[resume].first + lineDelta < line) ++resume;
+        if (line > first + replacement.size() && resume < m_records.size()
+            && m_records[resume].first + lineDelta == line && m_records[resume].before == state) { converged = true; break; }
+        changed.append(scan(line, state, source));
+    }
+    if (!converged) resume = m_records.size();
+    for (int index : m_constructs) if (index >= resume) {
+        auto &record = m_records[index];
+        for (auto &block : record.blocks) { block.start += delta; block.end += delta; }
+        for (auto &fence : record.fences) { fence.first += delta; fence.second += delta; }
+    }
+    if (lineDelta) for (int n = resume; n < m_records.size(); ++n) { m_records[n].first += lineDelta; m_records[n].last += lineDelta; }
+    const int replaced = resume - recordAt, recordDelta = int(changed.size()) - replaced;
+    QList<int> constructs;
+    for (int index : m_constructs) if (index < recordAt) constructs.append(index);
+    for (int n = 0; n < changed.size(); ++n) if (!changed[n].blocks.isEmpty() || !changed[n].fences.isEmpty()) constructs.append(recordAt + n);
+    for (int index : m_constructs) if (index >= resume) constructs.append(index + recordDelta);
+    m_constructs = constructs;
+    if (!recordDelta) for (int n = 0; n < changed.size(); ++n) m_records[recordAt + n] = changed[n];
+    else {
+        m_records.remove(recordAt, replaced);
+        for (int n = 0; n < changed.size(); ++n) m_records.insert(recordAt + n, changed[n]);
+    }
+    m_length = source.size(); collect();
+}
+
+Parser::Record Parser::scan(int &i, State &state, const QString &source) {
+    const auto &lines = m_lines;
+    Record record;
+    record.first = i; record.before = state;
+    const auto finish = [&] {
+        record.last = i - 1; record.after = state;
+        m_parsedLines += i - record.first;
+        return record;
+    };
+    auto append = [&](int first, int last, Kind kind, const QString &path = QString()) {
+        const int start = lineStart(first);
+        const int end = lineEnd(last);
+        record.blocks.append({start, end, kind, source.mid(start, end - start), path});
+    };
+    bool &htmlComment = state.comment;
+    QString &htmlTag = state.html;
+    {
         const QString &text = lines.at(i).text;
         // Do not project Markdown-looking lines inside literal HTML/comments.
         static const QRegularExpression htmlStart(QStringLiteral("^ {0,3}<([A-Za-z][A-Za-z0-9-]*)(?:[ >\\t/])"));
@@ -216,7 +345,7 @@ QList<Block> parse(const QString &source) {
         if (htmlComment) {
             htmlComment = !text.contains(QStringLiteral("-->"));
             ++i;
-            continue;
+            return finish();
         }
         if (!htmlTag.isEmpty()) {
             const bool literal = htmlTag == "pre" || htmlTag == "script" || htmlTag == "style" || htmlTag == "textarea";
@@ -224,12 +353,12 @@ QList<Block> parse(const QString &source) {
                 || text.contains(QStringLiteral("</") + htmlTag + QLatin1Char('>'), Qt::CaseInsensitive))
                 htmlTag.clear();
             ++i;
-            continue;
+            return finish();
         }
         if (text.trimmed().startsWith(QStringLiteral("<!--"))) {
             htmlComment = !text.contains(QStringLiteral("-->"));
             ++i;
-            continue;
+            return finish();
         }
         if (tag.hasMatch()) {
             htmlTag = tag.captured(1).toLower();
@@ -238,7 +367,7 @@ QList<Block> parse(const QString &source) {
                 || text.trimmed().endsWith(QStringLiteral("/>")) || voidTags.contains(htmlTag))
                 htmlTag.clear();
             ++i;
-            continue;
+            return finish();
         }
         const int fenceLength = MarkdownHighlighter::openingFenceLength(text);
         if (fenceLength) {
@@ -253,8 +382,9 @@ QList<Block> parse(const QString &source) {
                 --last;
             if (mermaid)
                 append(i, last, Kind::Mermaid);
+            record.fences.append({lineStart(i), lineEnd(last)});
             i = last + 1;
-            continue;
+            return finish();
         }
         // A blank/start boundary avoids turning Setext heading underlines into
         // rules. Other ambiguous container syntax stays editable Markdown.
@@ -264,13 +394,13 @@ QList<Block> parse(const QString &source) {
                 || horizontalRule.match(lines.at(i - 1).text).hasMatch())) {
             append(i, i, Kind::HorizontalRule);
             ++i;
-            continue;
+            return finish();
         }
         QString path;
         if (standaloneImage(text, &path)) {
             append(i, i, Kind::Image, path);
             ++i;
-            continue;
+            return finish();
         }
         const QStringList header = cells(text);
         if (!header.isEmpty() && i + 1 < lines.size()) {
@@ -283,12 +413,18 @@ QList<Block> parse(const QString &source) {
                     ++last;
                 append(i, last, Kind::Table);
                 i = last + 1;
-                continue;
+                return finish();
             }
         }
         ++i;
     }
-    return result;
+    return finish();
+}
+
+QList<Block> parse(const QString &source) {
+    Parser parser;
+    parser.reset(source);
+    return parser.blocks();
 }
 
 QImage renderHorizontalRule(const QFont &font, const QColor &foreground, int maxWidth) {

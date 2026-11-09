@@ -33,6 +33,8 @@ public:
     void setSpelling(QObject *spelling);
     Q_INVOKABLE void attach(QObject *sourceItem, QObject *viewItem);
     Q_INVOKABLE void refresh();
+    Q_INVOKABLE void setViewport(qreal top, qreal height);
+    Q_INVOKABLE QString linkAtPoint(qreal x, qreal y) const;
     Q_INVOKABLE void copySource();
     Q_INVOKABLE bool copyCodeBlock(int panelIndex);
     Q_INVOKABLE void prepareEdit();
@@ -56,11 +58,13 @@ signals:
     void listMarkersChanged();
     void projectionAboutToChange();
     void projectionChanged();
+    void projectionReady();
 private slots:
     void sourceSelectionChanged();
     void viewSelectionChanged();
     void viewContentsChanged(int position, int removed, int added);
     void sourceTextChanged();
+    void sourceGeometryChanged();
 private:
     bool eventFilter(QObject *object, QEvent *event) override;
     void schedule();
@@ -72,13 +76,34 @@ private:
     void buildReadDocument(const QString &source);
     void clearViewResources();
     void completeProjectionLayout();
+    void recordViewChange(int position, int removed, const QString &added);
+    void updateSourceSnapshot();
+    void syncEditProjection(bool revealBoundary = false);
+    void styleProjection(bool fontChanged);
+    PreviewBlocks::Parser m_blockParser;
+    ListPreview::Parser m_listParser;
+    int m_listDirtyFirst = 0;
+    bool m_sourceDirty = true, m_viewSyncedSource = false, m_forceReset = true;
+    bool m_styleDirty = true, m_renderDirty = true, m_renderedRead = false;
+    qreal m_viewportTop = 0, m_viewportHeight = -1;
+    QList<QPair<QTextBlock, QPair<qreal, qreal>>> m_panelMargins;
+    quint64 m_projectionPatches = 0, m_fullResets = 0; // Deterministic regression counters.
+    friend class LivePreviewTest;
     void updateCodeBlockPanels();
+    void styleCodeBlocks();
+    void finishProjectionChange();
+    bool m_projectionChanging = false;
+    QPair<int, int> visibleBlocks() const;
+    QList<QPair<int, int>> m_editCodeGroups;
+    QList<QTextBlock> m_codeEndpoints;
+    qreal m_codeLineHeight = -1;
+    bool m_codeSpacingDirty = true;
+    QList<int> m_invalidImageSlots;
     void styleEditLists();
     void updateListMarkers();
     int characterAtPoint(qreal x, qreal y) const;
     QVariantList m_listMarkers;
-    QList<ListPreview::Item> m_listItems;
-    QString m_listText;
+    quint64 m_sourceGeneration = 0;
     QFont m_listFont;
     qreal m_listIndentWidth = 0;
     bool m_listStyleValid = false;

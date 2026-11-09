@@ -117,6 +117,7 @@ ApplicationWindow {
         resolver: backend
         spelling: backend.spelling
         onCopyHtmlRequested: win.copyHtml()
+        onProjectionReady: win.applyReadingPosition()
         onProjectionAboutToChange: {
             win.projectionChanging = true;
             win.useRelativeScrollAnchor = readMode || win.lastProjectionReadMode;
@@ -162,6 +163,7 @@ ApplicationWindow {
     function showEditorMenuAt(px, py, token) {
         if (openAttachmentMenuAt(px, py)) return true;
         editorContextMenu.word = token;
+        editorContextMenu.linkUrl = win.readMode ? "" : presentation.linkUrlUnder(px, py);
         editorContextMenu.popup(px, py);
         return true;
     }
@@ -180,6 +182,16 @@ ApplicationWindow {
         parent: presentation
         property var word: ({})
         property bool hasWord: word.word !== undefined
+        property string linkUrl: ""
+        MenuItem {
+            objectName: "openLinkAction"
+            text: "Open Link"
+            visible: editorContextMenu.linkUrl.length > 0
+            enabled: visible
+            height: visible ? implicitHeight : 0
+            onTriggered: Qt.openUrlExternally(editorContextMenu.linkUrl)
+        }
+        MenuSeparator { visible: editorContextMenu.linkUrl.length > 0; height: visible ? implicitHeight : 0 }
 
         Instantiator {
             model: editorContextMenu.hasWord ? editorContextMenu.word.suggestions : []
@@ -1340,7 +1352,16 @@ ApplicationWindow {
                 onSelectionEndChanged: selectionCountDelay.restart()
                 onSelectedTextChanged: selectionCountDelay.restart()
                 onCursorRectangleChanged: if (!win.projectionChanging && !win.restoringReadingPosition && !livePreview.readMode) editorFlick.ensureCursorVisible()
-                onLinkActivated: function(link) { Qt.openUrlExternally(link); }
+                onLinkActivated: function(link) { if (win.readMode) Qt.openUrlExternally(link); }
+                function updateViewport() {
+                    livePreview.setViewport(Math.max(0, editorFlick.contentY - y), editorFlick.height);
+                }
+                onYChanged: updateViewport()
+                Connections {
+                    target: editorFlick
+                    function onContentYChanged() { presentation.updateViewport(); }
+                    function onHeightChanged() { presentation.updateViewport(); }
+                }
 
                 Repeater {
                     model: livePreview.codeBlockPanels
@@ -1402,25 +1423,22 @@ ApplicationWindow {
 
                 function linkUrlUnder(x, y) {
                     if (win.readMode) return linkAt(x, y);
-                    var caret = positionAt(x, y);
-                    for (var position = Math.max(0, caret - 1);
-                         position <= caret && position < length; ++position) {
-                        var box = positionToRectangle(position);
-                        var next = positionToRectangle(position + 1);
-                        var edge = next.y === box.y ? next.x
-                            : box.x + writerFontMetrics.averageCharacterWidth;
-                        if (y >= box.y && y < box.y + box.height
-                                && x >= Math.min(box.x, edge) && x < Math.max(box.x, edge))
-                            return backend.linkUrlAt(livePreview.sourcePosition(position));
-                    }
-                    return "";
+                    return livePreview.linkAtPoint(x, y);
                 }
 
                 MouseArea {
                     anchors.fill: parent
-                    acceptedButtons: Qt.RightButton
+                    acceptedButtons: Qt.LeftButton | Qt.RightButton
                     onPressed: (mouse) => {
-                        mouse.accepted = win.openEditorMenuAt(mouse.x, mouse.y);
+                        if (mouse.button === Qt.RightButton) {
+                            mouse.accepted = win.openEditorMenuAt(mouse.x, mouse.y);
+                            return;
+                        }
+                        var commandClick = !win.readMode && (mouse.modifiers & Qt.ControlModifier)
+                            && !(mouse.modifiers & (Qt.AltModifier | Qt.ShiftModifier | Qt.MetaModifier));
+                        var link = commandClick ? presentation.linkUrlUnder(mouse.x, mouse.y) : "";
+                        mouse.accepted = link.length > 0;
+                        if (mouse.accepted) Qt.openUrlExternally(link);
                     }
                     hoverEnabled: true
                     cursorShape: Qt.IBeamCursor
@@ -1461,6 +1479,7 @@ ApplicationWindow {
                 }
                 Component.onCompleted: Qt.callLater(function() {
                     livePreview.attach(editor, presentation);
+                    presentation.updateViewport();
                     presentation.forceActiveFocus();
                 })
             }

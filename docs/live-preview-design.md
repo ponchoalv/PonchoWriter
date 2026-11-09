@@ -11,6 +11,14 @@ This fork adds visual Markdown features without changing the document format or 
 - Unsupported or invalid syntax remains readable source. An incomplete diagram must not interrupt writing with a modal error.
 - Avoid multiline source hiding through tiny fonts or floating pictures over the editor. Such tricks break selection, hit testing, scrolling, and accessibility.
 
+## Persistent Edit projection
+
+Ordinary typing edits the visible native document in place and applies the exact range to canonical Markdown. Resumable structural/list checkpoints converge from the affected region; source/view object intervals are reconciled right-to-left, without clearing unrelated prose or replacing the highlighter. Canonical source remains the sole undo/save authority. Global resets and Read's native Markdown/HTML import remain separate full-document operations.
+
+List prefix metadata belongs to stable view block formats, not absolute source-position hashes. Code/selection styling batches layout changes. Code/list decorations are viewport-filtered; above 10,000 source characters the visible item explicitly enables public Qt Quick viewport observation because direct QTextDocument mutation bypasses TextEdit's normal large-text setter. Rich image layouts are never optimized by suspending page size to zero. Failed image placeholders retain repair state.
+
+This reduces ordinary editing work, not every source-copy/backend/global operation. See [implementation boundaries, native measurements and reproduction](incremental-native-editing.md).
+
 ## Structural blocks
 
 The initial target is pipe tables, standalone Markdown image paragraphs, and explicitly tagged Mermaid fences. Ordinary Markdown and inline formatting retain their existing behavior. Headings hide their markers outside the active heading; moving the caret into a heading reveals its Markdown.

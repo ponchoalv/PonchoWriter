@@ -1,6 +1,10 @@
 # Install OmaWrite on Windows, macOS and Linux
 
-This guide builds the **[ponchoalv/omawrite fork](https://github.com/ponchoalv/omawrite)**, branch **`feature/native-live-preview`**, not an upstream binary or an Obsidian plugin. There is no prebuilt fork installer/release promised here. Clone the feature branch explicitly; do not silently substitute the upstream/default branch.
+This guide builds the **[ponchoalv/omawrite fork](https://github.com/ponchoalv/omawrite)**, branch **`feature/incremental-native-editing`**, not an upstream binary or an Obsidian plugin. There is no prebuilt fork installer/release promised here. Clone the feature branch explicitly; do not silently substitute the upstream/default branch.
+
+## Current development branch
+
+`feature/incremental-native-editing` starts directly from `master` at `f94d69e`; the earlier performance/cache experiment remains parked and is not merged. It adds persistent native Edit projection, convergent metadata/object patches, viewport-aware rendering and Edit Cmd/Ctrl-click/context Open Link. See [measurement, verification and limits](incremental-native-editing.md): 346 offscreen checks passed, separate native macOS UI/render/10,000-line checks passed, app rebuilt. Windows/Linux remain uncompiled/runtime-untested here. The commands below select this branch; save local work before switching an existing checkout.
 
 ## Status and requirements
 
@@ -56,13 +60,13 @@ The Windows command blocks below are **Command Prompt (`cmd.exe`)**, not PowerSh
 ```bat
 mkdir "%USERPROFILE%\source"
 cd /d "%USERPROFILE%\source"
-git clone --branch feature/native-live-preview https://github.com/ponchoalv/omawrite.git
+git clone --branch feature/incremental-native-editing https://github.com/ponchoalv/omawrite.git
 cd omawrite
 git branch --show-current
 git rev-parse HEAD
 ```
 
-The branch should be `feature/native-live-preview`. Save the commit hash for bug reports. If you already have a checkout, do not clone over it or discard local work; see Updating.
+The branch should be `feature/incremental-native-editing`. Save the commit hash for bug reports. If you already have a checkout, do not clone over it or discard local work; see Updating.
 
 ### 1.3 Build with Qt Creator (recommended GUI route)
 
@@ -287,7 +291,7 @@ Choose a writable parent directory:
 ```sh
 mkdir -p ~/source
 cd ~/source
-git clone --branch feature/native-live-preview https://github.com/ponchoalv/omawrite.git
+git clone --branch feature/incremental-native-editing https://github.com/ponchoalv/omawrite.git
 cd omawrite
 git branch --show-current
 git rev-parse HEAD
@@ -361,7 +365,7 @@ Add your desktop's portal/provider packages separately. Qt Quick runtime imports
 ```sh
 mkdir -p ~/source
 cd ~/source
-git clone --branch feature/native-live-preview https://github.com/ponchoalv/omawrite.git
+git clone --branch feature/incremental-native-editing https://github.com/ponchoalv/omawrite.git
 cd omawrite
 git branch --show-current
 git rev-parse HEAD
@@ -455,11 +459,11 @@ Use a disposable document in a temporary **notes folder**, not your only copy of
    ```sh
    git status
    git branch --show-current
-   git pull --ff-only origin feature/native-live-preview
+   git pull --ff-only origin feature/incremental-native-editing
    git rev-parse HEAD
    ```
 
-   These Git commands work in CMD/PowerShell too. Run the pull only while on `feature/native-live-preview`. If the tree is dirty or the pull refuses a fast-forward, stop and resolve it deliberately; do not use reset/clean to discard work.
+   These Git commands work in CMD/PowerShell too. Run the pull only while on `feature/incremental-native-editing`. If the tree is dirty or the pull refuses a fast-forward, stop and resolve it deliberately; do not use reset/clean to discard work.
 3. Rebuild and rerun all suites with the intended kit, then repeat smoke checks. For Qt/compiler/architecture changes, **delete `.deps` and generated build/test directories**, then bootstrap with the matching environment before qmake. Never delete notes, `img/`, persistent app data or recovery files as a build-cleanup step. Recreate deployment folders from the new build; do not merge old/new DLLs or plugins.
 4. `--version` may still report **0.7.2**. Identify this fork by repository URL, branch and **`git rev-parse HEAD`**, not that version string alone. Record Qt/compiler/OS/architecture and test results with bug reports.
 

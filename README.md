@@ -23,6 +23,8 @@ This is the [ponchoalv fork](https://github.com/ponchoalv/omawrite) of
 - Optional image name/folder and Locate actions in the image context menu; current-document changes are undoable.
 - Minimal Edit-only spelling underlines and suggestions using Sonnet Core with native macOS/Windows dictionaries or system Hunspell on Linux; no autocorrect or dictionary downloads.
 - Single-process multiwindow routing: focus an already-open file, open other files separately, and protect owned Save As targets. Native macOS file-open events and cross-platform local IPC share the same router.
+- Persistent incremental native Edit projection, resumable metadata/object patches and viewport-aware decorations/glyph rendering; [10,000-line measurement and limits](docs/incremental-native-editing.md).
+- Edit Cmd/Ctrl-click or context **Open Link**; Read retains single-click links.
 - Lightweight selection word counts, per-file position memory, cross-platform Reveal, and selection-aware HTML copying. See the [writing guide](docs/writing-and-shortcuts.md); code-block overflow remains a [future TODO](docs/TODO.md).
 
 The screenshots below are from upstream, before these fork additions.

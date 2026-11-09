@@ -86,6 +86,69 @@ private slots:
         flush();
     }
     void cleanup() { controller.reset(); root.reset(); }
+    void nativeViewportFlagTracksDirectDocumentEdits() {
+        auto *item = qobject_cast<QQuickItem *>(viewItem); QVERIFY(item);
+        const QString text = QString("ordinary words\n").repeated(800).left(10000);
+        source->setPlainText(text); select(sourceItem, text.size(), text.size());
+        QVERIFY(!item->flags().testFlag(QQuickItem::ItemObservesViewport));
+        type("x");
+        QVERIFY(item->flags().testFlag(QQuickItem::ItemObservesViewport));
+        QCOMPARE(view->toPlainText(), text + "x");
+        controller->setReadMode(true); flush();
+        QVERIFY(item->flags().testFlag(QQuickItem::ItemObservesViewport));
+        controller->setReadMode(false); flush();
+        source->setPlainText("small again"); flush();
+        QVERIFY(!item->flags().testFlag(QQuickItem::ItemObservesViewport));
+    }
+    void incrementalEditsKeepNativeBlocksAndConverge() {
+        QString text;
+        for (int n = 0; n < 2000; ++n) text += QString("Paragraph %1 with words.\n\n").arg(n);
+        text += "```cpp\n" + QString("int value = 1;\n").repeated(1200) + "```\n\nlast\n";
+        source->setPlainText(text); select(sourceItem, 4, 4); source->clearUndoRedoStacks();
+        const auto preserved = view->findBlockByNumber(3000);
+        const auto resets = controller->m_fullResets;
+        const auto patches = controller->m_projectionPatches;
+        type("abc");
+        QCOMPARE(controller->m_fullResets, resets); QCOMPARE(controller->m_projectionPatches, patches);
+        QCOMPARE(preserved, view->findBlockByNumber(3000));
+        QVERIFY(controller->m_blockParser.parsedLines() < 10);
+        QVERIFY(controller->m_listParser.parsedLines < 10);
+        QCOMPARE(view->toPlainText(), source->toPlainText());
+        source->undo(); flush(); QCOMPARE(source->toPlainText(), text); QCOMPARE(view->toPlainText(), text);
+        QCOMPARE(controller->m_fullResets, resets);
+        const auto patchesAfterUndo = controller->m_projectionPatches;
+        const int code = text.indexOf("value"); select(sourceItem, code, code); type("x");
+        QCOMPARE(controller->m_blockParser.parsedLines(), 1);
+        QVERIFY(controller->m_listParser.parsedLines < 10);
+        QCOMPARE(controller->m_fullResets, resets); QCOMPARE(controller->m_projectionPatches, patchesAfterUndo);
+        QCOMPARE(view->toPlainText(), source->toPlainText());
+    }
+    void incrementalListsMatchFreshParsingAndViewportIsBounded() {
+        QString text;
+        for (int n = 0; n < 1000; ++n) text += QString("1. item %1\n   continuation\n").arg(n);
+        text += "\nlast\n";
+        source->setPlainText(text); select(sourceItem, 4, 4);
+        const QStringList edits = {"x", "\n- nested\n", "\n\n", "```\n", "<!--\n", "-->\n", "1. "};
+        for (int n = 0; n < edits.size(); ++n) {
+            const int at = qMin(4 + n * 19, int(source->toPlainText().size()));
+            select(sourceItem, at, at); type(edits[n]);
+            const auto fresh = ListPreview::parse(view->toPlainText());
+            QCOMPARE(controller->m_listParser.items.size(), fresh.size());
+            for (int i = 0; i < fresh.size(); ++i) {
+                const auto a = controller->m_listParser.items[i], b = fresh[i];
+                QCOMPARE(a.block, b.block); QCOMPARE(a.prefix, b.prefix); QCOMPARE(a.depth, b.depth); QCOMPARE(a.marker, b.marker);
+            }
+        }
+        source->setPlainText(text); select(sourceItem, 4, 4);
+        controller->setViewport(0, 300); flush();
+        QVERIFY(controller->listMarkers().size() < 30);
+        QVERIFY(!controller->listMarkers().isEmpty());
+        const auto first = controller->listMarkers().first().toMap().value("start").toInt();
+        controller->setViewport(view->documentLayout()->documentSize().height() - 600, 300); flush();
+        QVERIFY(controller->listMarkers().size() < 30);
+        QVERIFY(!controller->listMarkers().isEmpty());
+        QVERIFY(controller->listMarkers().first().toMap().value("start").toInt() > first);
+    }
     void listMarkersKeepHangingAlignmentAndSource() {
         viewItem->setProperty("width", 260);
         const QString text = "- alpha " + QString("words ").repeated(18)

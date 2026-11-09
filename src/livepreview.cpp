@@ -24,6 +24,7 @@
 #include <QTimer>
 #include <algorithm>
 #include <cmath>
+#include <limits>
 
 namespace {
 constexpr qsizetype MaxProjectionBytes = 32 * 1024 * 1024;
@@ -35,6 +36,26 @@ class ResourceFreeDocument : public QTextDocument {
 protected:
     QVariant loadResource(int, const QUrl &) override { return {}; }
 };
+QList<LivePreview::Segment> mappedSegments(const QList<QPair<int, int>> &objects, int length) {
+    QList<LivePreview::Segment> result;
+    int source = 0, view = 0;
+    for (const auto &object : objects) {
+        if (object.first > source) {
+            result.append({source, object.first, view, view + object.first - source, false});
+            view += object.first - source;
+        }
+        result.append({object.first, object.second, view, view + 1, true});
+        source = object.second; ++view;
+    }
+    result.append({source, length, view, view + length - source, false});
+    return result;
+}
+QString textRange(const QTextDocument *document, int from, int length) {
+    QTextCursor cursor(const_cast<QTextDocument *>(document));
+    cursor.setPosition(qBound(0, from, document->characterCount() - 1));
+    cursor.setPosition(qBound(cursor.position(), from + length, document->characterCount() - 1), QTextCursor::KeepAnchor);
+    return cursor.selectedText().replace(QChar::ParagraphSeparator, QLatin1Char('\n'));
+}
 QColor strongForeground(QObject *view) {
     const QColor foreground = view->property("previewForeground").value<QColor>();
     return foreground.isValid() ? foreground : view->property("color").value<QColor>();
@@ -301,7 +322,7 @@ void LivePreview::attach(QObject *sourceItem, QObject *viewItem) {
             this, &LivePreview::scheduleCodeBlockPanels);
     connect(m_view->documentLayout(), &QAbstractTextDocumentLayout::update,
             this, &LivePreview::scheduleCodeBlockPanels);
-    connect(viewItem, SIGNAL(widthChanged()), this, SLOT(sourceTextChanged()));
+    connect(viewItem, SIGNAL(widthChanged()), this, SLOT(sourceGeometryChanged()));
     sourceSelectionChanged();
     rebuild();
 }
@@ -332,35 +353,61 @@ void LivePreview::viewSelectionChanged() {
     schedule();
 }
 void LivePreview::sourceTextChanged() {
-    if (!m_guard)
-        schedule();
+    if (!m_guard) { m_sourceDirty = true; schedule(); }
+}
+void LivePreview::sourceGeometryChanged() {
+    m_renderDirty = true;
+    schedule();
+}
+void LivePreview::setViewport(qreal top, qreal height) {
+    if (!std::isfinite(top) || !std::isfinite(height) || height < 0) return;
+    if (m_viewportTop == top && m_viewportHeight == height) return;
+    m_viewportTop = top; m_viewportHeight = height;
+    scheduleCodeBlockPanels();
+}
+void LivePreview::recordViewChange(int position, int removed, const QString &added) {
+    const int first = m_view->findBlock(qMin(position, m_view->characterCount() - 1)).blockNumber();
+    m_listParser.splice(first, m_viewText.mid(position, removed).count(QLatin1Char('\n')) + 1,
+                        added.count(QLatin1Char('\n')) + 1);
+    m_listDirtyFirst = qMin(m_listDirtyFirst, first);
+    m_viewText.replace(position, removed, added);
+    if (added.contains(QLatin1Char('\n')) || removed > 0) {
+        m_codeSpacingDirty = true;
+        // Split native paragraphs inherit the old fence's spacing. Track
+        // those new blocks too, so styling can normalize non-boundaries.
+        for (auto b = m_view->findBlockByNumber(first); b.isValid()
+             && b.blockNumber() <= first + added.count(QLatin1Char('\n')); b = b.next()) {
+            const auto f = b.blockFormat();
+            if ((f.topMargin() || f.bottomMargin()) && std::none_of(m_panelMargins.cbegin(), m_panelMargins.cend(),
+                [&](const auto &entry) { return entry.first == b; })) m_panelMargins.append({b, {f.topMargin(), f.bottomMargin()}});
+        }
+    }
 }
 void LivePreview::viewContentsChanged(int position, int removed, int addedCount) {
     if (m_guard || m_readMode || !m_source || !m_view)
         return;
-    const QString next = documentText(m_view);
-    if (next == m_viewText)
-        return; // syntax highlighting/typography is not an edit
+    const QString added = textRange(m_view, position, addedCount);
+    if (m_viewText.mid(position, removed) == added)
+        return; // Native formatting notifications are not source edits.
     // Use Qt's actual edit range, not a text diff: repeated characters and
     // NBSP must not move an edit to a different source position.
     const int prefix = qBound(0, position, int(m_viewText.size()));
     const int oldEnd = qBound(prefix, position + removed, int(m_viewText.size()));
     const int from = sourcePosition(prefix);
     const int to = sourcePosition(oldEnd);
-    const QString added = next.mid(position, qMax(0, qMin(addedCount, int(next.size()) - position)));
     for (const auto &segment : m_segments) {
         if (segment.object && from < segment.sourceEnd && to > segment.sourceStart) {
             // A non-keyboard edit (e.g. an accessibility command or drop) may
             // bypass prepareEdit. Reject ambiguous object deletion, never turn
             // removal of one image glyph into removal of its Markdown block.
-            m_projectionKey.clear();
+            m_forceReset = true; m_viewSyncedSource = false;
             schedule();
             return;
         }
     }
     // Never accept a pasted/dragged rich-text object as source Markdown.
     if (added.contains(QChar::ObjectReplacementCharacter)) {
-        m_projectionKey.clear();
+        m_forceReset = true; m_viewSyncedSource = false;
         schedule();
         return;
     }
@@ -372,23 +419,20 @@ void LivePreview::viewContentsChanged(int position, int removed, int addedCount)
         cursor.insertText(added);
         m_anchor = m_caret = from + added.size();
         select(m_sourceItem, m_anchor, m_caret);
-        m_viewText = next;
+        recordViewChange(prefix, oldEnd - prefix, added);
     }
-    // The edited range is identity text (object-boundary edits are revealed
-    // before native input). Update the old map immediately, including during
-    // composition, when rebuilding the presentation is forbidden.
+    // Native input already changed the persistent presentation. Only canonical
+    // text, bounded object mapping and resumable parser metadata need updating.
     const int delta = added.size() - (to - from);
-    for (auto &segment : m_segments) {
-        if (segment.sourceStart > from) {
-            segment.sourceStart += delta;
-            segment.viewStart += delta;
-        }
-        if (segment.sourceEnd >= to) {
-            segment.sourceEnd += delta;
-            segment.viewEnd += delta;
-        }
+    m_projectionSource.replace(from, to - from, added); ++m_sourceGeneration;
+    m_blockParser.edit(m_projectionSource, from, to - from, added.size());
+    QList<QPair<int, int>> objects;
+    for (const auto &segment : m_segments) if (segment.object) {
+        const int shift = segment.sourceStart >= to ? delta : 0;
+        objects.append({segment.sourceStart + shift, segment.sourceEnd + shift});
     }
-    m_projectionKey.clear();
+    m_segments = mappedSegments(objects, m_projectionSource.size());
+    m_sourceDirty = false; m_viewSyncedSource = true;
     schedule();
 }
 void LivePreview::schedule() {
@@ -405,7 +449,7 @@ void LivePreview::schedule() {
 }
 void LivePreview::refresh() {
     m_images.clear();
-    m_projectionKey.clear();
+    m_sourceDirty = true; m_styleDirty = true; m_renderDirty = true;
     schedule();
 }
 void LivePreview::setSearchHighlight(const QString &query, int currentMatchStart) {
@@ -455,8 +499,11 @@ QImage LivePreview::imageFor(const PreviewBlocks::Block &block) {
         qsizetype bytes = image.sizeInBytes();
         for (const auto &cached : m_images)
             bytes += cached.sizeInBytes();
-        if (m_images.size() >= 32 || bytes > MaxProjectionBytes)
-            m_images.clear();
+        // Retain the entire allowed projection working set (up to 64).
+        // Clearing at 32 used to rerender every object on every caret move.
+        while (!m_images.isEmpty() && (m_images.size() >= MaxProjectionObjects || bytes > MaxProjectionBytes)) {
+            auto victim = m_images.begin(); bytes -= victim.value().sizeInBytes(); m_images.erase(victim);
+        }
         if (image.sizeInBytes() <= MaxProjectionBytes)
             m_images.insert(key, image);
     }
@@ -478,7 +525,7 @@ void LivePreview::buildReadDocument(const QString &source) {
     rendered.setDefaultFont(m_view->defaultFont());
     QString markdown = source;
     QHash<QString, QImage> diagrams;
-    const auto blocks = PreviewBlocks::parse(source);
+    const auto &blocks = m_blockParser.blocks();
     qsizetype diagramBytes = 0;
     for (auto it = blocks.crbegin(); it != blocks.crend(); ++it) {
         if (it->kind != PreviewBlocks::Kind::Mermaid
@@ -581,79 +628,82 @@ void LivePreview::buildReadDocument(const QString &source) {
     m_view->markContentsDirty(0, m_view->characterCount());
 }
 void LivePreview::completeProjectionLayout() {
-    if (!m_view)
-        return;
-    QAbstractTextDocumentLayout *layout = m_view->documentLayout();
-    layout->documentSize();
-    QList<int> invalidImages;
-    for (QTextBlock block = m_view->begin(); block.isValid(); block = block.next()) {
-        for (auto it = block.begin(); !it.atEnd(); ++it) {
-            const QTextFragment fragment = it.fragment();
-            if (!fragment.isValid() || !fragment.charFormat().isImageFormat())
-                continue;
-            // documentSize() alone can leave later blocks lazily laid out.
-            // Complete each object-containing block on the GUI thread before
-            // Qt Quick's render thread calls QTextLine::ascent() for it.
-            layout->blockBoundingRect(block);
-            const QTextLayout *textLayout = block.layout();
-            const QString text = fragment.text();
-            for (int i = 0; i < text.size(); ++i) {
-                if (text.at(i) != QChar::ObjectReplacementCharacter)
-                    continue;
-                const int position = fragment.position() + i;
-                if (!textLayout || !textLayout->lineForTextPosition(position - block.position()).isValid())
-                    invalidImages.append(position);
+    if (!m_view) return;
+    auto *layout = m_view->documentLayout();
+    QList<int> positions, invalidImages;
+    if (!m_readMode) {
+        // The bounded map identifies every Edit object: never scan all text
+        // fragments to rediscover them after a one-character edit.
+        for (const auto &s : m_segments) if (s.object) positions.append(s.viewStart);
+    } else {
+        layout->documentSize(); // Read import is an explicit whole-document operation.
+        for (auto block = m_view->begin(); block.isValid(); block = block.next())
+            for (auto it = block.begin(); !it.atEnd(); ++it) {
+                const auto fragment = it.fragment();
+                if (fragment.isValid() && fragment.charFormat().isImageFormat())
+                    for (int i = 0; i < fragment.length(); ++i)
+                        if (fragment.text()[i] == QChar::ObjectReplacementCharacter) positions.append(fragment.position() + i);
             }
-        }
+    }
+    for (int position : positions) {
+        if (m_view->characterAt(position) != QChar::ObjectReplacementCharacter) { invalidImages.append(position); continue; }
+        const auto block = m_view->findBlock(position);
+        layout->blockBoundingRect(block);
+        const auto *textLayout = block.layout();
+        if (!textLayout || !textLayout->lineForTextPosition(position - block.position()).isValid()) invalidImages.append(position);
     }
     // Invalid layout must not reach QQuickTextNodeEngine. Keep a one-character
     // placeholder so the source/view mapping remains unchanged and recoverable.
     for (int position : invalidImages) {
+        if (m_view->characterAt(position) == QChar(0x25a1)) continue;
         QTextCursor cursor(m_view);
         cursor.setPosition(position);
         cursor.setPosition(position + 1, QTextCursor::KeepAnchor);
         cursor.insertText(QString(QChar(0x25a1)), QTextCharFormat());
     }
-    if (!invalidImages.isEmpty())
-        layout->documentSize();
-    m_viewText = documentText(m_view);
-    updateCodeBlockPanels();
-    updateListMarkers();
+    m_invalidImageSlots = invalidImages;
+    for (int position : invalidImages) if (position >= m_viewText.size() || m_viewText.at(position) != QChar(0x25a1)) recordViewChange(position, 1, QString(QChar(0x25a1)));
+    scheduleCodeBlockPanels();
 }
 void LivePreview::styleEditLists() {
-    const bool textChanged = m_listText != m_viewText;
-    if (!textChanged && m_listStyleValid && m_listFont == m_view->defaultFont()
-        && m_listIndentWidth == m_view->indentWidth()) return;
-    if (textChanged) { m_listItems = ListPreview::parse(m_viewText); m_listText = m_viewText; }
-    m_listFont = m_view->defaultFont();
-    m_listIndentWidth = m_view->indentWidth();
-    m_listStyleValid = true;
+    const bool global = !m_listStyleValid || m_listFont != m_view->defaultFont()
+        || m_listIndentWidth != m_view->indentWidth();
+    if (!global && m_listDirtyFirst == std::numeric_limits<int>::max()) return;
+    if (!m_listStyleValid) m_listParser.reset(m_view);
+    else m_listParser.update(m_view, qMin(m_listDirtyFirst, m_view->blockCount() - 1));
+    m_listFont = m_view->defaultFont(); m_listIndentWidth = m_view->indentWidth(); m_listStyleValid = true;
+    m_listDirtyFirst = std::numeric_limits<int>::max();
+    const int first = global ? 0 : m_listParser.changedFirst;
+    const int last = global ? m_view->blockCount() - 1 : m_listParser.changedLast;
     QHash<int, ListPreview::Item> items;
-    QHash<int, int> markers;
-    for (const auto &item : m_listItems) {
-        items.insert(item.block, item);
-        if (!item.marker.isEmpty()) markers.insert(m_view->findBlockByNumber(item.block).position(), item.prefix);
-    }
-    m_highlighter->setListMarkers(markers);
+    const auto &listItems = m_listParser.items;
+    auto begin = std::lower_bound(listItems.cbegin(), listItems.cend(), first, [](const auto &item, int block) { return item.block < block; });
+    for (auto it = begin; it != listItems.cend() && it->block <= last; ++it) items.insert(it->block, *it);
     const QFontMetricsF metrics(m_view->defaultFont());
     auto *layout = m_view->documentLayout();
     QSignalBlocker blocked(layout);
     QTextCursor batch(m_view);
     batch.beginEditBlock();
-    bool changed = false;
-    for (auto block = m_view->begin(); block.isValid(); block = block.next()) {
+    QList<QTextBlock> changed;
+    for (auto block = m_view->findBlockByNumber(first); block.isValid() && block.blockNumber() <= last; block = block.next()) {
         const auto it = items.constFind(block.blockNumber());
         const qreal margin = it == items.cend() ? 0 : m_view->indentWidth() * it->depth;
         const qreal indent = it == items.cend() ? 0 : -metrics.horizontalAdvance(block.text().left(it->prefix));
         auto format = block.blockFormat();
-        if (format.leftMargin() == margin && format.textIndent() == indent) continue;
+        const int prefix = it == items.cend() || it->marker.isEmpty() ? 0 : it->prefix;
+        if (format.leftMargin() == margin && format.textIndent() == indent
+            && format.intProperty(MarkdownHighlighter::ListPrefixProperty) == prefix) continue;
         format.setLeftMargin(margin); format.setTextIndent(indent);
+        format.setProperty(MarkdownHighlighter::ListPrefixProperty, prefix);
         QTextCursor(block).setBlockFormat(format);
-        changed = true;
+        changed.append(block);
     }
     batch.endEditBlock();
     blocked.unblock();
-    if (changed) m_view->markContentsDirty(0, m_view->characterCount());
+    for (const auto &block : changed) {
+        m_highlighter->rehighlightBlock(block);
+        m_view->markContentsDirty(block.position(), block.length());
+    }
 }
 void LivePreview::updateListMarkers() {
     if (!m_view || !m_viewItem || m_view->pageSize() == QSizeF(0, 0)) return;
@@ -668,7 +718,12 @@ void LivePreview::updateListMarkers() {
         if (alignment == Qt::AlignVCenter) top += spare / 2;
         else if (alignment == Qt::AlignBottom) top += spare;
         const QFontMetricsF metrics(m_view->defaultFont());
-        for (const auto &item : m_listItems) {
+        const auto visible = visibleBlocks();
+        const auto &listItems = m_listParser.items;
+        auto begin = std::lower_bound(listItems.cbegin(), listItems.cend(), visible.first,
+            [](const auto &item, int block) { return item.block < block; });
+        for (auto it = begin; it != listItems.cend() && it->block <= visible.second; ++it) {
+            const auto &item = *it;
             if (item.marker.isEmpty()) continue;
             const auto block = m_view->findBlockByNumber(item.block);
             const auto text = block.text();
@@ -701,38 +756,30 @@ void LivePreview::scheduleCodeBlockPanels() {
         if (!m_guard) { updateCodeBlockPanels(); updateListMarkers(); }
     });
 }
-void LivePreview::updateCodeBlockPanels() {
-    if (!m_view || !m_viewItem) return;
-    // Keep the last geometry during transient layout suspension; do not let
-    // spacing edits recreate partial lines while the document cannot lay out.
-    if (m_view->pageSize() == QSizeF(0, 0)) return;
+void LivePreview::styleCodeBlocks() {
+    if (!m_view || m_view->pageSize() == QSizeF(0, 0)) return;
     QList<QPair<int, int>> groups = m_readCodeBlocks;
-    if (!m_readMode) {
-        groups.clear();
-        // Highlighting can temporarily reset QTextBlock::userState while a
-        // caret/selection change restyles the document. Decorations must follow
-        // the visible text, not that deferred syntax-highlighter lifecycle.
-        int first = -1, length = 0;
-        QChar marker;
-        for (auto block = m_view->begin(); block.isValid(); block = block.next()) {
-            const QString text = block.text();
-            if (first < 0) {
-                length = MarkdownHighlighter::openingFenceLength(text);
-                if (!length) continue;
-                first = block.blockNumber();
-                marker = text.trimmed().front();
-            } else if (MarkdownHighlighter::closesFence(text, length, marker)) {
-                groups.append({first, block.blockNumber()});
-                first = -1;
-            }
-            if (first >= 0 && !block.next().isValid())
-                groups.append({first, block.blockNumber()});
-        }
+    if (!m_readMode) groups.clear();
+    if (!m_readMode) for (const auto &fence : m_blockParser.fences()) {
+        bool collapsed = false;
+        for (const auto &s : m_segments) if (s.object && fence.first >= s.sourceStart && fence.first < s.sourceEnd) { collapsed = true; break; }
+        if (collapsed) continue;
+        const auto first = m_view->findBlock(viewPosition(fence.first));
+        auto last = m_view->findBlock(viewPosition(fence.second));
+        if (!first.isValid() || !last.isValid()) continue;
+        const QString opening = first.text().trimmed();
+        if (fence.second >= m_projectionSource.size() - 1 && !opening.isEmpty()
+            && !MarkdownHighlighter::closesFence(last.text(), MarkdownHighlighter::openingFenceLength(first.text()), opening.at(0))) last = m_view->lastBlock();
+        groups.append({first.blockNumber(), last.blockNumber()});
     }
+    QList<QTextBlock> endpoints;
+    for (const auto &group : groups) { endpoints.append(m_view->findBlockByNumber(group.first)); endpoints.append(m_view->findBlockByNumber(group.second)); }
     const qreal lineHeight = QFontMetricsF(qvariant_cast<QFont>(m_viewItem->property("font"))).height();
+    if (!m_codeSpacingDirty && endpoints == m_codeEndpoints && lineHeight == m_codeLineHeight) { m_editCodeGroups = groups; return; }
+    m_codeSpacingDirty = false; m_codeEndpoints = endpoints; m_codeLineHeight = lineHeight;
+    m_editCodeGroups = groups;
     const qreal paddingY = std::ceil(lineHeight / 2);
     const qreal paddingTop = paddingY + 24; // Stable space for the hover toolbar.
-    const qreal paddingX = std::ceil(lineHeight * 0.75);
     const qreal gap = std::ceil(lineHeight / 3);
     // Reserve visual-only paragraph space so padded decorations cannot cover
     // neighboring prose or each other. The Markdown and its undo stay untouched.
@@ -754,29 +801,56 @@ void LivePreview::updateCodeBlockPanels() {
         m_view->rootFrame()->setFrameFormat(frame);
         spacingChanged = true;
     }
+    decltype(m_panelMargins) wanted;
+    QHash<int, int> indexes;
     for (int i = 0; i < groups.size(); ++i) {
         const auto &group = groups.at(i);
-        const bool previousCode = i > 0 && groups.at(i - 1).second + 1 == group.first;
-        const bool nextCode = i + 1 < groups.size() && group.second + 1 == groups.at(i + 1).first;
         for (bool first : {true, false}) {
             const auto block = m_view->findBlockByNumber(first ? group.first : group.second);
-            if (!block.isValid()) continue;
-            auto format = block.blockFormat();
-            const qreal space = (first ? paddingTop : paddingY) + gap
-                + ((first ? previousCode : nextCode) ? (first ? paddingY : paddingTop) : 0);
-            if ((first ? format.topMargin() : format.bottomMargin()) >= space) continue;
-            if (first) format.setTopMargin(space);
-            else format.setBottomMargin(space);
-            QTextCursor cursor(block);
-            cursor.setBlockFormat(format);
-            spacingChanged = true;
+            const bool adjacent = first ? i > 0 && groups[i - 1].second + 1 == group.first
+                : i + 1 < groups.size() && group.second + 1 == groups[i + 1].first;
+            const qreal space = (first ? paddingTop : paddingY) + gap + (adjacent ? (first ? paddingY : paddingTop) : 0);
+            if (!indexes.contains(block.blockNumber())) { indexes.insert(block.blockNumber(), wanted.size()); wanted.append({block, {0, 0}}); }
+            auto &margins = wanted[indexes.value(block.blockNumber())].second;
+            (first ? margins.first : margins.second) = space;
         }
     }
-    batch.endEditBlock();
-    layoutSignals.unblock();
-    if (spacingChanged)
-        m_view->markContentsDirty(0, m_view->characterCount());
-    layout->documentSize();
+    auto changedMargins = wanted;
+    for (const auto &old : m_panelMargins) if (old.first.isValid() && !indexes.contains(old.first.blockNumber()))
+        changedMargins.append({old.first, {0, 0}});
+    int dirtyFirst = m_view->characterCount(), dirtyEnd = 0;
+    for (const auto &entry : changedMargins) {
+        if (!entry.first.isValid()) continue;
+        auto format = entry.first.blockFormat();
+        if (format.topMargin() == entry.second.first && format.bottomMargin() == entry.second.second) continue;
+        format.setTopMargin(entry.second.first); format.setBottomMargin(entry.second.second);
+        QTextCursor(entry.first).setBlockFormat(format);
+        dirtyFirst = qMin(dirtyFirst, entry.first.position());
+        dirtyEnd = qMax(dirtyEnd, entry.first.position() + entry.first.length());
+    }
+    m_panelMargins = wanted;
+    batch.endEditBlock(); layoutSignals.unblock();
+    if (spacingChanged) m_view->markContentsDirty(0, m_view->characterCount());
+    else if (dirtyEnd > dirtyFirst) m_view->markContentsDirty(dirtyFirst, dirtyEnd - dirtyFirst);
+}
+QPair<int, int> LivePreview::visibleBlocks() const {
+    if (m_viewportHeight < 0) return {0, m_view->blockCount() - 1};
+    const qreal overscan = m_viewportHeight / 2 + 128;
+    const qreal top = m_viewItem->property("topPadding").toReal();
+    auto *layout = m_view->documentLayout();
+    const int a = layout->hitTest(QPointF(m_view->documentMargin(), qMax(qreal(0), m_viewportTop - top - overscan)), Qt::FuzzyHit);
+    const int b = layout->hitTest(QPointF(m_view->documentMargin(), m_viewportTop - top + m_viewportHeight + overscan), Qt::FuzzyHit);
+    return {a < 0 ? 0 : m_view->findBlock(a).blockNumber(), b < 0 ? m_view->blockCount() - 1 : m_view->findBlock(b).blockNumber()};
+}
+void LivePreview::updateCodeBlockPanels() {
+    if (!m_view || !m_viewItem || m_view->pageSize() == QSizeF(0, 0)
+        || (!m_readMode && !m_viewSyncedSource)) return;
+    const auto &groups = m_readMode ? m_readCodeBlocks : m_editCodeGroups;
+    const qreal lineHeight = QFontMetricsF(qvariant_cast<QFont>(m_viewItem->property("font"))).height();
+    const qreal paddingY = std::ceil(lineHeight / 2), paddingTop = paddingY + 24;
+    const qreal paddingX = std::ceil(lineHeight * 0.75);
+    auto *layout = m_view->documentLayout();
+    const auto visible = visibleBlocks();
     const qreal left = m_viewItem->property("leftPadding").toReal() - m_view->documentMargin();
     // QTextLayout positions already include the document margin. Qt Quick's
     // vertical text origin adds padding/alignment, not a margin subtraction.
@@ -790,6 +864,8 @@ void LivePreview::updateCodeBlockPanels() {
     QVariantList panels;
     for (int i = 0; i < groups.size(); ++i) {
         const auto &group = groups.at(i);
+        if (group.second < visible.first) continue;
+        if (group.first > visible.second) break;
         const auto first = m_view->findBlockByNumber(group.first);
         const auto last = m_view->findBlockByNumber(group.second);
         if (!first.isValid() || !last.isValid()) continue;
@@ -822,43 +898,104 @@ void LivePreview::updateCodeBlockPanels() {
         emit codeBlockPanelsChanged();
     }
 }
-void LivePreview::rebuild() {
-    if (!m_source || !m_view || m_guard || m_composing)
-        return;
-    emit projectionAboutToChange();
-    const auto notify = qScopeGuard([this] { emit projectionChanged(); });
-    QScopedValueRollback<bool> guard(m_guard, true);
-    const auto finishLayout = qScopeGuard([this] { completeProjectionLayout(); });
-    m_pending = false;
+void LivePreview::updateSourceSnapshot() {
+    if (!m_sourceDirty) return;
     const QString source = documentText(m_source);
-    m_projectionSource = source;
-    m_anchor = qBound(0, m_anchor, int(source.size()));
-    m_caret = qBound(0, m_caret, int(source.size()));
+    if (source != m_projectionSource || m_forceReset) {
+        int first = 0, suffix = 0;
+        while (first < source.size() && first < m_projectionSource.size()
+               && source[first] == m_projectionSource[first]) ++first;
+        while (suffix < source.size() - first && suffix < m_projectionSource.size() - first
+               && source[source.size() - suffix - 1] == m_projectionSource[m_projectionSource.size() - suffix - 1]) ++suffix;
+        if (m_forceReset) m_blockParser.reset(source);
+        else m_blockParser.edit(source, first, m_projectionSource.size() - first - suffix, source.size() - first - suffix);
+        m_projectionSource = source; ++m_sourceGeneration;
+        m_viewSyncedSource = false;
+    }
+    m_sourceDirty = false;
+}
+void LivePreview::styleProjection(bool fontChanged) {
+    const bool dark = m_viewItem->property("previewDark").toBool();
+    if (m_highlighter->document() != m_view) m_highlighter->setDocument(m_view);
+    // Equality-checked setter also refreshes the detached Edit highlighter
+    // after a theme change that was rendered while staying in Read.
+    m_highlighter->setTheme(dark, m_viewItem->property("previewBackground").value<QColor>().name(),
+        strongForeground(m_viewItem).name(), m_viewItem->property("previewAccent").value<QColor>().name(),
+        dark ? QStringLiteral("#252525") : QStringLiteral("#eeeeee"));
+    styleEditLists();
+    m_highlighter->setSearch(m_searchQuery, m_currentMatch < 0 ? -1 : viewPosition(m_currentMatch));
+    m_highlighter->setCaret(viewPosition(m_caret));
+    m_highlighter->setSelection(viewPosition(m_anchor), viewPosition(m_caret));
+    if (fontChanged) m_highlighter->refreshFont();
+    refreshSpelling();
+    m_styleDirty = false;
+}
+void LivePreview::finishProjectionChange() {
+    if (!m_projectionChanging) return;
+    // Structural changes/mode imports need complete extents before the QML
+    // scroll anchor is restored. Ordinary native typing never enters here.
+    m_view->documentLayout()->documentSize();
+    updateCodeBlockPanels(); updateListMarkers();
+    m_projectionChanging = false;
+    emit projectionChanged();
+}
+void LivePreview::rebuild() {
+    if (!m_source || !m_view || m_guard || m_composing) return;
+    m_pending = false;
+    QScopedValueRollback<bool> guard(m_guard, true);
+    updateSourceSnapshot();
+    // QTextDocument is edited directly, bypassing TextEdit::setText(), which
+    // normally enables Qt Quick's visible-block rendering for large text.
+    // Use the public item flag so scrolling invalidates the rendered region
+    // without creating glyph nodes for the entire native document.
+    if (auto *item = qobject_cast<QQuickItem *>(m_viewItem.data()))
+        item->setFlag(QQuickItem::ItemObservesViewport, m_projectionSource.size() > 10000);
+    m_anchor = qBound(0, m_anchor, int(m_projectionSource.size()));
+    m_caret = qBound(0, m_caret, int(m_projectionSource.size()));
     const QFont font = qvariant_cast<QFont>(m_viewItem->property("font"));
-    m_mermaid->setGeneration(source + QString::number(m_viewItem->property("width").toInt())
-                             + m_viewItem->property("previewDark").toString());
-    // QTextDocument does not equality-check this setter: even an unchanged
-    // font invalidates the entire layout. A caret click must not restart it
-    // while Qt Quick is updating the viewport from document-size callbacks.
-    if (m_view->defaultFont() != font)
-        m_view->setDefaultFont(font);
-    m_segments.clear();
+    const bool fontChanged = m_view->defaultFont() != font;
+    if (fontChanged) { m_view->setDefaultFont(font); m_styleDirty = true; m_renderDirty = true; }
+    m_mermaid->setGeneration(QString::number(m_sourceGeneration) + QLatin1Char('|') + QString::number(m_viewItem->property("width").toInt())
+                            + m_viewItem->property("previewDark").toString());
     if (m_readMode) {
-        buildReadDocument(source);
-        m_viewText = documentText(m_view);
+        if (!m_renderedRead || !m_viewSyncedSource || m_styleDirty || m_renderDirty || !m_invalidImageSlots.isEmpty()) {
+            emit projectionAboutToChange();
+            buildReadDocument(m_projectionSource);
+            m_panelMargins.clear(); m_codeEndpoints.clear(); m_codeSpacingDirty = true;
+            m_viewText = documentText(m_view);
+            m_segments.clear(); m_renderedRead = true; m_viewSyncedSource = true;
+            m_styleDirty = false; m_renderDirty = false; m_forceReset = false;
+            styleCodeBlocks();
+            completeProjectionLayout();
+            emit projectionChanged();
+        }
+        emit projectionReady();
         return;
     }
-    const bool dark = m_viewItem->property("previewDark").toBool();
+    if (m_renderedRead) { m_forceReset = true; m_listStyleValid = false; }
+    syncEditProjection();
+    styleProjection(fontChanged);
+    styleCodeBlocks();
+    if (!m_resourceNames.isEmpty()) completeProjectionLayout();
+    select(m_viewItem, viewPosition(m_anchor), viewPosition(m_caret));
+    finishProjectionChange();
+    emit projectionReady();
+    // No documentSize(), full fragment walk, projection anchoring, or native
+    // document replacement on an ordinary keystroke/caret move.
+    scheduleCodeBlockPanels();
+}
+void LivePreview::syncEditProjection(bool revealBoundary) {
+    const QString &source = m_projectionSource;
     struct Replacement { PreviewBlocks::Block block; QImage image; };
     QList<Replacement> replacements;
     const int low = qMin(m_anchor, m_caret), high = qMax(m_anchor, m_caret);
     qsizetype projectionBytes = 0;
-    for (const auto &block : PreviewBlocks::parse(source)) {
+    for (const auto &block : m_blockParser.blocks()) {
         if (replacements.size() >= MaxProjectionObjects || projectionBytes >= MaxProjectionBytes)
             break;
         // Include both endpoints: typing/deleting against an object first
         // exposes Markdown rather than treating the whole block as one char.
-        if (low <= block.end && high >= block.start)
+        if (low <= block.end + (revealBoundary ? 1 : 0) && high >= block.start - (revealBoundary ? 1 : 0))
             continue;
         const QImage image = imageFor(block);
         if (!image.isNull()) {
@@ -868,76 +1005,102 @@ void LivePreview::rebuild() {
             replacements.append({block, image});
         }
     }
-    // Caret-only changes that do not change object ranges need no relayout.
-    QList<Segment> segments;
-    int sourceAt = 0, viewAt = 0;
-    for (const auto &replacement : replacements) {
-        const auto &b = replacement.block;
-        if (b.start > sourceAt) {
-            segments.append({sourceAt, b.start, viewAt, viewAt + b.start - sourceAt, false});
-            viewAt += b.start - sourceAt;
+    QList<QPair<int, int>> ranges, oldRanges;
+    for (const auto &r : replacements) ranges.append({r.block.start, r.block.end});
+    for (const auto &s : m_segments) if (s.object) oldRanges.append({s.sourceStart, s.sourceEnd});
+    const auto nextSegments = mappedSegments(ranges, source.size());
+    const bool replaceText = m_forceReset || !m_viewSyncedSource || ranges != oldRanges;
+    if (!replaceText && !m_renderDirty && m_invalidImageSlots.isEmpty()) return;
+    if (replaceText && !m_projectionChanging) { m_projectionChanging = true; emit projectionAboutToChange(); }
+    QString desired;
+    if (replaceText) {
+        int at = 0;
+        for (const auto &r : ranges) {
+            desired += source.mid(at, r.first - at); desired += QChar::ObjectReplacementCharacter; at = r.second;
         }
-        segments.append({b.start, b.end, viewAt, viewAt + 1, true});
-        sourceAt = b.end; ++viewAt;
+        desired += source.mid(at);
     }
-    segments.append({sourceAt, int(source.size()), viewAt, viewAt + int(source.size()) - sourceAt, false});
-    QString key = source + font.toString() + m_viewItem->property("color").toString()
-        + m_viewItem->property("previewBackground").toString()
-        + QString::number(m_viewItem->property("width").toInt());
-    for (const auto &segment : segments)
-        if (segment.object)
-            key += QStringLiteral("/%1:%2").arg(segment.sourceStart).arg(segment.sourceEnd);
-    m_segments = segments;
-    const auto styleProjection = [this, dark](bool refreshFont) {
-        if (m_highlighter->document() != m_view)
-            m_highlighter->setDocument(m_view);
-        m_highlighter->setTheme(dark, m_viewItem->property("previewBackground").value<QColor>().name(),
-                                strongForeground(m_viewItem).name(),
-                                m_viewItem->property("previewAccent").value<QColor>().name(),
-                                dark ? QStringLiteral("#252525") : QStringLiteral("#eeeeee"));
-        styleEditLists();
-        m_highlighter->setSearch(m_searchQuery, m_currentMatch < 0 ? -1 : viewPosition(m_currentMatch));
-        m_highlighter->setCaret(viewPosition(m_caret));
-        m_highlighter->setSelection(viewPosition(m_anchor), viewPosition(m_caret));
-        if (refreshFont)
-            m_highlighter->refreshFont();
-        refreshSpelling();
-    };
-    if (key == m_projectionKey) {
-        styleProjection(false);
-        select(m_viewItem, viewPosition(m_anchor), viewPosition(m_caret));
-        return;
+    const bool reset = m_forceReset || m_renderedRead;
+    if (reset) {
+        ++m_fullResets;
+        m_highlighter->setDocument(nullptr);
+        clearViewResources(); m_view->clear(); m_viewText.clear(); m_panelMargins.clear();
+        m_codeEndpoints.clear(); m_codeSpacingDirty = true; m_invalidImageSlots.clear();
+        m_listStyleValid = false; m_listDirtyFirst = 0;
     }
-    m_projectionKey = key;
-    // Never attach the Markdown highlighter to the old Read HTML, or let it
-    // restyle a partially rebuilt document containing inline image objects.
-    m_highlighter->setDocument(nullptr);
-    // Native rich-text image objects, never hidden multiline source overlays.
-    clearViewResources();
-    m_view->clear();
-    m_listStyleValid = false;
-    QTextCursor cursor(m_view);
-    cursor.beginEditBlock();
-    sourceAt = 0;
-    int index = 0;
-    for (const auto &replacement : replacements) {
-        const auto &b = replacement.block;
-        cursor.insertText(source.mid(sourceAt, b.start - sourceAt));
+    QList<QTextImageFormat> formats;
+    QList<QUrl> resources;
+    for (const auto &r : replacements) {
         QTextImageFormat format;
-        format.setName(QStringLiteral("preview:edit/%1").arg(index++));
-        format.setWidth(replacement.image.width());
-        format.setHeight(replacement.image.height());
-        const QUrl resourceName(format.name());
-        m_view->addResource(QTextDocument::ImageResource, resourceName, replacement.image);
-        m_resourceNames.append(resourceName);
-        cursor.insertImage(format);
-        sourceAt = b.end;
+        format.setName(QStringLiteral("preview:edit/%1").arg(r.image.cacheKey()));
+        format.setWidth(r.image.width()); format.setHeight(r.image.height());
+        const QUrl url(format.name());
+        m_view->addResource(QTextDocument::ImageResource, url, r.image);
+        formats.append(format); resources.append(url);
     }
-    cursor.insertText(source.mid(sourceAt));
-    cursor.endEditBlock();
-    m_viewText = documentText(m_view);
-    styleProjection(true);
-    select(m_viewItem, viewPosition(m_anchor), viewPosition(m_caret));
+    struct Patch { int from, removed, nextFrom, nextLength; };
+    QList<Patch> patches;
+    if (replaceText && m_viewSyncedSource && !reset) {
+        // Only changed objects are replaced; disjoint reveal/collapse regions
+        // never destroy the native prose blocks between them.
+        QList<QPair<int, int>> changed;
+        for (const auto &r : oldRanges) if (!ranges.contains(r)) changed.append(r);
+        for (const auto &r : ranges) if (!oldRanges.contains(r)) changed.append(r);
+        std::sort(changed.begin(), changed.end());
+        QList<QPair<int, int>> merged;
+        for (const auto &r : changed) {
+            if (!merged.isEmpty() && r.first <= merged.last().second) merged.last().second = qMax(merged.last().second, r.second);
+            else merged.append(r);
+        }
+        for (const auto &r : merged) {
+            const int from = toView(m_segments, r.first), end = toView(m_segments, r.second);
+            const int next = toView(nextSegments, r.first), nextEnd = toView(nextSegments, r.second);
+            patches.append({from, end - from, next, nextEnd - next});
+        }
+    } else if (replaceText) {
+        int first = 0, suffix = 0;
+        while (first < desired.size() && first < m_viewText.size() && desired[first] == m_viewText[first]) ++first;
+        while (suffix < desired.size() - first && suffix < m_viewText.size() - first
+               && desired[desired.size() - suffix - 1] == m_viewText[m_viewText.size() - suffix - 1]) ++suffix;
+        patches.append({first, int(m_viewText.size()) - first - suffix, first, int(desired.size()) - first - suffix});
+    }
+    QTextCursor batch(m_view); batch.beginEditBlock();
+    for (auto p = patches.crbegin(); p != patches.crend(); ++p) {
+        QTextCursor cursor(m_view); cursor.setPosition(p->from);
+        cursor.setPosition(p->from + p->removed, QTextCursor::KeepAnchor);
+        cursor.removeSelectedText();
+        int at = p->nextFrom;
+        const int end = at + p->nextLength;
+        int image = 0;
+        for (const auto &s : nextSegments) if (s.object) {
+            if (s.viewStart >= at && s.viewStart < end) {
+                cursor.insertText(desired.mid(at, s.viewStart - at), QTextCharFormat());
+                cursor.insertImage(formats.at(image)); at = s.viewEnd;
+            }
+            ++image;
+        }
+        cursor.insertText(desired.mid(at, end - at), QTextCharFormat());
+        recordViewChange(p->from, p->removed, desired.mid(p->nextFrom, p->nextLength));
+        ++m_projectionPatches;
+    }
+    m_segments = nextSegments;
+    // An image may change without changing its one-character placeholder.
+    int image = 0;
+    for (const auto &s : m_segments) if (s.object) {
+        QTextCursor cursor(m_view); cursor.setPosition(s.viewStart);
+        cursor.setPosition(s.viewEnd, QTextCursor::KeepAnchor);
+        if (m_view->characterAt(s.viewStart) != QChar::ObjectReplacementCharacter) {
+            cursor.insertImage(formats.at(image));
+            recordViewChange(s.viewStart, 1, QString(QChar::ObjectReplacementCharacter));
+        } else if (cursor.charFormat() != formats.at(image)) cursor.setCharFormat(formats.at(image));
+        ++image;
+    }
+    batch.endEditBlock();
+    for (const auto &url : m_resourceNames) if (!resources.contains(url))
+        m_view->addResource(QTextDocument::ImageResource, url, QVariant());
+    m_resourceNames = resources;
+    m_forceReset = false; m_renderedRead = false; m_viewSyncedSource = true; m_renderDirty = false;
+    if (!patches.isEmpty() || !ranges.isEmpty()) completeProjectionLayout();
 }
 void LivePreview::prepareEdit() {
     if (m_readMode || !m_source)
@@ -954,20 +1117,21 @@ void LivePreview::prepareEdit() {
         }
     }
     if (boundary) {
-        // Temporarily project the full source. The next caret update restores
-        // inactive previews. In particular Backspace cannot erase a table.
         QScopedValueRollback<bool> guard(m_guard, true);
-        m_projectionKey.clear();
-        clearViewResources();
-        m_view->setPlainText(documentText(m_source));
-        m_listStyleValid = false;
-        m_segments = {{0, int(m_source->toPlainText().size()), 0,
-                      int(m_source->toPlainText().size()), false}};
-        m_viewText = documentText(m_view);
-        styleEditLists();
-        select(m_viewItem, m_anchor, m_caret);
-        completeProjectionLayout();
+        syncEditProjection(true); // Reveal only neighboring objects, never all prose.
+        styleEditLists(); styleCodeBlocks();
+        select(m_viewItem, viewPosition(m_anchor), viewPosition(m_caret));
+        completeProjectionLayout(); finishProjectionChange();
     }
+}
+QString LivePreview::linkAtPoint(qreal x, qreal y) const {
+    if (m_readMode || m_pending || m_composing || !m_resolver) return {};
+    const int at = characterAtPoint(x, y);
+    if (at < 0) return {};
+    QString result;
+    QMetaObject::invokeMethod(m_resolver, "linkUrlAt", Qt::DirectConnection,
+        Q_RETURN_ARG(QString, result), Q_ARG(int, sourcePosition(at)));
+    return result;
 }
 QString LivePreview::imagePathAtPoint(qreal x, qreal y) const {
     const int position = characterAtPoint(x, y);
@@ -984,7 +1148,7 @@ QString LivePreview::imagePathAt(int position) const {
         return m_readImagePaths.value(cursor.charFormat().toImageFormat().name());
     }
     const int sourceAt = sourcePosition(position);
-    for (const auto &block : PreviewBlocks::parse(documentText(m_source))) {
+    for (const auto &block : m_blockParser.blocks()) {
         if (block.kind == PreviewBlocks::Kind::Image
             && sourceAt >= block.start && sourceAt < block.end)
             return block.imagePath;

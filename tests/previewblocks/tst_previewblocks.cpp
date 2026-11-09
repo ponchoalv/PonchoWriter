@@ -8,6 +8,33 @@ using namespace PreviewBlocks;
 class PreviewBlocksTest : public QObject {
     Q_OBJECT
 private slots:
+    void incrementalScannerMatchesFreshParsing() {
+        QString text = "intro\n\n| A | B |\n| --- | --- |\n| x | y |\n\n![x](a.png)\n\n---\n\n```cpp\na\nb\n```\n<!--\n---\n-->\n";
+        PreviewBlocks::Parser parser; parser.reset(text);
+        quint32 random = 41237;
+        const QStringList chunks = {"x", "\n", "\n\n", "---", "| --- | --- |", "```", "<!--", "-->", "😀", "\r\n", "![a](b.png)", ""};
+        for (int n = 0; n < 600; ++n) {
+            random = random * 1664525U + 1013904223U;
+            const int at = int(random % (text.size() + 1));
+            random = random * 1664525U + 1013904223U;
+            const int removed = qMin(int(random % 9), int(text.size()) - at);
+            const QString added = chunks.at((random >> 16) % chunks.size());
+            text.replace(at, removed, added); parser.edit(text, at, removed, added.size());
+            PreviewBlocks::Parser fresh; fresh.reset(text);
+            QCOMPARE(parser.fences(), fresh.fences());
+            QCOMPARE(parser.blocks().size(), fresh.blocks().size());
+            for (int i = 0; i < fresh.blocks().size(); ++i) {
+                const auto &a = parser.blocks()[i], &b = fresh.blocks()[i];
+                QCOMPARE(a.start, b.start); QCOMPARE(a.end, b.end); QCOMPARE(a.kind, b.kind);
+                QCOMPARE(a.markdown, b.markdown); QCOMPARE(a.imagePath, b.imagePath);
+            }
+        }
+        text = "```cpp\n" + QString("int value = 1;\n").repeated(10000) + "```\n";
+        parser.reset(text);
+        const int at = text.indexOf("value"); text.insert(at, "x"); parser.edit(text, at, 0, 1);
+        QCOMPARE(parser.parsedLines(), 1);
+        QCOMPARE(parser.fences().last().second, text.size() - 1);
+    }
     void horizontalRules() {
         const auto rules = parse(QStringLiteral("---\n\ntext\n\n  - - - \n\n```\n---\n```\n"));
         QCOMPARE(rules.size(), 2);

@@ -46,6 +46,10 @@ Qt normally maps a source-code `Ctrl` modifier to **Command** on macOS and `Meta
 
 Usual cut/copy/paste/select-all keys come from Qt's text editor. There is no user-configurable keymap or command palette. Labels and automated tests do not establish that every combination is available on every keyboard or desktop configuration.
 
+## Opening links
+
+In **Edit**, ordinary clicking keeps editing. **Cmd-click on macOS / Ctrl-click elsewhere** opens the link through your OS; right-click a link and choose **Open Link** for the same action. Blank space does not activate the nearest link, and image menus take priority. **Read** keeps ordinary single-click links. Native macOS pointer/context checks pass; Windows/Linux remain untested.
+
 ## Existing writing behavior
 
 - Bold, italic, strike and link markers are caret-aware: source becomes visible when editing the relevant span.
@@ -69,6 +73,8 @@ Ordinary ordered/unordered lists now keep native hanging indentation in Edit, in
 Body paragraphs use softer, theme-aware contrast while headings retain the stronger theme foreground. Text stays regular-weight unless Markdown calls for emphasis; links and selections keep their own colors rather than being faded with the whole editor.
 
 **Read** renders supported Markdown without an editing caret. Switching back with the book/pencil button or shortcut preserves the reading viewport and places a new caret near its center, instead of returning to the previous editing caret. Paragraphs and headings retain Edit's blank-line breathing room; wrapped lines, code lines and tight list items stay compact. Links use the same theme accent, and bold, italic and code backgrounds match Edit. Links are clickable. This uses Qt's Markdown/HTML subset, not a web browser: arbitrary web CSS/layout is not supported. Remote images are deliberately not fetched. Unsupported or unavailable visual blocks remain usable source; rendering is never a Markdown conversion on save. One canonical source document owns saving, search, formatting and undo.
+
+Edit now retains its native document during ordinary typing, updates affected parser/style regions and patches only changed visual objects. Decorations and native glyph rendering are viewport-aware for long documents. Source undo, save format and IME safeguards remain; global operations and Read import can still take document-sized work. See the [incremental editing guide and measured 10,000-line result](incremental-native-editing.md), not a blanket constant-latency promise.
 
 Try [preview-example.md](preview-example.md) for tables, images, Mermaid and fallback cases.
 

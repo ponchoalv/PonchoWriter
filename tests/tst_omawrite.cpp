@@ -1065,6 +1065,11 @@ private slots:
             QTest::mouseClick(window, Qt::RightButton, Qt::NoModifier, viewItem->mapToScene(local).toPoint());
             QTRY_VERIFY(menu->property("visible").toBool());
             QCOMPARE(menu->property("imagePath").toString(), path);
+            auto *copyImage = window->findChild<QObject *>("copyImageAction"); QVERIFY(copyImage);
+            QGuiApplication::clipboard()->setText("sentinel");
+            QVERIFY(QMetaObject::invokeMethod(copyImage, "triggered"));
+            QCOMPARE(QGuiApplication::clipboard()->image().size(), image.size());
+            QCOMPARE(QGuiApplication::clipboard()->image().pixelColor(0, 0), QColor(Qt::blue));
             QSignalSpy closed(menu, SIGNAL(closed()));
             QVERIFY(closed.isValid());
             QVERIFY(QMetaObject::invokeMethod(menu, "close"));
@@ -1084,6 +1089,26 @@ private slots:
         };
         QVERIFY(toggleMode());
         QTRY_VERIFY(window->property("readMode").toBool());
+        QTRY_VERIFY(menu->property("readOnly").toBool());
+        QVERIFY(!rename->property("enabled").toBool());
+        QVERIFY(!rename->property("visible").toBool());
+        QVERIFY(QMetaObject::invokeMethod(view, "positionToRectangle", Q_RETURN_ARG(QRectF, beforeImage), Q_ARG(int, 0)));
+        QVERIFY(QMetaObject::invokeMethod(view, "positionToRectangle", Q_RETURN_ARG(QRectF, afterImage), Q_ARG(int, 1)));
+        for (const qreal fraction : {0.25, 0.75}) {
+            const QPointF local(beforeImage.x() + (afterImage.x() - beforeImage.x()) * fraction,
+                                beforeImage.y() + beforeImage.height() / 2);
+            QTest::mouseClick(window, Qt::RightButton, Qt::NoModifier, viewItem->mapToScene(local).toPoint());
+            QTRY_VERIFY(menu->property("visible").toBool());
+            QCOMPARE(menu->property("imagePath").toString(), path);
+            auto *copyImage = window->findChild<QObject *>("copyImageAction"); QVERIFY(copyImage);
+            QGuiApplication::clipboard()->setText("sentinel");
+            QVERIFY(QMetaObject::invokeMethod(copyImage, "triggered"));
+            QCOMPARE(QGuiApplication::clipboard()->image().size(), image.size());
+            QCOMPARE(QGuiApplication::clipboard()->image().pixelColor(0, 0), QColor(Qt::blue));
+            QSignalSpy closed(menu, SIGNAL(closed()));
+            QVERIFY(QMetaObject::invokeMethod(menu, "close"));
+            QTRY_VERIFY(!closed.isEmpty());
+        }
         QTest::keyClick(window, Qt::Key_X);
         QTest::keyClick(window, Qt::Key_B, Qt::ControlModifier);
         QCOMPARE(source->property("text").toString(), complete);

@@ -671,6 +671,17 @@ QUrl Backend::resolveImageUrl(const QString &path) const {
     return QFileInfo(local).isFile() ? QUrl::fromLocalFile(QFileInfo(local).absoluteFilePath()) : QUrl();
 }
 
+bool Backend::copyImage(const QString &path) {
+    const QImage image = Attachments::loadLocalImage(resolveImageUrl(path));
+    if (image.isNull()) {
+        setStatus(QStringLiteral("Could not copy the image. Only readable local images within the safety limits are supported."));
+        return false;
+    }
+    QGuiApplication::clipboard()->setImage(image);
+    setStatus(QStringLiteral("Copied image."));
+    return true;
+}
+
 bool Backend::materializeAttachments(const QUrl &destination, QString *error) const {
     const QString root = QFileInfo(destination.toLocalFile()).absolutePath();
     const bool moving = !m_fileUrl.isLocalFile()

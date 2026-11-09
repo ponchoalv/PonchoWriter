@@ -1,5 +1,6 @@
 #include "previewblocks.h"
 #include "markdownhighlighter.h"
+#include "attachmenthelper.h"
 
 #include <QAbstractTextDocumentLayout>
 #include <QFile>
@@ -180,8 +181,7 @@ protected:
     QVariant loadResource(int, const QUrl &) override { return {}; }
 };
 
-constexpr qint64 MaxFileBytes = 20 * 1024 * 1024;
-constexpr qint64 MaxPixels = 24 * 1000 * 1000;
+constexpr qint64 MaxPixels = Attachments::MaxImagePixels;
 constexpr int MaxHeight = 1800;
 
 } // namespace
@@ -344,26 +344,9 @@ QImage renderTable(const QString &markdown, const QFont &font,
 }
 
 QImage loadImage(const QUrl &url, int maxWidth) {
-    if (maxWidth <= 0 || !url.isValid() || url.hasQuery() || url.hasFragment())
-        return {};
-    QString path;
-    if (url.isLocalFile() && (url.host().isEmpty() || url.host() == QStringLiteral("localhost")))
-        path = url.toLocalFile();
-    else if (url.isRelative() && url.host().isEmpty())
-        path = url.path();
-    else
-        return {};
-    QFile file(path);
-    if (!file.open(QIODevice::ReadOnly) || file.size() <= 0 || file.size() > MaxFileBytes)
-        return {};
-    QImageReader reader(&file);
-    reader.setAutoTransform(true);
-    const QSize size = reader.size();
-    if (!size.isValid() || size.isEmpty() || qint64(size.width()) * size.height() > MaxPixels)
-        return {};
-    QImage image = reader.read();
-    if (image.isNull() || qint64(image.width()) * image.height() > MaxPixels)
-        return {};
+    if (maxWidth <= 0) return {};
+    QImage image = Attachments::loadLocalImage(url);
+    if (image.isNull()) return {};
     if (image.width() > maxWidth || image.height() > MaxHeight)
         image = image.scaled(QSize(maxWidth, MaxHeight), Qt::KeepAspectRatio, Qt::SmoothTransformation);
     return image;

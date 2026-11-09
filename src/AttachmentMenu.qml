@@ -8,6 +8,7 @@ Menu {
     required property var attachmentBackend
     required property var editorItem
     property string imagePath: ""
+    property bool readOnly: false
 
     function openFor(path, px, py) {
         imagePath = path;
@@ -15,7 +16,15 @@ Menu {
     }
 
     MenuItem {
+        objectName: "copyImageAction"
+        text: "Copy Image"
+        onTriggered: root.attachmentBackend.copyImage(root.imagePath)
+    }
+    MenuItem {
         objectName: "renameAttachmentAction"
+        visible: !root.readOnly
+        enabled: !root.readOnly
+        height: visible ? implicitHeight : 0
         text: "Name / folder…"
         onTriggered: {
             pathField.text = root.imagePath;
@@ -26,6 +35,9 @@ Menu {
     }
     MenuItem {
         objectName: "locateAttachmentAction"
+        visible: !root.readOnly
+        enabled: !root.readOnly
+        height: visible ? implicitHeight : 0
         text: "Locate image…"
         onTriggered: locateDialog.open()
     }

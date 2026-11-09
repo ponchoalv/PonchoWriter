@@ -5,6 +5,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QMap>
+#include <QImageReader>
 #include <QRegularExpression>
 #include <QTemporaryFile>
 #include <QTextBlock>
@@ -180,6 +181,29 @@ inline QStringList imagePaths(const QString &text) {
         }
     }
     return paths;
+}
+
+inline constexpr qint64 MaxImageFileBytes = 20 * 1024 * 1024;
+inline constexpr qint64 MaxImagePixels = 24 * 1000 * 1000;
+
+// Decode original pixels only from bounded local files. Preview scaling is a
+// separate concern; clipboard copies must not inherit viewport dimensions.
+inline QImage loadLocalImage(const QUrl &url) {
+    if (!url.isValid() || url.hasQuery() || url.hasFragment()) return {};
+    QString path;
+    if (url.isLocalFile() && (url.host().isEmpty() || url.host() == QStringLiteral("localhost")))
+        path = url.toLocalFile();
+    else if (url.isRelative() && url.host().isEmpty()) path = url.path();
+    else return {};
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly) || file.size() <= 0 || file.size() > MaxImageFileBytes) return {};
+    QImageReader reader(&file);
+    reader.setAutoTransform(true);
+    const QSize size = reader.size();
+    if (!size.isValid() || size.isEmpty() || qint64(size.width()) * size.height() > MaxImagePixels) return {};
+    const QImage image = reader.read();
+    if (image.isNull() || qint64(image.width()) * image.height() > MaxImagePixels) return {};
+    return image;
 }
 
 inline bool sameFileContents(const QString &a, const QString &b) {

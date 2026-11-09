@@ -145,25 +145,13 @@ ApplicationWindow {
         parent: presentation
         attachmentBackend: backend
         editorItem: presentation
+        readOnly: win.readMode
     }
 
     function openAttachmentMenuAt(px, py) {
-        if (win.readMode) return false;
-        var position = presentation.positionAt(px, py);
-        var path = livePreview.imagePathAt(position);
-        // positionAt() picks the insertion point AFTER an image on its right
-        // half. Only look behind when the pointer is inside that glyph's bounds.
-        if (!path.length && position > 0) {
-            var previous = livePreview.imagePathAt(position - 1);
-            if (previous.length) {
-                var a = presentation.positionToRectangle(position - 1);
-                var b = presentation.positionToRectangle(position);
-                if (px >= Math.min(a.x, b.x) && px <= Math.max(a.x, b.x)
-                        && py >= Math.min(a.y, b.y)
-                        && py <= Math.max(a.y + a.height, b.y + b.height))
-                    path = previous;
-            }
-        }
+        // Native glyph hits handle both image halves and inline images whose
+        // trailing insertion point wraps to another line. Blank space is not a hit.
+        var path = livePreview.imagePathAtPoint(px, py);
         if (!path.length) return false;
         attachmentMenu.openFor(path, px, py);
         return true;

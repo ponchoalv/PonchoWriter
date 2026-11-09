@@ -179,9 +179,9 @@ QVariantMap LivePreview::spellingWordAt(int position) {
     return {};
 }
 
-QVariantMap LivePreview::spellingWordAtPoint(qreal x, qreal y) {
-    if (!m_view || !m_viewItem || m_readMode || m_composing)
-        return {};
+int LivePreview::characterAtPoint(qreal x, qreal y) const {
+    if (!m_view || !m_viewItem || m_composing)
+        return -1;
     const QSizeF size = m_view->documentLayout()->documentSize();
     const qreal left = m_viewItem->property("leftPadding").toReal();
     const qreal top = m_viewItem->property("topPadding").toReal();
@@ -196,24 +196,30 @@ QVariantMap LivePreview::spellingWordAtPoint(qreal x, qreal y) {
     const QPointF point(x - left - qMax(qreal(0), dx), y - top - dy);
     const int hit = m_view->documentLayout()->hitTest(point, Qt::ExactHit);
     if (hit < 0)
-        return {};
+        return -1;
     const QTextBlock block = m_view->findBlock(hit);
     const QTextLayout *layout = block.layout();
     if (!layout)
-        return {};
+        return -1;
     const QPointF local = point - layout->position();
     for (int i = 0; i < layout->lineCount(); ++i) {
         const QTextLine line = layout->lineAt(i);
         if (!line.naturalTextRect().contains(local))
             continue;
-        const int position = block.position() + line.xToCursor(local.x(), QTextLine::CursorOnCharacter);
-        const QVariantMap token = spellingWordAt(position);
-        const int source = sourcePosition(position);
-        const int start = token.value(QStringLiteral("start"), -1).toInt();
-        return source >= start && source < start + token.value(QStringLiteral("length")).toInt()
-            ? token : QVariantMap();
+        return block.position() + line.xToCursor(local.x(), QTextLine::CursorOnCharacter);
     }
-    return {};
+    return -1;
+}
+
+QVariantMap LivePreview::spellingWordAtPoint(qreal x, qreal y) {
+    if (m_readMode) return {};
+    const int position = characterAtPoint(x, y);
+    if (position < 0) return {};
+    const QVariantMap token = spellingWordAt(position);
+    const int source = sourcePosition(position);
+    const int start = token.value(QStringLiteral("start"), -1).toInt();
+    return source >= start && source < start + token.value(QStringLiteral("length")).toInt()
+        ? token : QVariantMap();
 }
 
 void LivePreview::refreshSpelling() {
@@ -462,6 +468,7 @@ void LivePreview::clearViewResources() {
     for (const auto &name : m_resourceNames)
         m_view->addResource(QTextDocument::ImageResource, name, QVariant());
     m_resourceNames.clear();
+    m_readImagePaths.clear();
 }
 void LivePreview::buildReadDocument(const QString &source) {
     m_highlighter->setDocument(nullptr);
@@ -502,6 +509,7 @@ void LivePreview::buildReadDocument(const QString &source) {
     }
     int index = 0;
     QList<QPair<QUrl, QImage>> resources;
+    QHash<QString, QString> readImagePaths;
     qsizetype resourceBytes = 0;
     for (auto it = images.crbegin(); it != images.crend(); ++it) {
         const auto &entry = *it;
@@ -526,6 +534,7 @@ void LivePreview::buildReadDocument(const QString &source) {
             QTextImageFormat format;
             format.setName(QStringLiteral("preview:read/%1").arg(index++));
             format.setWidth(image.width()); format.setHeight(image.height());
+            if (!diagrams.contains(entry.second.name())) readImagePaths.insert(format.name(), entry.second.name());
             resources.append({QUrl(format.name()), image});
             cursor.insertImage(format);
         }
@@ -535,6 +544,7 @@ void LivePreview::buildReadDocument(const QString &source) {
                       m_viewItem->property("previewAccent").value<QColor>(),
                       m_viewItem->property("previewDark").toBool());
     clearViewResources();
+    m_readImagePaths = readImagePaths;
     const auto codeGroups = highlightReadCode(rendered, markdown, m_viewItem->property("previewDark").toBool());
     m_view->setHtml(rendered.toHtml());
     // Carry explicit fence boundaries across HTML only when block identities
@@ -959,9 +969,20 @@ void LivePreview::prepareEdit() {
         completeProjectionLayout();
     }
 }
+QString LivePreview::imagePathAtPoint(qreal x, qreal y) const {
+    const int position = characterAtPoint(x, y);
+    return position < 0 ? QString() : imagePathAt(position);
+}
 QString LivePreview::imagePathAt(int position) const {
-    if (m_readMode || !m_source)
-        return {};
+    if (!m_source || !m_view || m_pending || m_composing || position < 0 || position >= m_view->characterCount() - 1) return {};
+    if (m_readMode) {
+        if (position < 0 || position >= m_view->characterCount() - 1
+            || m_view->characterAt(position) != QChar::ObjectReplacementCharacter) return {};
+        QTextCursor cursor(m_view);
+        cursor.setPosition(position);
+        cursor.setPosition(position + 1, QTextCursor::KeepAnchor);
+        return m_readImagePaths.value(cursor.charFormat().toImageFormat().name());
+    }
     const int sourceAt = sourcePosition(position);
     for (const auto &block : PreviewBlocks::parse(documentText(m_source))) {
         if (block.kind == PreviewBlocks::Kind::Image

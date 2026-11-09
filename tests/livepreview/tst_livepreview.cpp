@@ -972,6 +972,49 @@ private slots:
         controller->setReadMode(false);
         QCOMPARE(source->toPlainText(), text);
     }
+    void readImagesKeepOriginalDestinationsForContextCopy() {
+        QTemporaryDir directory;
+        QImage image(100, 80, QImage::Format_RGB32); image.fill(Qt::blue);
+        QVERIFY(image.save(directory.filePath("my image.png")));
+        ImageResolver resolver; resolver.root = directory.path();
+        controller->setResolver(&resolver);
+        const QString text = "Inline ![a](<my image.png>) text\n\n![b][ref]\n\n[ref]: <my image.png>\n\n![bad](https://invalid.example/a.png)";
+        source->setPlainText(text); flush();
+        controller->setReadMode(true); flush();
+        int count = 0;
+        for (int i = 0; i < view->characterCount() - 1; ++i) {
+            if (view->characterAt(i) == QChar::ObjectReplacementCharacter) {
+                QCOMPARE(controller->imagePathAt(i), QString("my image.png"));
+                ++count;
+            } else QVERIFY(controller->imagePathAt(i).isEmpty());
+        }
+        QCOMPARE(count, 2);
+        QVERIFY(controller->imagePathAt(-1).isEmpty());
+        QVERIFY(controller->imagePathAt(view->characterCount()).isEmpty());
+        QCOMPARE(source->toPlainText(), text);
+        viewItem->setProperty("width", 180);
+        source->setPlainText("a ![wrapped](<my image.png>)" + QString(80, 'x')); flush();
+        const int object = view->toPlainText().indexOf(QChar::ObjectReplacementCharacter);
+        QVERIFY(object >= 0);
+        QRectF before, after;
+        QVERIFY(QMetaObject::invokeMethod(viewItem, "positionToRectangle", Q_RETURN_ARG(QRectF, before), Q_ARG(int, object)));
+        QVERIFY(QMetaObject::invokeMethod(viewItem, "positionToRectangle", Q_RETURN_ARG(QRectF, after), Q_ARG(int, object + 1)));
+        QVERIFY(after.y() > before.y()); // Old insertion-point bounds reject the actual image here.
+        const auto block = view->findBlock(object);
+        const auto *layout = block.layout();
+        const auto line = layout->lineForTextPosition(object - block.position());
+        const qreal x = viewItem->property("leftPadding").toReal() + layout->position().x()
+            + line.cursorToX(object - block.position());
+        const qreal y = viewItem->property("topPadding").toReal() + layout->position().y() + line.y() + line.height() / 2;
+        for (qreal fraction : {0.25, 0.75})
+            QCOMPARE(controller->imagePathAtPoint(x + image.width() * fraction, y), QString("my image.png"));
+        QVERIFY(controller->imagePathAtPoint(-10, y).isEmpty());
+        QVERIFY(controller->imagePathAtPoint(x + image.width() + 10, y).isEmpty());
+        source->setPlainText("no images"); flush();
+        QVERIFY(controller->imagePathAt(0).isEmpty());
+        controller->setReadMode(false); flush();
+        QVERIFY(controller->imagePathAt(0).isEmpty());
+    }
     void repeatedTextUsesActualNativeEditRange() {
         source->setPlainText("aaaa"); flush();
         select(sourceItem, 0, 0);

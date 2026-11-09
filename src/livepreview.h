@@ -38,6 +38,7 @@ public:
     Q_INVOKABLE void prepareEdit();
     Q_INVOKABLE void setSearchHighlight(const QString &query, int currentMatchStart);
     Q_INVOKABLE QString imagePathAt(int viewPosition) const;
+    Q_INVOKABLE QString imagePathAtPoint(qreal x, qreal y) const;
     Q_INVOKABLE QVariantMap spellingWordAt(int viewPosition);
     Q_INVOKABLE QVariantMap spellingWordAtPoint(qreal x, qreal y);
     Q_INVOKABLE int sourcePosition(int viewPosition) const;
@@ -74,6 +75,7 @@ private:
     void updateCodeBlockPanels();
     void styleEditLists();
     void updateListMarkers();
+    int characterAtPoint(qreal x, qreal y) const;
     QVariantList m_listMarkers;
     QList<ListPreview::Item> m_listItems;
     QString m_listText;
@@ -83,6 +85,7 @@ private:
     void scheduleCodeBlockPanels();
     QVariantList m_codeBlockPanels;
     QList<QPair<int, int>> m_readCodeBlocks;
+    QHash<QString, QString> m_readImagePaths; // Sanitized native resource -> original local destination.
     QStringList m_readCodeLanguages;
     bool m_panelsPending = false;
     QPointer<QObject> m_sourceItem, m_viewItem, m_resolver;

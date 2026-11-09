@@ -114,6 +114,42 @@ private slots:
         QCOMPARE(Attachments::references("![x](img/photo(1).png)")[0].path, QString("img/photo(1).png"));
         QCOMPARE(Attachments::decodedPath("img/a\\(1\\)%20b.png"), QString("img/a(1) b.png"));
     }
+    void copyImageKeepsOriginalPixelsAndNeverChangesTheDocument() {
+        QTemporaryDir dir;
+        Backend backend;
+        QTextDocument document;
+        bind(backend, document);
+        QImage image(80, 2001, QImage::Format_ARGB32);
+        image.fill(Qt::red);
+        image.setPixelColor(79, 2000, Qt::blue);
+        QGuiApplication::clipboard()->setImage(image);
+        const QString markdown = backend.pasteClipboardImage("img/copy.png");
+        QVERIFY(!markdown.isEmpty());
+        document.setPlainText(markdown);
+        const bool undo = document.isUndoAvailable();
+        QGuiApplication::clipboard()->setText("sentinel");
+        QVERIFY(backend.copyImage("img/copy.png"));
+        QCOMPARE(QGuiApplication::clipboard()->image().size(), image.size());
+        QCOMPARE(QGuiApplication::clipboard()->image().pixelColor(79, 2000), QColor(Qt::blue));
+        QCOMPARE(document.toPlainText(), markdown);
+        QCOMPARE(document.isUndoAvailable(), undo);
+        backend.saveAs(QUrl::fromLocalFile(dir.filePath("note.md")));
+        image.fill(Qt::green);
+        QVERIFY(image.save(dir.filePath("img/copy.png")));
+        QVERIFY(backend.copyImage("img/copy.png"));
+        QCOMPARE(QGuiApplication::clipboard()->image().pixelColor(0, 0), QColor(Qt::green));
+        QFile large(dir.filePath("large.png"));
+        QVERIFY(large.open(QIODevice::WriteOnly));
+        QVERIFY(large.resize(Attachments::MaxImageFileBytes + 1));
+        large.close();
+        for (const QString &path : {QString("https://invalid.example/a.png"), QString("data:image/png;base64,AAAA"),
+                                   QString("../outside.png"), QString("missing.png"), QString("note.md"), QString("large.png")}) {
+            QGuiApplication::clipboard()->setText("sentinel");
+            QVERIFY(!backend.copyImage(path));
+            QCOMPARE(QGuiApplication::clipboard()->text(), QString("sentinel"));
+        }
+        QCOMPARE(document.toPlainText(), markdown);
+    }
     void clipboardAndRecovery() {
         QTemporaryDir dir;
         Backend backend;

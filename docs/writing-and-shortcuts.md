@@ -119,12 +119,14 @@ The next successful save/auto-save copies it to `img/` beside the document. An u
 
 ### Optional image names and missing-image repair
 
-In **Edit**, right-click a standalone image (or its source paragraph) for:
+Right-click a local image and choose **Copy Image** to put its actual pixels on the system clipboard, not its Markdown link. It works in **Edit** for standalone images/source paragraphs and in **Read** for native images, including inline/reference images. Copies retain original decoded dimensions and orientation rather than the smaller on-screen preview. No network fetch is attempted; unreadable/remote images or files beyond the 20 MiB / 24-million-pixel safety limits leave the clipboard unchanged.
+
+In **Edit**, the same menu also provides:
 
 - **Name / folder…** — choose a portable relative destination such as `img/architecture.png`. The app copies the image and updates matching references in the current document as one undo operation; originals are retained for undo and other notes.
 - **Locate image…** — select the actual local file for a missing reference. It is staged under a safe relative name and the current document is updated; no vault-wide search/repair is attempted.
 
-The keyboard Menu key or **Shift+F10** opens the same menu with the caret in an image paragraph. This is optional after paste; no naming dialog interrupts normal screenshot paste. Inline images inside text/tables are outside this small context menu's scope.
+The keyboard Menu key or **Shift+F10** opens the same menu with the caret in an image paragraph. This is optional after paste; no naming dialog interrupts normal screenshot paste. Inline images inside text/tables remain outside the Edit naming/repair menu's scope. Read offers Copy Image only: naming/repair controls are hidden and disabled.
 
 ## Minimal spelling assistance
 

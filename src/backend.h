@@ -113,6 +113,7 @@ public:
     Q_INVOKABLE QString pasteClipboardImage(const QString &proposedRelativePath = QString());
     // Local files only; an empty URL means unavailable or disallowed.
     Q_INVOKABLE QUrl resolveImageUrl(const QString &path) const;
+    Q_INVOKABLE bool copyImage(const QString &path);
     // Current document only. Copy, never delete: undo and other documents stay safe.
     Q_INVOKABLE bool renameAttachment(const QString &oldPath, const QString &newRelativePath);
     Q_INVOKABLE bool locateAttachment(const QString &oldPath, const QUrl &localFile,

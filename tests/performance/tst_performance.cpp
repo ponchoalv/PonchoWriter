@@ -143,6 +143,9 @@ private slots:
         QVERIFY2(!qEnvironmentVariableIsEmpty("OMAWRITE_PERF_OUTPUT"), "Run using bin/perf LABEL OUTPUT.json");
         QVERIFY2(QGuiApplication::platformName() != "offscreen" && QGuiApplication::platformName() != "minimal",
                  "FPS requires a native desktop platform, not offscreen/minimal");
+        for (QScreen *screen : QGuiApplication::screens())
+            qInfo() << "Available benchmark screen:" << screen->name()
+                    << screen->refreshRate() << "Hz" << screen->geometry();
         QStandardPaths::setTestModeEnabled(true);
         QCoreApplication::setApplicationName("omawrite-perf-" + QFileInfo(settings.path()).fileName());
         isolated = true;
@@ -206,12 +209,23 @@ private slots:
         QScopedPointer<QObject> root(component.create());
         auto *window = qobject_cast<QQuickWindow *>(root.data()); QVERIFY(window);
         window->resize(1000, 760);
+        const QString requestedScreen = qEnvironmentVariable("OMAWRITE_PERF_SCREEN");
+        QScreen *targetScreen = nullptr;
+        if (!requestedScreen.isEmpty()) {
+            for (QScreen *screen : QGuiApplication::screens())
+                if (screen->name() == requestedScreen) targetScreen = screen;
+            QVERIFY2(targetScreen, qPrintable("Requested screen unavailable: " + requestedScreen));
+            window->setScreen(targetScreen);
+            window->setPosition(targetScreen->availableGeometry().center()
+                                - QPoint(window->width() / 2, window->height() / 2));
+        }
         auto *source = root->findChild<QObject *>("sourceEditor");
         auto *view = root->findChild<QQuickItem *>("previewEditor");
         auto *scroll = root->findChild<QQuickItem *>("editorScroll");
         auto *projection = root->findChild<LivePreview *>();
         QVERIFY(source && view && scroll && projection);
         QVERIFY(QTest::qWaitForWindowExposed(window));
+        if (targetScreen) QVERIFY(await([&] { return window->screen() == targetScreen; }));
         FrameRecorder frames(window);
         QVERIFY(frames.nextFrame());
         const auto api = window->rendererInterface()->graphicsApi();

@@ -1,0 +1,273 @@
+{
+    "application_sources_dirty": false,
+    "application_sources_sha": "24d320a88d7527f3c02a4cba87a754989e3c984a",
+    "architecture": "arm64",
+    "background_work": "Word counting and recovery enabled; fixed warm-up is not a global quiescence guarantee",
+    "benchmark_configuration_sha": "ec8bb1324d1467792589644a9559403cba080aa9",
+    "complete": true,
+    "device_pixel_ratio": 1,
+    "font": "IBM Plex Mono",
+    "graphics_api": "Metal",
+    "hardware_acceleration_verified": false,
+    "hardware_verification": "API recorded; inspect QSG_INFO=1 output for adapter/driver; software drivers are not automatically detected",
+    "label": "reference-144-1",
+    "latency_metric": "GUI operation to synchronized follow-up frame submission; not scan-out or GPU execution time",
+    "os": "macOS Golden Gate (27.2)",
+    "qt": "6.12.0",
+    "results": [
+        {
+            "caret_to_followup_frame": {
+                "max_ms": 60.847166,
+                "median_ms": 33.154042,
+                "p95_ms": 60.176459,
+                "samples": 24
+            },
+            "fixture": "prose",
+            "initial_projection_to_frame_ms": 451.195708,
+            "mode_switch_to_followup_frame": {
+                "max_ms": 341.876708,
+                "median_ms": 150.749666,
+                "p95_ms": 341.876708,
+                "samples": 6
+            },
+            "resize_to_followup_frame": {
+                "max_ms": 389.456917,
+                "median_ms": 380.582292,
+                "p95_ms": 389.456917,
+                "samples": 6
+            },
+            "scrolling": [
+                {
+                    "animation_ms": 1500,
+                    "gaps_over_1_5_refresh_periods": 4,
+                    "inter_submission_fps": 141.6044785183065,
+                    "last_submission_to_phase_end_ms": 0.043666,
+                    "max_ms": 15.35325,
+                    "median_ms": 6.973042,
+                    "mode": "Edit",
+                    "p95_ms": 8.417125,
+                    "phase_duration_ms": 1298.101,
+                    "phase_submission_fps": 140.97516294957018,
+                    "samples": 184,
+                    "start_to_first_submission_ms": 12.78725,
+                    "submitted_frames": 183
+                },
+                {
+                    "animation_ms": 1500,
+                    "gaps_over_1_5_refresh_periods": 12,
+                    "inter_submission_fps": 135.8771130392482,
+                    "last_submission_to_phase_end_ms": 0.040333,
+                    "max_ms": 16.775958,
+                    "median_ms": 6.947583,
+                    "mode": "Read",
+                    "p95_ms": 10.965792,
+                    "phase_duration_ms": 1344.304625,
+                    "phase_submission_fps": 135.3859806887148,
+                    "samples": 183,
+                    "start_to_first_submission_ms": 12.178292,
+                    "submitted_frames": 182
+                }
+            ],
+            "source_characters": 55919,
+            "typing_to_followup_frame": {
+                "max_ms": 419.148625,
+                "median_ms": 360.297083,
+                "p95_ms": 419.148625,
+                "samples": 12
+            }
+        },
+        {
+            "caret_to_followup_frame": {
+                "max_ms": 51.148125,
+                "median_ms": 28.223875,
+                "p95_ms": 50.520208,
+                "samples": 24
+            },
+            "fixture": "lists",
+            "initial_projection_to_frame_ms": 406.780917,
+            "mode_switch_to_followup_frame": {
+                "max_ms": 413.104458,
+                "median_ms": 117.626416,
+                "p95_ms": 413.104458,
+                "samples": 6
+            },
+            "resize_to_followup_frame": {
+                "max_ms": 477.007042,
+                "median_ms": 461.316458,
+                "p95_ms": 477.007042,
+                "samples": 6
+            },
+            "scrolling": [
+                {
+                    "animation_ms": 1500,
+                    "gaps_over_1_5_refresh_periods": 2,
+                    "inter_submission_fps": 143.10051706791342,
+                    "last_submission_to_phase_end_ms": 0.046875,
+                    "max_ms": 13.530292,
+                    "median_ms": 6.922375,
+                    "mode": "Edit",
+                    "p95_ms": 8.690541,
+                    "phase_duration_ms": 1287.770041,
+                    "phase_submission_fps": 142.88265306833614,
+                    "samples": 185,
+                    "start_to_first_submission_ms": 8.901791,
+                    "submitted_frames": 184
+                },
+                {
+                    "animation_ms": 1500,
+                    "gaps_over_1_5_refresh_periods": 17,
+                    "inter_submission_fps": 130.98779542926772,
+                    "last_submission_to_phase_end_ms": 0.059125,
+                    "max_ms": 14.073417,
+                    "median_ms": 7.052458,
+                    "mode": "Read",
+                    "p95_ms": 11.634875,
+                    "phase_duration_ms": 1390.669458,
+                    "phase_submission_fps": 130.87222053596003,
+                    "samples": 183,
+                    "start_to_first_submission_ms": 8.802208,
+                    "submitted_frames": 182
+                }
+            ],
+            "source_characters": 68919,
+            "typing_to_followup_frame": {
+                "max_ms": 844.68225,
+                "median_ms": 426.909875,
+                "p95_ms": 844.68225,
+                "samples": 12
+            }
+        },
+        {
+            "caret_to_followup_frame": {
+                "max_ms": 103.665292,
+                "median_ms": 52.336833,
+                "p95_ms": 102.911166,
+                "samples": 24
+            },
+            "fixture": "code",
+            "initial_projection_to_frame_ms": 557.834958,
+            "mode_switch_to_followup_frame": {
+                "max_ms": 474.019333,
+                "median_ms": 210.75375,
+                "p95_ms": 474.019333,
+                "samples": 6
+            },
+            "resize_to_followup_frame": {
+                "max_ms": 517.226833,
+                "median_ms": 509.742667,
+                "p95_ms": 517.226833,
+                "samples": 6
+            },
+            "scrolling": [
+                {
+                    "animation_ms": 1500,
+                    "gaps_over_1_5_refresh_periods": 5,
+                    "inter_submission_fps": 130.84880447607765,
+                    "last_submission_to_phase_end_ms": 0.058875,
+                    "max_ms": 28.128875,
+                    "median_ms": 7.187834,
+                    "mode": "Edit",
+                    "p95_ms": 9.000791,
+                    "phase_duration_ms": 1398.185292,
+                    "phase_submission_fps": 130.1687273077108,
+                    "samples": 183,
+                    "start_to_first_submission_ms": 14.8505,
+                    "submitted_frames": 182
+                },
+                {
+                    "animation_ms": 1500,
+                    "gaps_over_1_5_refresh_periods": 1,
+                    "inter_submission_fps": 143.20122035225523,
+                    "last_submission_to_phase_end_ms": 0.057833,
+                    "max_ms": 12.004583,
+                    "median_ms": 6.933833,
+                    "mode": "Read",
+                    "p95_ms": 7.53825,
+                    "phase_duration_ms": 1276.018125,
+                    "phase_submission_fps": 142.63120282872157,
+                    "samples": 183,
+                    "start_to_first_submission_ms": 12.004583,
+                    "submitted_frames": 182
+                }
+            ],
+            "source_characters": 46949,
+            "typing_to_followup_frame": {
+                "max_ms": 916.297,
+                "median_ms": 477.881334,
+                "p95_ms": 916.297,
+                "samples": 12
+            }
+        },
+        {
+            "caret_to_followup_frame": {
+                "max_ms": 14.296458,
+                "median_ms": 7.13325,
+                "p95_ms": 14.22025,
+                "samples": 24
+            },
+            "fixture": "images",
+            "initial_projection_to_frame_ms": 15.688583,
+            "mode_switch_to_followup_frame": {
+                "max_ms": 38.91325,
+                "median_ms": 10.011583,
+                "p95_ms": 38.91325,
+                "samples": 6
+            },
+            "resize_to_followup_frame": {
+                "max_ms": 12.646209,
+                "median_ms": 10.366958,
+                "p95_ms": 12.646209,
+                "samples": 6
+            },
+            "scrolling": [
+                {
+                    "animation_ms": 1500,
+                    "gaps_over_1_5_refresh_periods": 21,
+                    "inter_submission_fps": 129.36382358727766,
+                    "last_submission_to_phase_end_ms": 0.061958,
+                    "max_ms": 22.560166,
+                    "median_ms": 7.016083,
+                    "mode": "Edit",
+                    "p95_ms": 11.571708,
+                    "phase_duration_ms": 1419.714167,
+                    "phase_submission_fps": 129.60355279739912,
+                    "samples": 185,
+                    "start_to_first_submission_ms": 5.03725,
+                    "submitted_frames": 184
+                },
+                {
+                    "animation_ms": 1500,
+                    "gaps_over_1_5_refresh_periods": 8,
+                    "inter_submission_fps": 138.2645613731493,
+                    "last_submission_to_phase_end_ms": 0.120333,
+                    "max_ms": 12.431791,
+                    "median_ms": 6.988875,
+                    "mode": "Read",
+                    "p95_ms": 9.780125,
+                    "phase_duration_ms": 1315.829708,
+                    "phase_submission_fps": 138.31577056930226,
+                    "samples": 183,
+                    "start_to_first_submission_ms": 6.624833,
+                    "submitted_frames": 182
+                }
+            ],
+            "source_characters": 2679,
+            "typing_to_followup_frame": {
+                "max_ms": 20.696125,
+                "median_ms": 11.936208,
+                "p95_ms": 20.696125,
+                "samples": 12
+            }
+        }
+    ],
+    "revision": "f94d69eeda3e809c6119cc4077cbba287747ed72",
+    "schema": 1,
+    "screen_name": "Q27G2G3R3B",
+    "screen_refresh_hz": 144,
+    "sonnet_version": "6.13.0",
+    "spelling_enabled": false,
+    "syntax_highlighting_version": "6.13.0",
+    "timestamp_utc": "2026-11-09T12:16:58Z",
+    "window_height": 760,
+    "window_width": 1000
+}

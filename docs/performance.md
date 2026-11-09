@@ -21,6 +21,14 @@ bin/perf-compare /tmp/omawrite-baseline.json /tmp/omawrite-candidate.json
 
 The launcher builds a separate Release test executable under `build-tests/performance`. It uses the real `Main.qml`, backend, hidden Markdown source, visible projection and native renderer. It generates its own temporary documents/images and uses isolated application settings/recovery with recovery loading disabled. It does not open or save vault notes, send telemetry, or modify personal spelling dictionaries.
 
+To select a connected display explicitly, use its exact Qt screen name:
+
+```sh
+OMAWRITE_PERF_SCREEN=Q27G2G3R3B QSG_INFO=1 bin/perf candidate-144 /tmp/omawrite-144.json
+```
+
+The benchmark logs connected displays, centers each fixture window on the requested display, and verifies its screen before sampling. An unknown name fails rather than silently measuring another monitor. Without the variable, normal window placement is retained. Do not change display settings while a run is active.
+
 Keep the benchmark window visible and do not interact with it. Keep the monitor, resolution/scaling, power mode, font, Qt/dependency versions and background load unchanged between runs. Run at least three times per revision, preferably alternating reference/candidate order. A single pair is exploratory evidence, not statistical proof. Do not run the correctness suites concurrently with timing runs.
 
 The output is invalidated at the start of an execution and published atomically only after a successful, complete run. Build failures/crashes must not leave an old successful report masquerading as the new run. Reports include revision, application source fingerprint, benchmark/configuration/font fingerprint, dirty-source flag, Qt/dependency versions, screen, scaling and graphics API. The comparison tool rejects incompatible configurations.
@@ -61,6 +69,36 @@ Single paired run, median follow-up-submission time:
 Active scrolling was approximately **74–75 submitted frames/second** for most cases in both runs, with code Edit approximately 74 → 73. There is **no demonstrated general FPS increase**. These scroll rates are already near this screen's 75 Hz refresh rate, so unchanged submission FPS cannot establish that CPU work is unchanged: latency and gap distributions matter too. Some other operations improved while others regressed within a small sample; do not advertise these differences as established gains.
 
 The large-text typing figures expose a remaining responsiveness problem. This first cache removes redundant extraction/parsing; it does not eliminate full projection reconstruction, highlighting or layout. Those paths are the next profiling targets, rather than assuming more GPU work is needed.
+
+## Explicit 144 Hz follow-up: three alternating pairs
+
+On the same day, six further native runs explicitly selected **`Q27G2G3R3B`, 2560×1440, scale 1, 144 Hz**. `QSG_INFO=1` identified **Apple M4 Max / Metal** in every fixture. Order: cached 1, reference 1, cached 2, reference 2, cached 3, reference 3. The reference was built from `f94d69e` in a detached temporary worktree; the candidate used the committed cache implementation (`fa64045`). Application source fingerprints match their corresponding archived 75 Hz sources. No user notes or production application behavior were changed.
+
+All six runs used the **same updated benchmark fingerprint**. The only harness changes add display enumeration/selection; the archived 75 Hz runs have the older fingerprint and should not be fed into the strict comparison tool against these 144 Hz reports. This is a second display workload, not evidence that the cache itself doubled FPS.
+
+Raw pairs: [reference 1](performance/144hz/reference-1.json) / [cached 1](performance/144hz/cached-1.json), [reference 2](performance/144hz/reference-2.json) / [cached 2](performance/144hz/cached-2.json), [reference 3](performance/144hz/reference-3.json) / [cached 3](performance/144hz/cached-3.json). Each run passed all four scenarios; the comparison tool accepts each reference/candidate pair. A separate unavailable-screen run correctly failed and invalidated its output.
+
+Median of the three per-run phase submission rates:
+
+| Scenario | Edit reference → cached | Read reference → cached |
+|---|---:|---:|
+| Prose | 138.7 → 139.8 /s | 139.5 → 135.2 /s |
+| Lists | 142.9 → 139.3 /s | 130.9 → 134.9 /s |
+| Code | 125.6 → 129.4 /s | 135.7 → 132.6 /s |
+| Images | 115.7 → 120.6 /s | 129.4 → 127.5 /s |
+
+The candidate's individual phases ranged **117.5–141.8 submissions/sec**. Thus the app can approach 144 on this screen, but this workload does **not sustain 144 everywhere**. The candidate's code Edit run had one **46 ms** maximum gap; the other two were approximately 28–29 ms. Average cadence alone misses these stalls.
+
+Median of the three per-run typing medians (follow-up-submission proxy):
+
+| Scenario | Reference → cached | Difference |
+|---|---:|---:|
+| Prose | 360.30 → 352.85 ms | −2.1% |
+| Lists | 427.21 → 429.57 ms | +0.6% |
+| Code | 480.97 → 483.26 ms | +0.5% |
+| Images | 13.07 → 10.99 ms | −16.0% |
+
+There is **no broad typing regression demonstrated**: large lists/code are effectively unchanged in this small sample, while their substantial latency clearly predates the cache. This is not a guarantee of zero degradation. Code caret time was 53.45 → 54.86 ms (+2.6%); list Edit scroll cadence was lower in all three candidate/reference pairs (aggregate 142.9 → 139.3, approximately −2.5%). Other scroll directions vary or improve. These mixed changes warrant longer controlled sampling/profiling, not a claim of an across-the-board gain or a proven cache-induced slowdown. Three short runs are still not a formal significance test.
 
 ## First low-risk application optimization
 

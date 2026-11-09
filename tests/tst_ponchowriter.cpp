@@ -64,6 +64,12 @@ private:
     QtMessageHandler m_previous = nullptr;
 };
 
+static QList<QQuickItem *> visualDescendants(QQuickItem *parent) {
+    QList<QQuickItem *> result;
+    for (auto *child : parent->childItems()) { result.append(child); result.append(visualDescendants(child)); }
+    return result;
+}
+
 class LinkReceiver : public QObject {
     Q_OBJECT
 public:
@@ -124,6 +130,80 @@ private slots:
         QCOMPARE(clean.value("profileStorageRoot").toString(), fresh);
         QCOMPARE(Profile::ipcDirectoryName(), QStringLiteral("omawrite-instance")); // Stable cross-version lock namespace.
     }
+    void tableGridEditsTabImeAndViewportKeepCanonicalUndo() {
+        QTemporaryDir directory; QVERIFY(directory.isValid());
+        Backend backend; backend.m_recoveryPath = directory.filePath("recovery.json");
+        QQmlEngine engine; engine.rootContext()->setContextProperty("backend", &backend);
+        QQmlComponent component(&engine, QUrl::fromLocalFile(QFINDTESTDATA("../src/Main.qml")));
+        QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+        QScopedPointer<QObject> root(component.create());
+        auto *window = qobject_cast<QQuickWindow *>(root.data()); QVERIFY(window);
+        auto *source = root->findChild<QObject *>("sourceEditor");
+        auto *view = root->findChild<QQuickItem *>("previewEditor");
+        auto *projection = root->findChild<LivePreview *>(); QVERIFY(source && view && projection);
+        if (QGuiApplication::platformName() != "offscreen") QVERIFY(QTest::qWaitForWindowExposed(window));
+        const QString original = "before\n\n| A | B |\n| --- | --- |\n| one | two |\n\nafter";
+        source->setProperty("text", original); source->setProperty("cursorPosition", original.size());
+        QTRY_COMPARE(projection->tablePanels().size(), 1);
+        QQuickItem *grid = nullptr;
+        QTRY_VERIFY((grid = root->findChild<QQuickItem *>("tableCellView")));
+        QTest::qWait(30);
+        const qreal row = std::ceil(QFontMetricsF(qvariant_cast<QFont>(view->property("font"))).height()) + 16;
+        auto *document = qvariant_cast<QQuickTextDocument *>(source->property("textDocument"))->textDocument();
+        document->clearUndoRedoStacks();
+        QTest::mouseClick(window, Qt::LeftButton, Qt::NoModifier, grid->mapToScene(QPointF(25, row * 1.5)).toPoint());
+        QTRY_VERIFY(root->property("activeTableCell").value<QObject *>());
+        QPointer<QObject> field = root->property("activeTableCell").value<QObject *>();
+        QTest::keyClick(window, Qt::Key_A, Qt::ControlModifier);
+        for (const char c : QByteArray("changed")) QTest::keyClick(window, c);
+        QCOMPARE(field->property("text").toString(), QString("changed"));
+        QInputMethodEvent preedit(QString::fromUtf8("かな"), {}); QCoreApplication::sendEvent(field, &preedit);
+        QVERIFY(field->property("inputMethodComposing").toBool());
+        window->setWidth(window->width() + 40); QTest::qWait(30);
+        QCOMPARE(root->property("activeTableCell").value<QObject *>(), field.data());
+        QVERIFY(field->property("inputMethodComposing").toBool()); QCOMPARE(document->toPlainText(), original);
+        QInputMethodEvent commit; commit.setCommitString(QString::fromUtf8("かな")); QCoreApplication::sendEvent(field, &commit);
+        QTest::keyClick(window, Qt::Key_Tab);
+        QTRY_VERIFY(document->toPlainText().contains(QString::fromUtf8("changedかな")));
+        QTRY_VERIFY(root->property("activeTableCell").value<QObject *>() != field.data());
+        QTest::keyClick(window, Qt::Key_Escape); QCoreApplication::processEvents();
+        QVERIFY(QMetaObject::invokeMethod(source, "undo")); QTRY_COMPARE(document->toPlainText(), original); QVERIFY(!document->isUndoAvailable());
+        const auto panelId = projection->tablePanels().first().toMap()["id"].toInt();
+        projection->setTableSource(panelId, true); QTRY_VERIFY(projection->tablePanels().isEmpty());
+        QTRY_VERIFY(qvariant_cast<QQuickTextDocument *>(view->property("textDocument"))->textDocument()->toPlainText().contains("| A | B |"));
+        const QString unbordered = "before\n\nA | B\n--- | ---\none | two\n\nafter";
+        source->setProperty("text", unbordered); source->setProperty("cursorPosition", unbordered.size());
+        QTRY_COMPARE(projection->tablePanels().size(), 1);
+        QTRY_VERIFY((grid = root->findChild<QQuickItem *>("tableCellView")));
+        QTest::qWait(30);
+        QTest::mouseClick(window, Qt::LeftButton, Qt::NoModifier, grid->mapToScene(QPointF(25, row * 1.5)).toPoint());
+        QTRY_VERIFY(root->property("activeTableCell").value<QObject *>());
+        field = root->property("activeTableCell").value<QObject *>();
+        QTest::keyClick(window, Qt::Key_A, Qt::ControlModifier); QTest::keyClick(window, Qt::Key_Backspace);
+        QCOMPARE(field->property("text").toString(), QString());
+        QTest::keyClick(window, Qt::Key_Tab); // Rejected edge-cell clearing must not lose its draft.
+        QVERIFY(projection->tableDraftsPending()); QCOMPARE(document->toPlainText(), unbordered);
+        auto *tableModel = projection->tablePanels().first().toMap()["model"].value<QObject *>(); QVERIFY(tableModel);
+        const auto draft = tableModel->property("drafts").toMap().value("1:0").toMap();
+        QVERIFY(draft.contains("text")); QCOMPARE(draft["text"].toString(), QString());
+        QTest::mouseClick(window, Qt::LeftButton, Qt::NoModifier, grid->mapToScene(QPointF(85, row * 1.5)).toPoint());
+        QTRY_VERIFY(root->property("activeTableCell").value<QObject *>() != field.data());
+        QVariant allowed;
+        QVERIFY(QMetaObject::invokeMethod(root.data(), "commitTableCell", Q_RETURN_ARG(QVariant, allowed)));
+        QVERIFY(!allowed.toBool()); QVERIFY(projection->tableDraftsPending());
+        QVERIFY(projection->copyTableDrafts(0)); QVERIFY(QGuiApplication::clipboard()->text().contains("1:0"));
+        projection->discardTableDrafts(); QCOMPARE(document->toPlainText(), unbordered);
+        QVERIFY(!projection->tableDraftsPending());
+        QString large = "before\n\n| A | B | C | D | E | F | G | H |\n|---|---|---|---|---|---|---|---|\n";
+        for (int n = 0; n < 1500; ++n) large += QString("| row%1 | b | c | d | e | f | g | h |\n").arg(n);
+        large += "\nafter";
+        source->setProperty("text", large); source->setProperty("cursorPosition", 0);
+        QTRY_COMPARE(projection->tablePanels().size(), 1); QTest::qWait(50);
+        int delegates = 0;
+        for (auto *item : visualDescendants(view->parentItem())) if (item->objectName() == "tableCellDelegate") ++delegates;
+        QVERIFY(delegates > 0 && delegates < 500); // Not 12,008 rich-text delegates.
+        QCOMPARE(document->toPlainText(), large);
+    }
     void codePanelHoverCopyAndReadLanguageUseQtClipboard() {
         QTemporaryDir directory; QVERIFY(directory.isValid());
         Backend backend; backend.m_recoveryPath = directory.filePath("recovery.json");
@@ -145,7 +225,7 @@ private slots:
             QTRY_COMPARE(projection->codeBlockPanels().first().toMap().value("readMode").toBool(), read);
             QCoreApplication::processEvents();
             QQuickItem *controls = nullptr;
-            for (auto *item : view->childItems()) {
+            for (auto *item : visualDescendants(view->parentItem())) {
                 if (item->objectName() != "codeBlockControls") continue;
                 if (!controls || item->y() < controls->y()) controls = item;
                 auto *label = item->findChild<QQuickItem *>("codeBlockLanguage"); QVERIFY(label);
@@ -282,7 +362,7 @@ private slots:
         QVERIFY(source && view);
         const auto panels = [&] {
             QList<QQuickItem *> result;
-            for (auto *item : view->childItems())
+            for (auto *item : visualDescendants(view->parentItem()))
                 if (item->objectName() == "codeBlockPanel") result.append(item);
             return result;
         };
@@ -298,7 +378,7 @@ private slots:
                 QTRY_COMPARE(panels().size(), 1);
                 auto *panel = panels().first();
                 QTRY_COMPARE(panel->property("color").value<QColor>(), QColor(dark ? "#252525" : "#eeeeee"));
-                QVERIFY(panel->z() < 0);
+                QVERIFY(panel->z() < 0 || panel->parentItem()->z() < 0);
                 QVERIFY(panel->width() >= view->width());
                 QVERIFY(panel->height() > 3 * view->property("font").value<QFont>().pixelSize());
                 QVERIFY(panel->property("radius").toReal() > 0);
@@ -1155,7 +1235,7 @@ private slots:
         QVERIFY(QMetaObject::invokeMethod(source, "select", Q_ARG(int, int(text.size())), Q_ARG(int, int(text.size()))));
         QTRY_COMPARE(preview->listMarkers().size(), 2);
         QPointer<QQuickItem> marker;
-        for (auto *child : view->childItems())
+        for (auto *child : visualDescendants(view->parentItem()))
             if (child->objectName() == "listPreviewMarker" && child->property("modelData").toMap().value("baseline") == preview->listMarkers().first().toMap().value("baseline")) { marker = child; break; }
         QVERIFY(marker && marker->isVisible());
         QCOMPARE(marker->property("text").toString(), QString(QChar(0x2022)));

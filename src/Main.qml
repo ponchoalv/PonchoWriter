@@ -15,6 +15,32 @@ ApplicationWindow {
     minimumHeight: 520
     visible: !backend.routesFileOpen
     signal windowCloseAccepted()
+    readonly property var visibleEditor: presentation
+    property var activeTablePanel: null
+    readonly property var activeTableCell: activeTablePanel ? activeTablePanel.activeEditor : null
+    function commitTableCell() { return foregroundDecorations.commitTables() && !livePreview.tableDraftsPending; }
+    ToolButton {
+        objectName: "pendingTableDraftsButton"
+        anchors.top: parent.top
+        anchors.right: parent.right
+        anchors.rightMargin: 64
+        z: 8
+        text: "Pending table edits"
+        visible: livePreview.tableDraftsPending
+        focusPolicy: Qt.NoFocus
+        onClicked: tableDraftMenu.popup()
+        Menu {
+            id: tableDraftMenu
+            MenuItem { text: "Copy pending cell drafts"; onTriggered: livePreview.copyTableDrafts(0) }
+            MenuItem {
+                text: "Discard pending cell drafts"
+                onTriggered: {
+                    if (win.activeTablePanel) win.activeTablePanel.discardCell();
+                    livePreview.discardTableDrafts();
+                }
+            }
+        }
+    }
     title: (backend.modified ? "* " : "") + backend.fileName + " - PonchoWriter"
 
     readonly property bool darkMode: backend.darkMode
@@ -289,6 +315,7 @@ ApplicationWindow {
     }
 
     function toggleReadMode() {
+        if (!commitTableCell()) return;
         if (livePreview.readMode) {
             // Restore the reading scroll first, then choose a NEW caret in
             // the visible text. Focusing the old off-screen caret must not
@@ -338,6 +365,7 @@ ApplicationWindow {
     color: pageColor
 
     onClosing: function(close) {
+        if (!commitTableCell()) { close.accepted = false; return; }
         if (closeConfirmed || !backend.modified) {
             win.rememberPosition();
             backend.finishClosing();
@@ -352,6 +380,7 @@ ApplicationWindow {
     }
 
     function requestOpen(url) {
+        if (!commitTableCell()) return;
         if (backend.routesFileOpen || !backend.modified) {
             backend.open(url);
             return;
@@ -449,6 +478,7 @@ ApplicationWindow {
     // closed, and a search still waiting for a pause is dropped on closing,
     // so opening the bar searches again for what the field holds.
     function openSearch(withReplace) {
+        if (!commitTableCell()) return;
         searchOpen = true;
         if (withReplace)
             replaceOpen = true;
@@ -484,7 +514,7 @@ ApplicationWindow {
 
     Shortcut {
         sequence: "Ctrl+S"
-        onActivated: backend.save()
+        onActivated: if (win.commitTableCell()) backend.save()
     }
 
     Shortcut {
@@ -552,7 +582,7 @@ ApplicationWindow {
 
     Shortcut {
         sequence: "Ctrl+O"
-        onActivated: backend.openDialog()
+        onActivated: if (win.commitTableCell()) backend.openDialog()
     }
 
     Shortcut {
@@ -562,15 +592,16 @@ ApplicationWindow {
 
     Shortcut {
         sequence: "Ctrl+Shift+S"
-        onActivated: backend.saveAsDialog()
+        onActivated: if (win.commitTableCell()) backend.saveAsDialog()
     }
 
     Shortcut {
         sequence: "Ctrl+P"
-        onActivated: backend.printDocument()
+        onActivated: if (win.commitTableCell()) backend.printDocument()
     }
 
     function copyHtml() {
+        if (!commitTableCell()) return;
         if (win.readMode && presentation.selectionStart !== presentation.selectionEnd)
             backend.copyAsHtml(presentation.selectionStart, presentation.selectionEnd, presentation.textDocument);
         else if (!win.readMode && editor.selectionStart !== editor.selectionEnd)
@@ -589,14 +620,14 @@ ApplicationWindow {
 
     Shortcut {
         sequence: "Ctrl+Z"
-        enabled: !win.readMode
+        enabled: !win.readMode && !win.activeTableCell
         context: Qt.WindowShortcut
         onActivated: editor.undo()
     }
 
     Shortcut {
         sequences: ["Ctrl+Shift+Z", "Ctrl+Y"]
-        enabled: !win.readMode
+        enabled: !win.readMode && !win.activeTableCell
         context: Qt.WindowShortcut
         onActivated: editor.redo()
     }
@@ -1000,6 +1031,7 @@ ApplicationWindow {
                 }
 
                 function wrapSelection(marker) {
+                    if (win.activeTableCell) return;
                     if (win.readMode) return;
                     presentation.forceActiveFocus();
                     EditorMutations.toggleWrap(editor, marker,
@@ -1007,6 +1039,7 @@ ApplicationWindow {
                 }
 
                 function wrapCode(fenced) {
+                    if (win.activeTableCell) return;
                     if (win.readMode) return;
                     presentation.forceActiveFocus();
                     livePreview.prepareFormatting();
@@ -1015,6 +1048,7 @@ ApplicationWindow {
                 }
 
                 function insertLink() {
+                    if (win.activeTableCell) return;
                     if (win.readMode) return;
                     presentation.forceActiveFocus();
                     var start = selectionStart;
@@ -1377,6 +1411,7 @@ ApplicationWindow {
                 // invisible when scrolling away. A separate item is not
                 // hidden by that private control state on a distant click.
                 cursorDelegate: Item {}
+                clip: true
                 property bool caretOn: true
                 function restartCaret() {
                     caretOn = true;
@@ -1418,55 +1453,6 @@ ApplicationWindow {
                     target: editorFlick
                     function onContentYChanged() { presentation.updateViewport(); }
                     function onHeightChanged() { presentation.updateViewport(); }
-                }
-
-                Repeater {
-                    model: livePreview.codeBlockPanels
-                    delegate: Rectangle {
-                        required property var modelData
-                        objectName: "codeBlockPanel"
-                        z: -1
-                        x: modelData.x
-                        y: modelData.y
-                        width: modelData.width
-                        height: modelData.height
-                        radius: 4
-                        color: win.darkMode ? "#252525" : "#eeeeee"
-                        border.width: 0.5
-                        border.color: Qt.rgba(win.textColor.r, win.textColor.g, win.textColor.b, 0.12)
-                        antialiasing: true
-                    }
-                }
-                Repeater {
-                    model: livePreview.listMarkers
-                    delegate: Text {
-                        required property var modelData
-                        objectName: "listPreviewMarker"
-                        text: modelData.text
-                        textFormat: Text.PlainText
-                        font: presentation.font
-                        renderType: presentation.renderType
-                        color: win.bodyTextColor
-                        x: modelData.right - width
-                        y: modelData.baseline - baselineOffset
-                        visible: !presentation.inputMethodComposing && !modelData.searchReveal
-                            && !(editor.cursorPosition >= modelData.start && editor.cursorPosition < modelData.end)
-                            && !(editor.selectionStart !== editor.selectionEnd
-                                 && editor.selectionStart < modelData.end && editor.selectionEnd > modelData.start)
-                        // Visibility is a binding, not a reset of the full list
-                        // model whenever the caret enters/leaves one prefix.
-                        // Passive decoration: native text retains all pointer,
-                        // selection, keyboard, accessibility and source offsets.
-                    }
-                }
-                Repeater {
-                    model: livePreview.codeBlockPanels
-                    delegate: CodeBlockControls {
-                        preview: livePreview
-                        readMode: win.readMode
-                        labelColor: win.mutedColor
-                        composing: presentation.inputMethodComposing
-                    }
                 }
 
                 Text {
@@ -1540,6 +1526,8 @@ ApplicationWindow {
                     presentation.forceActiveFocus();
                 })
             }
+            EditorDecorations { preview: livePreview; presentation: win.visibleEditor; sourceEditor: editor; host: win; foreground: false }
+            EditorDecorations { id: foregroundDecorations; preview: livePreview; presentation: win.visibleEditor; sourceEditor: editor; host: win; foreground: true }
         }
 
         PreviewToggle {
@@ -1567,7 +1555,7 @@ ApplicationWindow {
                 iconName: "save"
                 iconColor: win.mutedColor
                 tooltip: "Save"
-                onClicked: backend.save()
+                onClicked: if (win.commitTableCell()) backend.save()
             }
 
             FooterIconButton {
@@ -1575,7 +1563,7 @@ ApplicationWindow {
                 iconName: "open"
                 iconColor: win.mutedColor
                 tooltip: "Open"
-                onClicked: backend.openDialog()
+                onClicked: if (win.commitTableCell()) backend.openDialog()
             }
 
             FooterIconButton {

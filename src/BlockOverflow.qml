@@ -1,0 +1,36 @@
+import QtQuick
+import QtQuick.Controls
+
+// Shared, focus-neutral overflow chrome. Text/table contents retain their own
+// native hit testing; only horizontal gestures are consumed here.
+Item {
+    id: overflow
+    property real contentWidth: width
+    property real viewportWidth: width
+    property real offset: 0
+    signal scrollRequested(real offset)
+    WheelHandler {
+        acceptedModifiers: Qt.NoModifier
+        onWheel: function(event) {
+            var dx = event.pixelDelta.x !== 0 ? event.pixelDelta.x : event.angleDelta.x / 2;
+            if (dx === 0 || overflow.contentWidth <= overflow.viewportWidth) { event.accepted = false; return; }
+            overflow.scrollRequested(Math.max(0, Math.min(overflow.contentWidth - overflow.viewportWidth, overflow.offset - dx)));
+            event.accepted = true;
+        }
+    }
+    ScrollBar {
+        objectName: "blockHorizontalScrollBar"
+        anchors.bottom: parent.bottom
+        anchors.horizontalCenter: parent.horizontalCenter
+        width: Math.min(parent.width, overflow.viewportWidth)
+        height: 14
+        orientation: Qt.Horizontal
+        policy: ScrollBar.AlwaysOn
+        visible: overflow.contentWidth > overflow.viewportWidth + 0.5
+        active: hovered || pressed
+        focusPolicy: Qt.NoFocus
+        size: Math.min(1, overflow.viewportWidth / Math.max(1, overflow.contentWidth))
+        position: overflow.offset / Math.max(1, overflow.contentWidth)
+        onPositionChanged: if (pressed) overflow.scrollRequested(position * overflow.contentWidth)
+    }
+}

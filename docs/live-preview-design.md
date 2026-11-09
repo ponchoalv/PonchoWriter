@@ -23,7 +23,7 @@ This reduces ordinary editing work, not every source-copy/backend/global operati
 
 The initial target is pipe tables, standalone Markdown image paragraphs, and explicitly tagged Mermaid fences. Ordinary Markdown and inline formatting retain their existing behavior. Headings hide their markers outside the active heading; moving the caret into a heading reveals its Markdown.
 
-Qt's native Markdown renderer understands tables, local pictures and links. It is not a browser: arbitrary CSS, JavaScript and web layouts are outside scope. General table-cell editing and graphical Mermaid node editing are also outside scope; activate the block and edit its source instead.
+Qt's native Markdown renderer understands tables, local pictures and links. It is not a browser: arbitrary CSS, JavaScript and web layouts are outside scope. Table-cell editing is now a bounded, virtualized native overlay over a mapped table slot; accepted changes patch canonical Markdown. A Source escape hatch retains ordinary text selection/undo. Read keeps native selectable tables, not a second grid. Graphical Mermaid node editing remains outside scope. See [table architecture, limits and horizontal overflow](tables-and-horizontal-overflow.md).
 
 A rendered structural block needs a deterministic source activation position, not a claim of pixel-perfect table-cell cursor mapping. Selections touching a preview must reveal source before editing. Changes in representation must preserve a source-based scroll anchor where possible. Input-method composition must not be rebuilt underneath an unfinished composition.
 

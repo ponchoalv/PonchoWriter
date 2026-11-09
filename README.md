@@ -16,7 +16,8 @@ Created and maintained by **Alfonso Alvarez**: [ponchoalv/PonchoWriter](https://
 
 ## Features
 
-- Native Edit/Read toggle with inactive table/local-image previews and caret-aware heading markers. Markdown stays the source of truth with one undo history.
+- Native Edit/Read toggle, editable table grids with a Markdown escape hatch, local-image previews and caret-aware heading markers. Markdown stays the source of truth with one undo history.
+- [Local horizontal scrolling](docs/tables-and-horizontal-overflow.md) for code and tables, with virtualized Edit cells and native selectable Read tables.
 - Clipboard screenshot paste, durable recovery-safe staging, `img/` materialization and collision-safe attachment handling across Save As.
 - Theme-aware language-tagged code-fence highlighting in Edit and Read, using standalone KSyntaxHighlighting rather than Kate.
 - Optional constrained Mermaid rendering through an already-installed external `mmdc`; no embedded WebEngine or automatic runtime downloads.

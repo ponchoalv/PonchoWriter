@@ -25,6 +25,7 @@
 #include <QScopeGuard>
 #include "../../src/mermaidrenderer.h"
 #include "../../src/livepreview.h"
+#include "../../src/markdowntablemodel.h"
 #include "../../src/codehighlighter.h"
 #include "../../src/markdownhighlighter.h"
 
@@ -90,6 +91,87 @@ private slots:
         flush();
     }
     void cleanup() { controller.reset(); root.reset(); }
+    void tableModelEditsAreSignalOnlyBoundedAndSafe() {
+        MarkdownTableModel model;
+        QString table = "| A | B |\n| :--- | ---: |\n| x | y |";
+        model.setSource(table, QFont());
+        QCOMPARE(model.rowCount(), 2); QCOMPARE(model.columnCount(), 2);
+        QSignalSpy request(&model, &MarkdownTableModel::replaceRequested);
+        bool accept = true;
+        connect(&model, &MarkdownTableModel::replaceRequested, &model, [&] { if (accept) model.acknowledgeReplacement(); });
+        QVERIFY(model.setCell(1, 1, QString::fromUtf8("😀 | literal")));
+        QCOMPARE(request.size(), 1);
+        QCOMPARE(model.data(model.index(1, 1), MarkdownTableModel::MarkdownRole).toString(), QString("y"));
+        auto apply = [&] {
+            const auto args = request.takeLast(); request.clear();
+            table.replace(args[0].toInt(), args[1].toInt(), args[2].toString());
+            model.setSource(table, QFont());
+        };
+        apply(); QVERIFY(table.contains(QString::fromUtf8("😀 \\| literal")));
+        accept = false; QVERIFY(!model.setCell(1, 1, "stale")); request.clear(); accept = true;
+        QVERIFY(!model.setCell(0, 0, "line\nbreak"));
+        QVERIFY(!model.removeRow(0));
+        QVERIFY(model.insertRow(1)); apply(); QCOMPARE(model.rowCount(), 3);
+        QVERIFY(model.insertColumn(0)); apply(); QCOMPARE(model.columnCount(), 3);
+        QVERIFY(table.contains(":---")); QVERIFY(table.contains("---:"));
+        QVERIFY(model.removeColumn(1)); apply(); QCOMPARE(model.columnCount(), 2);
+        QVERIFY(model.removeRow(2)); apply(); QCOMPARE(model.rowCount(), 2);
+        model.setSource("| A |\n| --- |\n| ![x](https://invalid.example/a.png) <script>x</script> |", QFont());
+        const auto html = model.data(model.index(1, 0), MarkdownTableModel::HtmlRole).toString();
+        QVERIFY(!html.contains("<img")); QVERIFY(!html.contains("<script>"));
+        QVERIFY(!model.removeColumn(0));
+        model.setProperty("drafts", QVariantMap{{"1:0", QVariantMap{{"text", "uncommitted"}, {"original", ""}}}});
+        const auto revision = model.draftRevision();
+        model.setSource("| A |\n| --- |\n| different |", QFont());
+        QVERIFY(model.draftRevision() > revision);
+        const auto recovered = model.property("drafts").toMap();
+        QVERIFY(!recovered.contains("1:0")); QVERIFY(recovered.firstKey().startsWith("recovered/"));
+        QCOMPARE(recovered.first().toMap()["text"].toString(), QString("uncommitted"));
+        model.setSource(QString(4 * 1024 * 1024 + 1, 'x'), QFont()); QCOMPARE(model.rowCount(), 0);
+    }
+    void tableGridUsesCanonicalUndoAndSourceEscape() {
+        const auto panel = controller->tablePanels().first().toMap();
+        auto *model = qobject_cast<MarkdownTableModel *>(qvariant_cast<QObject *>(panel["model"])); QVERIFY(model);
+        const QString original = source->toPlainText(); source->clearUndoRedoStacks();
+        QVERIFY(model->setCell(1, 1, "**changed**")); flush();
+        QVERIFY(source->toPlainText().contains("**changed**"));
+        QCOMPARE(controller->tablePanels().first().toMap()["id"], panel["id"]);
+        source->undo(); flush(); QCOMPARE(source->toPlainText(), original); QVERIFY(!source->isUndoAvailable());
+        controller->setTableSource(panel["id"].toInt(), true); flush();
+        QVERIFY(controller->tablePanels().isEmpty()); QVERIFY(view->toPlainText().contains("| A | B |"));
+        const auto raw = controller->codeBlockPanels().first().toMap(); QCOMPARE(raw["tableId"].toInt(), panel["id"].toInt());
+        for (auto b = view->findBlockByNumber(raw["firstBlock"].toInt()); b.blockNumber() <= raw["lastBlock"].toInt(); b = b.next())
+            QVERIFY(b.blockFormat().nonBreakableLines());
+        select(sourceItem, source->characterCount() - 1, source->characterCount() - 1);
+        QVERIFY(!controller->tablePanels().isEmpty());
+        controller->setReadMode(true); flush(); QVERIFY(controller->tablePanels().isEmpty());
+        QVERIFY(!controller->tableScrollPanels().isEmpty());
+        QVERIFY(view->toPlainText().contains("one"));
+    }
+    void codeOverflowKeepsNativeSelectionAndRestoresProseWrap() {
+        const QString longLine = QString("long_identifier ").repeated(100);
+        const QString text = "before\n\n```cpp\n" + longLine + "\n```\n\nafter";
+        source->setPlainText(text); select(sourceItem, 0, 0);
+        auto panel = controller->codeBlockPanels().first().toMap();
+        QVERIFY(panel["contentWidth"].toReal() > panel["viewportWidth"].toReal());
+        auto first = view->findBlockByNumber(panel["firstBlock"].toInt());
+        auto body = first.next(); QCOMPARE(body.layout()->lineCount(), 1);
+        controller->scrollBlock(panel["id"].toInt(), 150); flush();
+        QCOMPARE(controller->blockOffsets().value(QString::number(panel["id"].toInt())).toReal(), qreal(150));
+        QVERIFY(body.blockFormat().textIndent() < 0); QCOMPARE(source->toPlainText(), text);
+        select(viewItem, body.position() + 5, body.position() + 15);
+        QCOMPARE(viewItem->property("selectedText").toString(), longLine.mid(5, 10));
+        for (bool read : {true, false}) {
+            controller->setReadMode(read); flush(); panel = controller->codeBlockPanels().first().toMap();
+            controller->scrollBlock(panel["id"].toInt(), 150); flush();
+            viewItem->setProperty("width", 30000); controller->refresh(); flush();
+            QCOMPARE(controller->blockOffsets().value(QString::number(panel["id"].toInt())).toReal(), qreal(0));
+            viewItem->setProperty("width", 550); controller->refresh(); flush();
+        }
+        source->setPlainText("ordinary " + longLine); flush();
+        QVERIFY(!view->begin().blockFormat().nonBreakableLines());
+        QVERIFY(!view->begin().blockFormat().hasProperty(QTextFormat::UserProperty + 120));
+    }
     void modeSwitchesRetainEditBlocksHighlighterAndCachedRead() {
         const QString text = QString("Ordinary paragraph with **strong** text.\n\n").repeated(800)
             + "```cpp\nint answer = 42;\n```\n\nlast";
@@ -554,8 +636,8 @@ private slots:
                     >= blankY + blank.layout()->lineAt(0).height());
             QVERIFY(first.value("height").toReal() > 4 * 20); // Includes blank + wrapped lines.
             viewItem->setProperty("width", 220); controller->refresh(); flush();
-            QVERIFY(controller->codeBlockPanels().first().toMap().value("height").toReal()
-                    > first.value("height").toReal());
+            QCOMPARE(controller->codeBlockPanels().first().toMap().value("height").toReal(), first.value("height").toReal());
+            QVERIFY(controller->codeBlockPanels().first().toMap().value("contentWidth").toReal() > 220);
             viewItem->setProperty("width", 550); controller->refresh(); flush();
             QCOMPARE(source->toPlainText(), text);
             QVERIFY(!source->isUndoAvailable());
@@ -599,10 +681,10 @@ private slots:
         QSignalSpy rebuilds(controller.get(), &LivePreview::projectionChanged);
         QInputMethodEvent preedit(QString(200, 'a'), {});
         QCoreApplication::sendEvent(viewItem, &preedit); flush();
-        QTRY_VERIFY(controller->codeBlockPanels().first().toMap().value("height").toReal()
-                    > before.first().toMap().value("height").toReal());
-        QVERIFY(controller->codeBlockPanels().last().toMap().value("y").toReal()
-                > before.last().toMap().value("y").toReal());
+        QTRY_VERIFY(controller->codeBlockPanels().first().toMap().value("contentWidth").toReal()
+                    > before.first().toMap().value("contentWidth").toReal());
+        QCOMPARE(controller->codeBlockPanels().first().toMap().value("height").toReal(), before.first().toMap().value("height").toReal());
+        QCOMPARE(controller->codeBlockPanels().last().toMap().value("y").toReal(), before.last().toMap().value("y").toReal());
         QCOMPARE(rebuilds.count(), 0);
         QCOMPARE(source->toPlainText(), text);
         QInputMethodEvent cancel(QString(), {});
@@ -1050,6 +1132,7 @@ private slots:
     void activeBlockAndBackwardsSelection() {
         const int tableStart = markdown.indexOf('|');
         select(sourceItem, tableStart + 4, tableStart + 4);
+        controller->setTableSource(controller->m_tables.first().id, true); flush();
         QVERIFY(!view->toPlainText().contains(QChar::ObjectReplacementCharacter));
         QCOMPARE(view->toPlainText(), markdown);
         select(sourceItem, markdown.size() - 1, 2);

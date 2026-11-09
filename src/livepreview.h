@@ -11,6 +11,8 @@ class MarkdownHighlighter;
 class MermaidRenderer;
 class SpellingController;
 class QKeyEvent;
+class MarkdownTableModel;
+class QTextTable;
 
 // The backend owns source and its undo stack. This document is disposable UI.
 class LivePreview : public QObject {
@@ -21,6 +23,9 @@ class LivePreview : public QObject {
     Q_PROPERTY(QObject *spelling READ spelling WRITE setSpelling)
     Q_PROPERTY(QVariantList codeBlockPanels READ codeBlockPanels NOTIFY codeBlockPanelsChanged)
     Q_PROPERTY(QVariantList listMarkers READ listMarkers NOTIFY listMarkersChanged)
+    Q_PROPERTY(QVariantList tablePanels READ tablePanels NOTIFY tablePanelsChanged)
+    Q_PROPERTY(QVariantList tableScrollPanels READ tableScrollPanels NOTIFY tablePanelsChanged)
+    Q_PROPERTY(QVariantMap blockOffsets READ blockOffsets NOTIFY blockOffsetsChanged)
 public:
     struct Segment {
         int sourceStart, sourceEnd, viewStart, viewEnd;
@@ -41,6 +46,12 @@ public:
     Q_INVOKABLE void copySource();
     Q_INVOKABLE bool copyCodeBlock(int panelIndex);
     Q_INVOKABLE void prepareEdit();
+    Q_INVOKABLE void setTableSource(int id, bool source);
+    Q_INVOKABLE bool copyTableDrafts(int id = 0);
+    Q_INVOKABLE void discardTableDrafts();
+    Q_PROPERTY(bool tableDraftsPending READ tableDraftsPending NOTIFY tableDraftsChanged)
+    bool tableDraftsPending() const;
+    Q_INVOKABLE void scrollBlock(int id, qreal offset);
     Q_INVOKABLE void prepareFormatting();
     Q_INVOKABLE void setSearchHighlight(const QString &query, int currentMatchStart);
     Q_INVOKABLE QString imagePathAt(int viewPosition) const;
@@ -55,6 +66,9 @@ public:
     const QList<Segment> &segments() const { return m_segments; }
     QVariantList codeBlockPanels() const { return m_codeBlockPanels; }
     QVariantList listMarkers() const { return m_listMarkers; }
+    QVariantList tablePanels() const { return m_tablePanels; }
+    QVariantList tableScrollPanels() const { return m_tableScrollPanels; }
+    QVariantMap blockOffsets() const { return m_blockOffsets; }
 signals:
     void readModeChanged();
     void imeCursorVisibleChanged();
@@ -62,6 +76,9 @@ signals:
     void formatCodeRequested(bool fenced);
     void codeBlockPanelsChanged();
     void listMarkersChanged();
+    void tablePanelsChanged();
+    void tableDraftsChanged();
+    void blockOffsetsChanged();
     void projectionAboutToChange();
     void projectionChanged();
     void projectionReady();
@@ -98,6 +115,31 @@ private:
     friend class LivePreviewTest;
     void updateCodeBlockPanels();
     void styleCodeBlocks();
+    void syncTables();
+    void shiftTables(int position, int removed, int added);
+    void updateTablePanels();
+    void styleOverflow();
+    struct TableSession {
+        int id, start, end;
+        QString markdown;
+        bool source = false;
+        QPointer<MarkdownTableModel> model;
+    };
+    struct Overflow {
+        int id;
+        QTextBlock first, last;
+        QPointer<QTextTable> table;
+        qreal offset = 0, width = 0;
+    };
+    QList<TableSession> m_tables;
+    QVariantMap m_recoveredTableDrafts;
+    QList<Overflow> m_overflows;
+    QList<QTextBlock> m_unwrapped;
+    QVariantList m_tablePanels, m_tableScrollPanels;
+    QVariantMap m_blockOffsets;
+    int m_nextPanelId = 1;
+    bool m_overflowScrolling = false, m_revealOverflowCaret = true;
+    Overflow &overflowFor(const QTextBlock &first, const QTextBlock &last, QTextTable *table = nullptr);
     void finishProjectionChange();
     bool m_projectionChanging = false;
     QPair<int, int> visibleBlocks() const;

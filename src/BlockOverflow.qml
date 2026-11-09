@@ -11,8 +11,11 @@ Item {
     // Local coordinates: keep the bar at the visible block bottom, not the
     // distant end of a tall native paragraph group.
     property real viewportBottom: height
+    property alias wheelOrientation: wheelHandler.orientation
+    property alias wheelDevices: wheelHandler.acceptedDevices
     signal scrollRequested(real offset)
     WheelHandler {
+        id: wheelHandler
         acceptedModifiers: Qt.NoModifier
         onWheel: function(event) {
             var dx = event.pixelDelta.x !== 0 ? event.pixelDelta.x : event.angleDelta.x / 2;

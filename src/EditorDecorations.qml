@@ -77,8 +77,23 @@ Item {
         for (var key in tableItems) if (!tableItems[key].commitCell()) return false;
         return true;
     }
-    Connections { target: decoration.preview; function onTablePanelsChanged() { decoration.syncTables(); } }
-    Component.onCompleted: syncTables()
+    // A QVariantList Repeater recreates every delegate when native frame
+    // bounds change during scrolling. Keep the Read scrollbar's mouse grab
+    // attached to the same item for the entire table session instead.
+    property var tableScrollItems: ({})
+    function syncTableScrolls() {
+        if (!foreground) return;
+        var next = {}, panels = preview.tableScrollPanels;
+        for (var n = 0; n < panels.length; ++n) {
+            var data = panels[n], key = String(data.id), item = tableScrollItems[key];
+            if (!item) item = tableScrollComponent.createObject(decoration, { modelData: data });
+            if (item) { item.modelData = data; next[key] = item; }
+        }
+        for (var old in tableScrollItems) if (!next[old]) tableScrollItems[old].destroy();
+        tableScrollItems = next;
+    }
+    Connections { target: decoration.preview; function onTablePanelsChanged() { decoration.syncTables(); decoration.syncTableScrolls(); } }
+    Component.onCompleted: { syncTables(); syncTableScrolls(); }
     Component {
         id: tableComponent
         TableGrid {
@@ -95,9 +110,12 @@ Item {
             }
         }
     }
-    Repeater {
-        model: decoration.foreground ? decoration.preview.tableScrollPanels : []
-        delegate: BlockOverflow {
+    Component {
+        id: tableScrollComponent
+        BlockOverflow {
+            objectName: "readTableOverflow"
+            wheelOrientation: Qt.Horizontal
+            wheelDevices: PointerDevice.Mouse | PointerDevice.TouchPad
             required property var modelData
             x: modelData.x
             y: modelData.y

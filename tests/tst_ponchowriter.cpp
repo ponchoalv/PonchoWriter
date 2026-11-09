@@ -263,10 +263,10 @@ private slots:
         for (auto *item : visualDescendants(view->parentItem())) if (item->objectName() == "blockHorizontalScrollBar" && item->isVisible()) { bar = item; break; }
         QVERIFY(bar);
         QVERIFY(qAbs(bar->mapRectToScene(QRectF(0, 0, bar->width(), bar->height())).bottom() - viewport.bottom()) < 3);
-        const QString tableText = "before\n\n| Left heading | Right heading |\n| --- | --- |\n| " + QString("W").repeated(160) + " | right cell |\n\nafter";
+        const QString tableText = "before\n\n| Left heading | Right heading |\n| --- | --- |\n| " + QString("W").repeated(160) + " | right cell |\n\nafter\n\n| Another heading | Last heading |\n| --- | --- |\n| " + QString("Z").repeated(140) + " | other cell |";
         source->setProperty("text", tableText); source->setProperty("cursorPosition", 0);
         root->setProperty("readMode", true);
-        QTRY_VERIFY(!projection->tableScrollPanels().isEmpty()); flick->setProperty("contentY", 0); QTest::qWait(30);
+        QTRY_COMPARE(projection->tableScrollPanels().size(), 2); flick->setProperty("contentY", 0); QTest::qWait(30);
         auto *doc = qvariant_cast<QQuickTextDocument *>(view->property("textDocument"))->textDocument();
         QTextTable *table = nullptr;
         for (auto *frame : doc->rootFrame()->childFrames()) if ((table = qobject_cast<QTextTable *>(frame))) break;
@@ -277,15 +277,49 @@ private slots:
         if (QGuiApplication::platformName() != "offscreen") { before = window->grabWindow(); QVERIFY(!before.isNull()); }
         QSignalSpy redraw(doc->documentLayout(), &QAbstractTextDocumentLayout::update);
         const int tableId = projection->tableScrollPanels().first().toMap()["id"].toInt();
-        projection->scrollBlock(tableId, 150);
+        QPointer<QQuickItem> readBar;
+        for (auto *item : visualDescendants(view->parentItem())) if (item->objectName() == "blockHorizontalScrollBar" && item->isVisible()) { readBar = item; break; }
+        QVERIFY(readBar);
+        const auto press = readBar->mapToScene(QPointF(readBar->width() * readBar->property("size").toReal() / 2, readBar->height() / 2)).toPoint();
+        QTest::mousePress(window, Qt::LeftButton, Qt::NoModifier, press);
+        QScopeGuard release([&] { QTest::mouseRelease(window, Qt::LeftButton, Qt::NoModifier, press + QPoint(120, 0)); });
+        QTRY_VERIFY(readBar && readBar->property("pressed").toBool());
+        for (int dx : {20, 40, 60, 80, 100, 120}) {
+            QTest::mouseMove(window, press + QPoint(dx, 0), 10); QCoreApplication::processEvents();
+            QVERIFY(readBar); // Publishing new native table bounds must not destroy the mouse grabber.
+            QVERIFY(readBar->property("pressed").toBool());
+        }
+        const qreal offset = projection->blockOffsets().value(QString::number(tableId)).toReal();
+        QVERIFY(offset > 100);
         QTRY_VERIFY(redraw.size() > 0); QTest::qWait(30);
         const auto afterBounds = doc->documentLayout()->frameBoundingRect(table);
-        QVERIFY(qAbs(afterBounds.left() - beforeBounds.left() + 150) < 1);
+        QVERIFY(qAbs(afterBounds.left() - beforeBounds.left() + offset) < 1);
         if (!before.isNull()) QVERIFY(before.copy(region) != window->grabWindow().copy(region)); // Native glyphs actually moved.
+        QTest::mouseMove(window, press + QPoint(20, 0), 10); QCoreApplication::processEvents();
+        QVERIFY(readBar && readBar->property("pressed").toBool());
+        QVERIFY(projection->blockOffsets().value(QString::number(tableId)).toReal() < offset / 2);
+        QTest::mouseRelease(window, Qt::LeftButton, Qt::NoModifier, press + QPoint(20, 0)); release.dismiss();
+        const auto wheelPoint = readBar->mapToScene(QPointF(readBar->width() / 2, -25));
+        const qreal beforeWheel = projection->blockOffsets().value(QString::number(tableId)).toReal();
+        QWheelEvent wheel(wheelPoint, window->mapToGlobal(wheelPoint.toPoint()), QPoint(-80, 0), QPoint(), Qt::NoButton, Qt::NoModifier, Qt::ScrollUpdate, false);
+        QCoreApplication::sendEvent(window, &wheel);
+        QTRY_VERIFY(projection->blockOffsets().value(QString::number(tableId)).toReal() > beforeWheel);
+        QVERIFY(readBar);
+        const qreal beforeTouchpad = projection->blockOffsets().value(QString::number(tableId)).toReal();
+        QWheelEvent touchpad(wheelPoint, window->mapToGlobal(wheelPoint.toPoint()), QPoint(40, 0), QPoint(), Qt::NoButton, Qt::NoModifier, Qt::ScrollEnd, false, Qt::MouseEventSynthesizedBySystem);
+        QCoreApplication::sendEvent(window, &touchpad);
+        QTRY_VERIFY(projection->blockOffsets().value(QString::number(tableId)).toReal() < beforeTouchpad);
+        const int secondId = projection->tableScrollPanels().last().toMap()["id"].toInt();
+        QVERIFY(secondId != tableId);
+        QCOMPARE(projection->blockOffsets().value(QString::number(secondId)).toReal(), 0.0);
         const auto header = doc->documentLayout()->blockBoundingRect(table->cellAt(0, 0).firstCursorPosition().block());
         const auto body = doc->documentLayout()->blockBoundingRect(table->cellAt(1, 0).firstCursorPosition().block());
         QVERIFY(header.bottom() <= body.top());
         QCOMPARE(qvariant_cast<QQuickTextDocument *>(source->property("textDocument"))->textDocument()->toPlainText(), tableText);
+        root->setProperty("readMode", false);
+        QTRY_VERIFY(readBar.isNull()); // Leaving Read still releases old chrome.
+        root->setProperty("readMode", true);
+        QTRY_COMPARE(projection->tableScrollPanels().size(), 2);
     }
     void codePanelHoverCopyAndReadLanguageUseQtClipboard() {
         QTemporaryDir directory; QVERIFY(directory.isValid());

@@ -542,12 +542,13 @@ void Backend::finishClosing() {
     clearRecovery();
 }
 
-void Backend::copyAsHtml(int start, int end, QObject *renderedDocument) {
+void Backend::copyAsHtml(int start, int end, QObject *renderedDocument, bool plainMarkup) {
     QTextDocument rendered;
     const bool selected = start >= 0 && end > start;
     auto *quick = qobject_cast<QQuickTextDocument *>(renderedDocument);
-    if (selected && quick && quick->textDocument()) {
-        QTextDocument *view = quick->textDocument();
+    auto *view = qobject_cast<QTextDocument *>(renderedDocument);
+    if (!view && quick) view = quick->textDocument();
+    if (selected && view) {
         QTextCursor selection(view);
         selection.setPosition(qBound(0, start, view->characterCount() - 1));
         selection.setPosition(qBound(0, end, view->characterCount() - 1), QTextCursor::KeepAnchor);
@@ -603,9 +604,9 @@ void Backend::copyAsHtml(int start, int end, QObject *renderedDocument) {
     mimeData->setHtml(html);
     // Rich destinations use text/html; code/plain-text destinations must get
     // the exported markup too, not silently fall back to rendered words.
-    mimeData->setText(html);
+    mimeData->setText(plainMarkup ? html : rendered.toPlainText());
     QGuiApplication::clipboard()->setMimeData(mimeData);
-    setStatus(QStringLiteral("Copied as HTML."));
+    if (plainMarkup) setStatus(QStringLiteral("Copied as HTML."));
 }
 
 QString Backend::attachmentStoragePath() const {

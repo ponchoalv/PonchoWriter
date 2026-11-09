@@ -1,6 +1,8 @@
 #include "markdowntablemodel.h"
 
 #include <QHash>
+#include <QSet>
+#include <algorithm>
 #include <QFontMetricsF>
 #include <QRegularExpression>
 #include <QStringList>
@@ -259,10 +261,13 @@ void MarkdownTableModel::setSource(const QString &markdown, const QFont &font)
         return;
     QVector<Line> lines;
     QVector<QVector<Cell>> rows;
-    if (!parse(markdown, lines, rows)) {
-        lines.clear();
-        rows.clear();
+    if (m_acknowledged && markdown == m_expectedSource && !m_validatedRows.isEmpty()) {
+        lines = std::move(m_validatedLines); rows = std::move(m_validatedRows);
+    } else {
+        ++m_parseCount;
+        if (!parse(markdown, lines, rows)) { lines.clear(); rows.clear(); }
     }
+    m_validatedLines.clear(); m_validatedRows.clear();
     const bool alignmentChanged = m_lines.size() > 1 && lines.size() > 1
         && m_source.mid(m_lines.at(1).offset, m_lines.at(1).length) != markdown.mid(lines.at(1).offset, lines.at(1).length);
     const bool fontChanged = !m_initialized || m_font != font;
@@ -303,8 +308,18 @@ void MarkdownTableModel::setSource(const QString &markdown, const QFont &font)
     m_initialized = true;
     m_lines = std::move(lines);
     m_rows = std::move(rows);
-    if (!sameShape || fontChanged) m_widths.fill(-1, columnCount());
-    else for (const auto &cell : changed) m_widths[cell.second] = -1;
+    bool widthsChanged = !sameShape || fontChanged;
+    if (widthsChanged) m_widths.fill(-1, columnCount());
+    else {
+        QSet<int> columns;
+        for (const auto &cell : changed) columns.insert(cell.second);
+        for (int column : columns) {
+            const qreal oldWidth = m_widths.at(column);
+            if (oldWidth < 0) continue; // An offscreen, unsized column needs no layout.
+            m_widths[column] = -1;
+            widthsChanged |= !qFuzzyCompare(oldWidth, columnWidth(column));
+        }
+    }
     if (!sameShape) {
         endResetModel();
     } else {
@@ -314,12 +329,25 @@ void MarkdownTableModel::setSource(const QString &markdown, const QFont &font)
         if (alignmentChanged && rowCount() && columnCount())
             emit dataChanged(index(0, 0), index(rowCount() - 1, columnCount() - 1), {AlignmentRole});
     }
+    if (widthsChanged) emit columnWidthsChanged();
 }
 
 void MarkdownTableModel::render(const Cell &cell) const
 {
     if (cell.rendered)
         return;
+    // Most data-table cells are literal numbers/words. Avoid constructing
+    // Markdown documents for those; keep all potential Markdown/autolinks
+    // on the exact Qt parser path.
+    static const QString special = QStringLiteral("\\\\`*_~[]<>!&@");
+    const bool literal = std::none_of(cell.markdown.cbegin(), cell.markdown.cend(), [](QChar c) {
+        return special.contains(c) || c.category() == QChar::Other_Control;
+    }) && !cell.markdown.contains("://") && !cell.markdown.contains("www.", Qt::CaseInsensitive);
+    if (literal) {
+        cell.html = QStringLiteral("<p>") + cell.markdown.toHtmlEscaped() + QStringLiteral("</p>");
+        cell.rendered = true; return;
+    }
+    ++m_richRenders;
     ResourceFreeDocument document;
     document.setDefaultFont(m_font);
     // A synthetic table gives Qt an inline context (a leading '#', for
@@ -358,12 +386,6 @@ void MarkdownTableModel::render(const Cell &cell) const
         // Defensive fallback if a future Qt parser changes table recognition.
         cell.html = QStringLiteral("<p>") + cell.markdown.toHtmlEscaped() + QStringLiteral("</p>");
     }
-    ResourceFreeDocument measure;
-    measure.setDefaultFont(m_font);
-    measure.setDocumentMargin(0);
-    measure.setHtml(cell.html);
-    measure.setTextWidth(-1);
-    cell.width = qBound(MinWidth, measure.idealWidth() + 24, MaxWidth);
     cell.rendered = true;
 }
 
@@ -377,7 +399,9 @@ qreal MarkdownTableModel::columnWidth(int column) const
         for (const auto &row : m_rows) {
             // Widths may overestimate inline markup slightly. Never parse or
             // create rich documents for off-screen cells just to size a column.
-            width = qMax(width, qMin(MaxWidth, metrics.horizontalAdvance(row.at(column).markdown) + 24));
+            const auto &cell = row.at(column);
+            if (cell.width < 0) { cell.width = qMin(MaxWidth, metrics.horizontalAdvance(cell.markdown) + 24); ++m_widthMeasurements; }
+            width = qMax(width, cell.width);
             if (width >= MaxWidth)
                 break;
         }
@@ -445,6 +469,7 @@ bool MarkdownTableModel::setCell(int row, int column, const QString &value)
     proposed.replace(cell.offset, cell.length, replacement);
     QVector<Line> lines;
     QVector<QVector<Cell>> rows;
+    ++m_parseCount;
     if (!parse(proposed, lines, rows) || rows.size() != m_rows.size()
         || rows.first().size() != columnCount())
         return false;
@@ -452,16 +477,18 @@ bool MarkdownTableModel::setCell(int row, int column, const QString &value)
     // call setSource, invalidating cell. No state is changed optimistically.
     const int offset = cell.offset;
     const int length = cell.length;
-    return requestReplacement(offset, length, replacement);
+    return requestReplacement(offset, length, replacement, std::move(lines), std::move(rows));
 }
 
-bool MarkdownTableModel::requestReplacement(int offset, int length, const QString &replacement)
+bool MarkdownTableModel::requestReplacement(int offset, int length, const QString &replacement,
+                                           QVector<Line> lines, QVector<QVector<Cell>> rows)
 {
+    m_validatedLines = std::move(lines); m_validatedRows = std::move(rows);
     m_acknowledged = false;
     m_expectedSource = m_source;
     m_expectedSource.replace(offset, length, replacement);
     emit replaceRequested(offset, length, replacement);
-    if (!m_acknowledged) m_expectedSource.clear();
+    if (!m_acknowledged) { m_expectedSource.clear(); m_validatedLines.clear(); m_validatedRows.clear(); }
     return m_acknowledged;
 }
 
@@ -469,10 +496,11 @@ bool MarkdownTableModel::requestTable(const QString &replacement)
 {
     QVector<Line> lines;
     QVector<QVector<Cell>> rows;
+    ++m_parseCount;
     if (!parse(replacement, lines, rows))
         return false;
     const int length = int(m_source.size());
-    return requestReplacement(0, length, replacement);
+    return requestReplacement(0, length, replacement, std::move(lines), std::move(rows));
 }
 
 bool MarkdownTableModel::insertRow(int afterRow)

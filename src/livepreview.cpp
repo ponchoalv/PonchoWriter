@@ -17,12 +17,14 @@
 #include <QSignalBlocker>
 #include <QTextBlock>
 #include <QTextCursor>
+#include <QTextDocumentFragment>
 #include <QTextImageFormat>
 #include <QTextLayout>
 #include <QTextTable>
 #include "markdowntablemodel.h"
 #include <QSet>
 #include <QTimer>
+#include <QUuid>
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -600,12 +602,23 @@ void LivePreview::buildReadDocument(const QString &source) {
     rendered.setDefaultFont(m_view->defaultFont());
     QString markdown = source;
     QHash<QString, QImage> diagrams;
+    QHash<QString, int> tableMarkers;
+    QString tableNamespace;
+    do { tableNamespace = QStringLiteral("preview:table/%1/").arg(QUuid::createUuid().toString(QUuid::WithoutBraces)); }
+    while (source.contains(tableNamespace));
     const auto &blocks = m_blockParser.blocks();
     qsizetype diagramBytes = 0;
     for (auto it = blocks.crbegin(); it != blocks.crend(); ++it) {
-        if (it->kind != PreviewBlocks::Kind::Mermaid
+        const bool table = it->kind == PreviewBlocks::Kind::Table;
+        if ((!table && it->kind != PreviewBlocks::Kind::Mermaid)
             || diagrams.size() >= MaxProjectionObjects || diagramBytes >= MaxProjectionBytes)
             continue;
+        int tableId = 0;
+        if (table) {
+            const auto session = std::find_if(m_tables.cbegin(), m_tables.cend(), [&](const auto &t) { return t.start == it->start; });
+            if (session == m_tables.cend() || !session->model || !session->model->rowCount()) continue;
+            tableId = session->id;
+        }
         const QImage image = imageFor(*it);
         if (image.isNull())
             continue;
@@ -614,9 +627,11 @@ void LivePreview::buildReadDocument(const QString &source) {
             continue;
         }
         diagramBytes += image.sizeInBytes();
-        const QString name = QStringLiteral("preview:mermaid/%1").arg(it->start);
+        const QString name = table ? tableNamespace + QString::number(tableId) : QStringLiteral("preview:mermaid/%1").arg(it->start);
         diagrams.insert(name, image);
-        markdown.replace(it->start, it->end - it->start, QStringLiteral("![Mermaid diagram](%1)").arg(name));
+        if (table) tableMarkers.insert(name, tableId);
+        // One descending pass: neither table nor Mermaid source offsets drift.
+        markdown.replace(it->start, it->end - it->start, QStringLiteral("![%1](%2)").arg(table ? "Table" : "Mermaid diagram", name));
     }
     rendered.setMarkdown(markdown, QTextDocument::MarkdownDialectGitHub);
     // Resolve every image ourselves, including inline images. Qt Quick must
@@ -632,6 +647,7 @@ void LivePreview::buildReadDocument(const QString &source) {
     int index = 0;
     QList<QPair<QUrl, QImage>> resources;
     QHash<QString, QString> readImagePaths;
+    QHash<QString, int> tableResources;
     qsizetype resourceBytes = 0;
     for (auto it = images.crbegin(); it != images.crend(); ++it) {
         const auto &entry = *it;
@@ -657,6 +673,7 @@ void LivePreview::buildReadDocument(const QString &source) {
             format.setName(QStringLiteral("preview:read/%1").arg(index++));
             format.setWidth(image.width()); format.setHeight(image.height());
             if (!diagrams.contains(entry.second.name())) readImagePaths.insert(format.name(), entry.second.name());
+            if (tableMarkers.contains(entry.second.name())) tableResources.insert(format.name(), tableMarkers.value(entry.second.name()));
             resources.append({QUrl(format.name()), image});
             cursor.insertImage(format);
         }
@@ -669,6 +686,20 @@ void LivePreview::buildReadDocument(const QString &source) {
     m_readImagePaths = readImagePaths;
     const auto codeGroups = highlightReadCode(rendered, markdown, m_viewItem->property("previewDark").toBool());
     m_view->setHtml(rendered.toHtml());
+    m_readTablePositions.clear();
+    QSet<int> duplicateTables;
+    for (auto block = m_view->begin(); block.isValid(); block = block.next()) {
+        for (auto it = block.begin(); !it.atEnd(); ++it) {
+            const auto fragment = it.fragment();
+            if (!fragment.charFormat().isImageFormat()) continue;
+            const auto name = fragment.charFormat().toImageFormat().name();
+            if (!tableResources.contains(name)) continue;
+            const int id = tableResources.value(name);
+            if (m_readTablePositions.contains(id) || fragment.length() != 1) duplicateTables.insert(id);
+            else m_readTablePositions.insert(id, fragment.position());
+        }
+    }
+    for (int id : duplicateTables) m_readTablePositions.remove(id);
     // Carry explicit fence boundaries across HTML only when block identities
     // survive. Adjacent same-language fences must remain separate panels.
     m_readCodeBlocks = rendered.blockCount() == m_view->blockCount()
@@ -1307,11 +1338,58 @@ bool LivePreview::copyCodeBlock(int panelIndex) {
     return true;
 }
 
+bool LivePreview::copyReadSelection(bool asHtml) {
+    if (!m_readMode || !m_source || !m_view || !m_viewItem || !m_resolver
+        || documentText(m_source) != m_projectionSource) return false;
+    const int start = m_viewItem->property("selectionStart").toInt();
+    const int end = m_viewItem->property("selectionEnd").toInt();
+    if (start >= end) return false;
+    QHash<QString, QString> tables;
+    for (const auto &session : m_tables) {
+        const int position = m_readTablePositions.value(session.id, -1);
+        if (position < start || position >= end || !session.model) continue;
+        QTextCursor slot(m_view); slot.setPosition(position); slot.movePosition(QTextCursor::NextCharacter, QTextCursor::KeepAnchor);
+        if (slot.charFormat().isImageFormat()) tables.insert(slot.charFormat().toImageFormat().name(), session.markdown);
+    }
+    if (tables.isEmpty()) return false;
+    ResourceFreeDocument selected;
+    selected.setResourceProvider([](const QUrl &) { return QVariant(); }); selected.setLayoutEnabled(false);
+    QTextCursor selection(m_view); selection.setPosition(start); selection.setPosition(end, QTextCursor::KeepAnchor);
+    QTextCursor(&selected).insertFragment(selection.selection());
+    QList<QPair<int, QString>> clipboardSlots;
+    // Locate by exact internal resource identity, never by source/native offsets:
+    // inserting a fragment that starts inside a native fallback table can shift positions.
+    for (QTextBlock block = selected.begin(); block.isValid(); block = block.next()) for (auto it = block.begin(); !it.atEnd(); ++it) {
+        const auto fragment = it.fragment(); if (!fragment.isValid() || !fragment.charFormat().isImageFormat()) continue;
+        const auto name = fragment.charFormat().toImageFormat().name();
+        if (tables.contains(name)) clipboardSlots.append({fragment.position(), tables.value(name)});
+        else selected.addResource(QTextDocument::ImageResource, QUrl(name), m_view->resource(QTextDocument::ImageResource, QUrl(name)));
+    }
+    for (auto it = clipboardSlots.crbegin(); it != clipboardSlots.crend(); ++it) {
+        ResourceFreeDocument table;
+        table.setResourceProvider([](const QUrl &) { return QVariant(); }); table.setLayoutEnabled(false);
+        table.setMarkdown(it->second, QTextDocument::MarkdownFeatures(QTextDocument::MarkdownDialectGitHub | QTextDocument::MarkdownNoHTML));
+        // Match the grid's resource-free cell display: no nested image objects.
+        QList<QPair<int, int>> images;
+        for (QTextBlock block = table.begin(); block.isValid(); block = block.next()) for (auto f = block.begin(); !f.atEnd(); ++f)
+            if (f.fragment().charFormat().isImageFormat()) images.prepend({f.fragment().position(), f.fragment().length()});
+        for (const auto &range : images) {
+            QTextCursor image(&table); image.setPosition(range.first);
+            image.setPosition(range.first + range.second, QTextCursor::KeepAnchor); image.removeSelectedText();
+        }
+        QTextCursor replacement(&selected); replacement.setPosition(it->first); replacement.movePosition(QTextCursor::NextCharacter, QTextCursor::KeepAnchor);
+        QTextCursor body(&table); body.select(QTextCursor::Document); replacement.insertFragment(body.selection());
+    }
+    return QMetaObject::invokeMethod(m_resolver, "copyAsHtml", Qt::DirectConnection,
+        Q_ARG(int, 0), Q_ARG(int, selected.characterCount() - 1), Q_ARG(QObject *, &selected), Q_ARG(bool, asHtml));
+}
+
 void LivePreview::copySource() {
     if (!m_source || !m_viewItem) return;
     if (m_readMode) {
-        if (m_viewItem->property("selectionStart") != m_viewItem->property("selectionEnd"))
-            QMetaObject::invokeMethod(m_viewItem, "copy");
+        if (m_viewItem->property("selectionStart") != m_viewItem->property("selectionEnd")) {
+            if (!copyReadSelection()) QMetaObject::invokeMethod(m_viewItem, "copy");
+        }
         else
             QGuiApplication::clipboard()->setText(documentText(m_source));
         return;

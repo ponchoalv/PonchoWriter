@@ -221,6 +221,139 @@ private slots:
         QVERIFY(delegates > 0 && delegates < 500); // Not 12,008 rich-text delegates.
         QCOMPARE(document->toPlainText(), large);
     }
+    void sharedReadTableAndExpandedViewPreserveModeUndoAndDrafts() {
+        QTemporaryDir directory; QVERIFY(directory.isValid());
+        Backend backend; backend.m_recoveryPath = directory.filePath("recovery.json");
+        QQmlEngine engine; engine.rootContext()->setContextProperty("backend", &backend);
+        QQmlComponent component(&engine, QUrl::fromLocalFile(QFINDTESTDATA("../src/Main.qml")));
+        QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+        QScopedPointer<QObject> root(component.create());
+        auto *window = qobject_cast<QQuickWindow *>(root.data()); QVERIFY(window);
+        auto *source = root->findChild<QObject *>("sourceEditor");
+        auto *view = root->findChild<QQuickItem *>("previewEditor");
+        auto *projection = root->findChild<LivePreview *>(); QVERIFY(source && view && projection);
+        if (QGuiApplication::platformName() != "offscreen") QVERIFY(QTest::qWaitForWindowExposed(window));
+        QString original = "| A | B | C | D | E | F | G | H |\n|---|---|---|---|---|---|---|---|\n";
+        for (int n = 0; n < 300; ++n) original += QString("| row%1 | b | c | d | e | f | g | h |\n").arg(n);
+        source->setProperty("text", original); source->setProperty("cursorPosition", 0);
+        QTRY_COMPARE(projection->tablePanels().size(), 1);
+        root->setProperty("readMode", true); QTest::qWait(30);
+        auto *document = qvariant_cast<QQuickTextDocument *>(source->property("textDocument"))->textDocument();
+        document->clearUndoRedoStacks();
+        QPointer<QQuickItem> inlinePanel = root->findChild<QQuickItem *>("markdownTableGrid"); QVERIFY(inlinePanel);
+        auto *model = inlinePanel->property("modelData").toMap()["model"].value<QObject *>(); QVERIFY(model);
+        auto *expand = inlinePanel->findChild<QQuickItem *>("tableExpandButton"); QVERIFY(expand && expand->isVisible());
+        QTest::mouseClick(window, Qt::LeftButton, Qt::NoModifier, expand->mapToScene(QPointF(expand->width()/2, expand->height()/2)).toPoint());
+        auto *dialog = root->findChild<QObject *>("expandedTableDialog"); QVERIFY(dialog);
+        QTRY_VERIFY(dialog->property("visible").toBool());
+        QQuickItem *expanded = nullptr;
+        QTRY_VERIFY((expanded = root->findChild<QQuickItem *>("expandedTableGrid")));
+        QVERIFY(expanded->property("readOnly").toBool()); QVERIFY(!inlinePanel->isEnabled());
+        QCOMPARE(expanded->property("modelData").toMap()["model"].value<QObject *>(), model);
+        QVERIFY(expanded->width() > inlinePanel->width()); QVERIFY(expanded->height() > inlinePanel->height());
+        for (auto *item : visualDescendants(expanded)) if (item->objectName() == "tableSourceButton" || item->objectName() == "tableActionsButton" || item->objectName() == "tableExpandButton") QVERIFY(!item->isVisible());
+        auto *grid = expanded->findChild<QQuickItem *>("tableCellView"); QVERIFY(grid);
+        const qreal row = std::ceil(QFontMetricsF(qvariant_cast<QFont>(view->property("font"))).height()) + 16;
+        QTest::mouseClick(window, Qt::LeftButton, Qt::NoModifier, grid->mapToScene(QPointF(25, row * 1.5)).toPoint());
+        QTest::keyClick(window, Qt::Key_X); QTest::qWait(20);
+        QVERIFY(!root->property("activeTableCell").value<QObject *>()); QCOMPARE(document->toPlainText(), original); QVERIFY(!document->isUndoAvailable());
+        grid->setProperty("contentY", 1000); QTest::qWait(20);
+        int cells = 0; for (auto *item : visualDescendants(expanded)) if (item->objectName() == "tableCellDelegate") ++cells;
+        QVERIFY(cells > 0 && cells < 400); // Same virtualized component, not all 2,408 cells.
+        QVERIFY(QMetaObject::invokeMethod(dialog, "requestClose")); QTRY_VERIFY(!dialog->property("visible").toBool());
+        root->setProperty("readMode", false); QTest::qWait(20);
+        model->setProperty("scrollY", 0); // Start at the first body row for the Edit modal.
+        expand = inlinePanel->findChild<QQuickItem *>("tableExpandButton"); QVERIFY(expand);
+        QTest::mouseClick(window, Qt::LeftButton, Qt::NoModifier, expand->mapToScene(QPointF(expand->width()/2, expand->height()/2)).toPoint());
+        QTRY_VERIFY(dialog->property("visible").toBool()); QTRY_VERIFY((expanded = root->findChild<QQuickItem *>("expandedTableGrid")));
+        QVERIFY(!expanded->property("readOnly").toBool());
+        grid = expanded->findChild<QQuickItem *>("tableCellView"); QVERIFY(grid); QTest::qWait(20);
+        QTest::mouseClick(window, Qt::LeftButton, Qt::NoModifier, grid->mapToScene(QPointF(25, row * 1.5)).toPoint());
+        QTRY_VERIFY(root->property("activeTableCell").value<QObject *>());
+        QPointer<QObject> field = root->property("activeTableCell").value<QObject *>();
+        QTest::keyClick(window, Qt::Key_A, Qt::ControlModifier);
+        for (char c : QByteArray("modal")) QTest::keyClick(window, c);
+        QInputMethodEvent preedit(QString::fromUtf8("かな"), {}); QCoreApplication::sendEvent(field, &preedit);
+        window->setWidth(window->width() + 40); QTest::qWait(20);
+        QCOMPARE(root->property("activeTableCell").value<QObject *>(), field.data()); QVERIFY(field->property("inputMethodComposing").toBool());
+        QInputMethodEvent commit; commit.setCommitString(QString::fromUtf8("かな")); QCoreApplication::sendEvent(field, &commit);
+        QVERIFY(QMetaObject::invokeMethod(dialog, "requestClose")); QTRY_VERIFY(!dialog->property("visible").toBool());
+        QTRY_VERIFY(document->toPlainText().contains(QString::fromUtf8("modalかな")));
+        document->undo(); QTRY_COMPARE(document->toPlainText(), original); QVERIFY(!document->isUndoAvailable());
+        const QString unbordered = "A | B\n--- | ---\none | two";
+        source->setProperty("text", unbordered); QTRY_COMPARE(projection->tablePanels().size(), 1); QTest::qWait(20);
+        inlinePanel = root->findChild<QQuickItem *>("markdownTableGrid"); QVERIFY(inlinePanel);
+        expand = inlinePanel->findChild<QQuickItem *>("tableExpandButton"); QVERIFY(expand);
+        QTest::mouseClick(window, Qt::LeftButton, Qt::NoModifier, expand->mapToScene(QPointF(expand->width()/2, expand->height()/2)).toPoint());
+        QTRY_VERIFY(dialog->property("visible").toBool()); QTRY_VERIFY((expanded = root->findChild<QQuickItem *>("expandedTableGrid")));
+        grid = expanded->findChild<QQuickItem *>("tableCellView"); QVERIFY(grid); QTest::qWait(20);
+        QTest::mouseClick(window, Qt::LeftButton, Qt::NoModifier, grid->mapToScene(QPointF(25, row * 1.5)).toPoint());
+        QTRY_VERIFY(root->property("activeTableCell").value<QObject *>());
+        QTest::keyClick(window, Qt::Key_A, Qt::ControlModifier); QTest::keyClick(window, Qt::Key_Backspace);
+        QVERIFY(QMetaObject::invokeMethod(dialog, "requestClose")); QVERIFY(dialog->property("visible").toBool());
+        QVERIFY(projection->tableDraftsPending()); QCOMPARE(document->toPlainText(), unbordered);
+        QVERIFY(QMetaObject::invokeMethod(root.data(), "toggleReadMode")); QVERIFY(!root->property("readMode").toBool());
+        // Cocoa may refuse activation for a test-launched window. Native
+        // WindowShortcut dispatch is then unavailable, despite internal focus.
+        // Exercise the same handler without stealing the writer's OS focus;
+        // active native windows and offscreen still receive physical Escape.
+        if (QGuiApplication::platformName() == "cocoa" && !window->isActive()) {
+            auto *active = root->property("activeTableCell").value<QObject *>(); QVERIFY(active);
+            auto *cancel = active->findChild<QObject *>("tableCancelCellShortcut"); QVERIFY(cancel);
+            QVERIFY(QMetaObject::invokeMethod(cancel, "activated"));
+        } else QTest::keyClick(window, Qt::Key_Escape);
+        QVERIFY(QMetaObject::invokeMethod(dialog, "requestClose")); QTRY_VERIFY(!dialog->property("visible").toBool());
+        QVERIFY(!projection->tableDraftsPending()); QCOMPARE(document->toPlainText(), unbordered);
+    }
+    void readGridLinksAndClipboardRetainTableContents() {
+        QTemporaryDir directory; Backend backend; backend.m_recoveryPath = directory.filePath("recovery.json");
+        QQmlEngine engine; engine.rootContext()->setContextProperty("backend", &backend);
+        QQmlComponent component(&engine, QUrl::fromLocalFile(QFINDTESTDATA("../src/Main.qml")));
+        QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+        QScopedPointer<QObject> root(component.create()); auto *window = qobject_cast<QQuickWindow *>(root.data()); QVERIFY(window);
+        auto *source = root->findChild<QObject *>("sourceEditor"); auto *view = root->findChild<QQuickItem *>("previewEditor");
+        auto *projection = root->findChild<LivePreview *>(); QVERIFY(source && view && projection);
+        if (QGuiApplication::platformName() != "offscreen") QVERIFY(QTest::qWaitForWindowExposed(window));
+        const QString table = "| Link | Auto |\n| --- | --- |\n| [guide](https://example.invalid/explicit) | <https://example.invalid/auto> |\n| ![x](https://example.invalid/image.png)![x](https://example.invalid/image.png) | safe |";
+        const QString text = "before\n\n" + table + "\n\nmiddle\n\n" + table + "\n\nafter";
+        source->setProperty("text", text); source->setProperty("cursorPosition", 0); QTest::qWait(30);
+        QVERIFY(QMetaObject::invokeMethod(root.data(), "toggleReadMode")); QTRY_COMPARE(projection->tablePanels().size(), 2);
+        auto *inlinePanel = root->findChild<QQuickItem *>("markdownTableGrid"); QVERIFY(inlinePanel); QTest::qWait(30);
+        LinkReceiver receiver; QDesktopServices::setUrlHandler("https", &receiver, "open");
+        const auto cleanup = qScopeGuard([] { QDesktopServices::unsetUrlHandler("https"); });
+        auto clickLink = [&](QQuickItem *panel, const QString &url) {
+            for (auto *item : visualDescendants(panel)) if (item->objectName() == "tableCellDisplay" && item->isVisible() && item->property("text").toString().contains(url)) {
+                QTest::mouseClick(window, Qt::LeftButton, Qt::NoModifier, item->mapToScene(QPointF(10, item->height()/2)).toPoint()); return true;
+            }
+            return false;
+        };
+        for (int mode = 0; mode < 2; ++mode) {
+            QQuickItem *panel = inlinePanel;
+            if (mode) {
+                auto *expand = inlinePanel->findChild<QQuickItem *>("tableExpandButton"); QVERIFY(expand);
+                QTest::mouseClick(window, Qt::LeftButton, Qt::NoModifier, expand->mapToScene(QPointF(expand->width()/2, expand->height()/2)).toPoint());
+                QTRY_VERIFY((panel = root->findChild<QQuickItem *>("expandedTableGrid"))); QTest::qWait(30);
+            }
+            QVERIFY(clickLink(panel, "https://example.invalid/explicit")); QTRY_COMPARE(receiver.urls.size(), mode * 2 + 1);
+            QCOMPARE(receiver.urls.last(), QUrl("https://example.invalid/explicit"));
+            QVERIFY(clickLink(panel, "https://example.invalid/auto")); QTRY_COMPARE(receiver.urls.size(), mode * 2 + 2);
+            QCOMPARE(receiver.urls.last(), QUrl("https://example.invalid/auto"));
+        }
+        auto *dialog = root->findChild<QObject *>("expandedTableDialog"); QVERIFY(dialog);
+        QVERIFY(QMetaObject::invokeMethod(dialog, "requestClose")); QTRY_VERIFY(!dialog->property("visible").toBool());
+        QVERIFY(QMetaObject::invokeMethod(view, "selectAll")); projection->copySource();
+        const QString plain = QGuiApplication::clipboard()->text();
+        QVERIFY(plain.contains("before") && plain.contains("middle") && plain.contains("after"));
+        QCOMPARE(plain.count("guide"), 2); QCOMPARE(plain.count("https://example.invalid/auto"), 2);
+        QVERIFY(!plain.contains(QChar::ObjectReplacementCharacter));
+        QVERIFY(QMetaObject::invokeMethod(root.data(), "copyHtml"));
+        const auto *mime = QGuiApplication::clipboard()->mimeData(); QVERIFY(mime->hasHtml());
+        QCOMPARE(mime->text(), mime->html()); QCOMPARE(mime->html().count("<table"), 2);
+        QVERIFY(mime->html().contains("guide")); QVERIFY(!mime->html().contains("preview:"));
+        QVERIFY(!mime->html().contains("<img", Qt::CaseInsensitive)); QVERIFY(!mime->html().contains("image.png"));
+        QVERIFY(QMetaObject::invokeMethod(view, "deselect")); projection->copySource(); QCOMPARE(QGuiApplication::clipboard()->text(), text);
+        QCOMPARE(source->property("text").toString(), text);
+    }
     void overflowScrollbarsTrackViewportAndCaretBothDirections() {
         QTemporaryDir directory; QVERIFY(directory.isValid());
         Backend backend; backend.m_recoveryPath = directory.filePath("recovery.json");
@@ -266,19 +399,22 @@ private slots:
         const QString tableText = "before\n\n| Left heading | Right heading |\n| --- | --- |\n| " + QString("W").repeated(160) + " | right cell |\n\nafter\n\n| Another heading | Last heading |\n| --- | --- |\n| " + QString("Z").repeated(140) + " | other cell |";
         source->setProperty("text", tableText); source->setProperty("cursorPosition", 0);
         root->setProperty("readMode", true);
-        QTRY_COMPARE(projection->tableScrollPanels().size(), 2); flick->setProperty("contentY", 0); QTest::qWait(30);
-        auto *doc = qvariant_cast<QQuickTextDocument *>(view->property("textDocument"))->textDocument();
-        QTextTable *table = nullptr;
-        for (auto *frame : doc->rootFrame()->childFrames()) if ((table = qobject_cast<QTextTable *>(frame))) break;
-        QVERIFY(table);
-        const auto beforeBounds = doc->documentLayout()->frameBoundingRect(table);
-        const auto region = view->mapRectToScene(beforeBounds.adjusted(0, 0, 0, -20)).toAlignedRect().intersected(QRect(0, 0, window->width(), window->height()));
+        QTRY_COMPARE(projection->tablePanels().size(), 2); flick->setProperty("contentY", 0); QTest::qWait(30);
+        QVERIFY(projection->tableScrollPanels().isEmpty()); // Supported Read tables use the same grid, not native frames.
+        const auto firstTable = projection->tablePanels().first().toMap();
+        const int tableId = firstTable["id"].toInt();
+        auto *model = qvariant_cast<QObject *>(firstTable["model"]); QVERIFY(model);
+        QPointer<QQuickItem> readGrid, readBar;
+        for (auto *item : visualDescendants(view->parentItem())) if (item->objectName() == "markdownTableGrid"
+            && item->property("modelData").toMap()["id"].toInt() == tableId) { readGrid = item; break; }
+        QVERIFY(readGrid); QVERIFY(readGrid->property("readOnly").toBool());
+        for (auto *item : visualDescendants(readGrid)) {
+            if (item->objectName() == "blockHorizontalScrollBar" && item->isVisible()) readBar = item;
+            if (item->objectName() == "tableSourceButton" || item->objectName() == "tableActionsButton") QVERIFY(!item->isVisible());
+        }
+        const auto region = readGrid->mapRectToScene(QRectF(1, 32, readGrid->width() - 2, readGrid->height() - 46)).toAlignedRect();
         QImage before;
         if (QGuiApplication::platformName() != "offscreen") { before = window->grabWindow(); QVERIFY(!before.isNull()); }
-        QSignalSpy redraw(doc->documentLayout(), &QAbstractTextDocumentLayout::update);
-        const int tableId = projection->tableScrollPanels().first().toMap()["id"].toInt();
-        QPointer<QQuickItem> readBar;
-        for (auto *item : visualDescendants(view->parentItem())) if (item->objectName() == "blockHorizontalScrollBar" && item->isVisible()) { readBar = item; break; }
         QVERIFY(readBar);
         const auto press = readBar->mapToScene(QPointF(readBar->width() * readBar->property("size").toReal() / 2, readBar->height() / 2)).toPoint();
         QTest::mousePress(window, Qt::LeftButton, Qt::NoModifier, press);
@@ -289,37 +425,33 @@ private slots:
             QVERIFY(readBar); // Publishing new native table bounds must not destroy the mouse grabber.
             QVERIFY(readBar->property("pressed").toBool());
         }
-        const qreal offset = projection->blockOffsets().value(QString::number(tableId)).toReal();
+        const qreal offset = model->property("scrollX").toReal();
         QVERIFY(offset > 100);
-        QTRY_VERIFY(redraw.size() > 0); QTest::qWait(30);
-        const auto afterBounds = doc->documentLayout()->frameBoundingRect(table);
-        QVERIFY(qAbs(afterBounds.left() - beforeBounds.left() + offset) < 1);
-        if (!before.isNull()) QVERIFY(before.copy(region) != window->grabWindow().copy(region)); // Native glyphs actually moved.
+        QTest::qWait(30);
+        if (!before.isNull()) QVERIFY(before.copy(region) != window->grabWindow().copy(region)); // Visible grid glyphs actually moved.
         QTest::mouseMove(window, press + QPoint(20, 0), 10); QCoreApplication::processEvents();
         QVERIFY(readBar && readBar->property("pressed").toBool());
-        QVERIFY(projection->blockOffsets().value(QString::number(tableId)).toReal() < offset / 2);
+        QVERIFY(model->property("scrollX").toReal() < offset / 2);
         QTest::mouseRelease(window, Qt::LeftButton, Qt::NoModifier, press + QPoint(20, 0)); release.dismiss();
         const auto wheelPoint = readBar->mapToScene(QPointF(readBar->width() / 2, -25));
-        const qreal beforeWheel = projection->blockOffsets().value(QString::number(tableId)).toReal();
+        const qreal beforeWheel = model->property("scrollX").toReal();
         QWheelEvent wheel(wheelPoint, window->mapToGlobal(wheelPoint.toPoint()), QPoint(-80, 0), QPoint(), Qt::NoButton, Qt::NoModifier, Qt::ScrollUpdate, false);
         QCoreApplication::sendEvent(window, &wheel);
-        QTRY_VERIFY(projection->blockOffsets().value(QString::number(tableId)).toReal() > beforeWheel);
+        QTRY_VERIFY(model->property("scrollX").toReal() > beforeWheel);
         QVERIFY(readBar);
-        const qreal beforeTouchpad = projection->blockOffsets().value(QString::number(tableId)).toReal();
+        const qreal beforeTouchpad = model->property("scrollX").toReal();
         QWheelEvent touchpad(wheelPoint, window->mapToGlobal(wheelPoint.toPoint()), QPoint(40, 0), QPoint(), Qt::NoButton, Qt::NoModifier, Qt::ScrollEnd, false, Qt::MouseEventSynthesizedBySystem);
         QCoreApplication::sendEvent(window, &touchpad);
-        QTRY_VERIFY(projection->blockOffsets().value(QString::number(tableId)).toReal() < beforeTouchpad);
-        const int secondId = projection->tableScrollPanels().last().toMap()["id"].toInt();
-        QVERIFY(secondId != tableId);
-        QCOMPARE(projection->blockOffsets().value(QString::number(secondId)).toReal(), 0.0);
-        const auto header = doc->documentLayout()->blockBoundingRect(table->cellAt(0, 0).firstCursorPosition().block());
-        const auto body = doc->documentLayout()->blockBoundingRect(table->cellAt(1, 0).firstCursorPosition().block());
-        QVERIFY(header.bottom() <= body.top());
+        QTRY_VERIFY(model->property("scrollX").toReal() < beforeTouchpad);
+        const auto second = projection->tablePanels().last().toMap();
+        QVERIFY(second["id"].toInt() != tableId);
+        QCOMPARE(qvariant_cast<QObject *>(second["model"])->property("scrollX").toReal(), 0.0);
         QCOMPARE(qvariant_cast<QQuickTextDocument *>(source->property("textDocument"))->textDocument()->toPlainText(), tableText);
         root->setProperty("readMode", false);
-        QTRY_VERIFY(readBar.isNull()); // Leaving Read still releases old chrome.
+        QTRY_VERIFY(readGrid && !readGrid->property("readOnly").toBool());
         root->setProperty("readMode", true);
-        QTRY_COMPARE(projection->tableScrollPanels().size(), 2);
+        QTRY_COMPARE(projection->tablePanels().size(), 2);
+        QVERIFY(readGrid->property("readOnly").toBool());
     }
     void codePanelHoverCopyAndReadLanguageUseQtClipboard() {
         QTemporaryDir directory; QVERIFY(directory.isValid());
@@ -692,6 +824,84 @@ private slots:
             }
         }
         QCOMPARE(visibility.count(), 0); QCOMPARE(source->property("text").toString(), text);
+    }
+    void tableGridNativeEditingBenchmark() {
+        if (!qEnvironmentVariableIsSet("PONCHOWRITER_TABLE_PERF")) QSKIP("Opt-in native table benchmark; private fixtures are never saved or logged");
+        if (QGuiApplication::platformName() == "offscreen" || QGuiApplication::platformName() == "minimal") QSKIP("Requires native frames");
+        QString text;
+        const QString path = qEnvironmentVariable("PONCHOWRITER_TABLE_PERF_FIXTURE");
+        if (!path.isEmpty()) { QFile file(path); QVERIFY(file.open(QIODevice::ReadOnly)); text = QString::fromUtf8(file.readAll()); }
+        else {
+            text = "before\n\n|";
+            for (int c = 0; c < 28; ++c) text += QString(" column%1 |").arg(c);
+            text += "\n|"; for (int c = 0; c < 28; ++c) text += "---|";
+            for (int r = 0; r < 1360; ++r) { text += "\n|"; for (int c = 0; c < 28; ++c) text += QString(" synthetic%1value |").arg((r + c) % 100); }
+            text += "\n\nafter";
+        }
+        for (const char *name : {"Regular", "Italic", "Bold", "BoldItalic"}) {
+            const QString font = QStringLiteral("../fonts/IBMPlexMono-%1.ttf").arg(QLatin1String(name));
+            QVERIFY(QFontDatabase::addApplicationFont(QTest::qFindTestData(font.toUtf8().constData(), __FILE__, __LINE__)) >= 0);
+        }
+        const QFont oldFont = QGuiApplication::font(); QGuiApplication::setFont(QFont("IBM Plex Mono", 16));
+        const auto restoreFont = qScopeGuard([&] { QGuiApplication::setFont(oldFont); });
+        QTemporaryDir directory; QVERIFY(directory.isValid());
+        Backend backend; backend.m_recoveryPath = directory.filePath("recovery.json"); backend.setOpenRouter([](const QUrl &) {});
+        auto *spelling = qobject_cast<SpellingController *>(backend.spelling()); QVERIFY(spelling);
+        const bool spell = spelling->enabled(); spelling->setEnabled(false);
+        const auto restoreSpell = qScopeGuard([&] { spelling->setEnabled(spell); });
+        QQmlEngine engine; engine.rootContext()->setContextProperty("backend", &backend);
+        QQmlComponent component(&engine, QUrl::fromLocalFile(QFINDTESTDATA("../src/Main.qml")));
+        QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+        QScopedPointer<QObject> root(component.create()); auto *window = qobject_cast<QQuickWindow *>(root.data()); QVERIFY(window);
+        window->setFlag(Qt::WindowDoesNotAcceptFocus, true); window->resize(1000, 760);
+        const QString screenName = qEnvironmentVariable("PONCHOWRITER_TABLE_PERF_SCREEN");
+        if (!screenName.isEmpty()) {
+            QScreen *chosen = nullptr; for (auto *screen : QGuiApplication::screens()) if (screen->name() == screenName) chosen = screen;
+            QVERIFY(chosen); window->setScreen(chosen); window->setPosition(chosen->availableGeometry().center() - QPoint(500, 380));
+        }
+        window->show(); QVERIFY(QTest::qWaitForWindowExposed(window));
+        auto *source = root->findChild<QObject *>("sourceEditor"); auto *view = root->findChild<QQuickItem *>("previewEditor");
+        auto *projection = root->findChild<LivePreview *>(); QVERIFY(source && view && projection);
+        source->setProperty("text", text); source->setProperty("cursorPosition", 0);
+        QTRY_VERIFY_WITH_TIMEOUT(!projection->tablePanels().isEmpty(), 30000); QTest::qWait(300);
+        if (!screenName.isEmpty()) QTRY_COMPARE(window->screen()->name(), screenName);
+        auto *model = qobject_cast<MarkdownTableModel *>(projection->tablePanels().first().toMap()["model"].value<QObject *>()); QVERIFY(model);
+        auto *grid = root->findChild<QQuickItem *>("tableCellView"); QVERIFY(grid);
+        const qreal rowHeight = std::ceil(QFontMetricsF(qvariant_cast<QFont>(view->property("font"))).height()) + 16;
+        QTest::mouseClick(window, Qt::LeftButton, Qt::NoModifier, grid->mapToScene(QPointF(25, rowHeight * 1.5)).toPoint());
+        QTRY_VERIFY(root->property("activeTableCell").value<QObject *>());
+        auto submittedAfter = [&](const std::function<void()> &operation, double &milliseconds) {
+            struct Frame { QElapsedTimer clock; std::atomic<bool> armed{false}, synced{false}, done{false}; qint64 ns = 0; };
+            auto frame = std::make_shared<Frame>(); QEventLoop loop; QPointer<QEventLoop> safeLoop(&loop);
+            const auto sync = connect(window, &QQuickWindow::afterSynchronizing, window, [frame] { if (frame->armed.load()) frame->synced.store(true); }, Qt::DirectConnection);
+            const auto swap = connect(window, &QQuickWindow::frameSwapped, &loop, [frame, safeLoop, window] {
+                if (frame->synced.load() && !frame->done.load()) { frame->ns = frame->clock.nsecsElapsed(); frame->done.store(true); QMetaObject::invokeMethod(window, [safeLoop] { if (safeLoop) safeLoop->quit(); }, Qt::QueuedConnection); }
+            }, Qt::DirectConnection);
+            QTimer timer; timer.setSingleShot(true); connect(&timer, &QTimer::timeout, &loop, &QEventLoop::quit);
+            frame->clock.start(); operation(); QTimer::singleShot(0, &loop, [frame, window] { frame->armed.store(true); window->update(); });
+            timer.start(30000); loop.exec(); disconnect(sync); disconnect(swap); milliseconds = double(frame->ns) / 1000000; return frame->done.load();
+        };
+        QJsonArray typing, commits;
+        for (int n = 0; n < 12; ++n) {
+            auto *field = qobject_cast<QQuickItem *>(root->property("activeTableCell").value<QObject *>()); QVERIFY(field); field->forceActiveFocus();
+            field->setProperty("cursorPosition", field->property("text").toString().size()); QVERIFY(QMetaObject::invokeMethod(field, "deselect"));
+            const QString before = source->property("text").toString();
+            double ms = 0; QVERIFY(submittedAfter([&] { QTest::keyClick(window, Qt::Key_X); }, ms)); typing.append(ms);
+            QVERIFY(source->property("text").toString() == before); // Draft only; never print private fixture bytes on failure.
+            QVERIFY(submittedAfter([&] { QTest::keyClick(window, Qt::Key_Tab); }, ms)); commits.append(ms);
+            QVERIFY(source->property("text").toString() != before); QVERIFY(!projection->tableDraftsPending());
+            QTRY_VERIFY(root->property("activeTableCell").value<QObject *>());
+            if (!screenName.isEmpty()) QCOMPARE(window->screen()->name(), screenName);
+        }
+        QJsonObject report{{"complete", true}, {"label", qEnvironmentVariable("PONCHOWRITER_TABLE_PERF_LABEL")},
+            {"rows", model->rowCount()}, {"columns", model->columnCount()}, {"source_units", text.size()},
+            {"screen", window->screen()->name()}, {"refresh_hz", window->screen()->refreshRate()}, {"qt", qVersion()},
+            {"font", qvariant_cast<QFont>(view->property("font")).toString()}, {"dpr", window->devicePixelRatio()},
+            {"typing_followup_submission_ms", typing}, {"tab_followup_submission_ms", commits},
+            {"scope", "12 native buffered keys and canonical Tab commits to follow-up frame submission; not display latency or FPS; spelling disabled; private fixture bytes/path never included"}};
+        const QString outputPath = qEnvironmentVariable("PONCHOWRITER_TABLE_PERF_OUTPUT");
+        if (!outputPath.isEmpty()) { QFile output(outputPath); QVERIFY(output.open(QIODevice::WriteOnly)); output.write(QJsonDocument(report).toJson()); }
+        qInfo() << "Table benchmark complete:" << model->rowCount() << "rows," << model->columnCount() << "columns; no cell content logged";
     }
     void tenThousandLineNativeTypingBenchmark() {
         if (!qEnvironmentVariableIsSet("PONCHOWRITER_INCREMENTAL_PERF")) QSKIP("Opt-in native 10,000-line benchmark");

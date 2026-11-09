@@ -46,10 +46,12 @@ public:
 
 signals:
     void replaceRequested(int offset, int length, const QString &replacement);
+    void columnWidthsChanged();
     void scrollPositionChanged();
     void draftsChanged();
 
 private:
+    friend class LivePreviewTest;
     struct Cell {
         int offset = 0;
         int length = 0;
@@ -72,7 +74,8 @@ private:
     static bool protectCell(const QString &value, QString &result);
     void render(const Cell &cell) const;
     bool requestTable(const QString &replacement);
-    bool requestReplacement(int offset, int length, const QString &replacement);
+    bool requestReplacement(int offset, int length, const QString &replacement,
+                            QVector<Line> lines = {}, QVector<QVector<Cell>> rows = {});
 
     QString m_source;
     QFont m_font;
@@ -82,6 +85,10 @@ private:
     bool m_initialized = false, m_acknowledged = false;
     QVariantMap m_drafts;
     QString m_expectedSource;
+    QVector<Line> m_validatedLines;
+    QVector<QVector<Cell>> m_validatedRows;
+    quint64 m_parseCount = 0;
+    mutable quint64 m_widthMeasurements = 0, m_richRenders = 0;
     quint64 m_draftRevision = 0;
     qreal m_scrollX = 0, m_scrollY = 0;
 };

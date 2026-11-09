@@ -81,6 +81,19 @@ void LivePreview::syncTables() {
     if (hadDrafts != tableDraftsPending()) emit tableDraftsChanged();
 }
 
+void LivePreview::resetTableSessions() {
+    for (const auto &table : m_tables) if (table.model) {
+        const auto drafts = table.model->property("drafts").toMap();
+        for (auto it = drafts.cbegin(); it != drafts.cend(); ++it)
+            m_recoveredTableDrafts.insert(QString::number(table.id) + "/" + it.key(), it.value());
+        table.model->deleteLater();
+    }
+    m_tables.clear(); m_tablePanels.clear(); m_readTablePositions.clear();
+    m_readStyleKey.clear(); m_renderedRead = false;
+    emit tablePanelsChanged(); emit tableDraftsChanged();
+    schedule();
+}
+
 bool LivePreview::tableDraftsPending() const {
     if (!m_recoveredTableDrafts.isEmpty()) return true;
     for (const auto &table : m_tables) if (table.model && !table.model->property("drafts").toMap().isEmpty()) return true;
@@ -229,11 +242,16 @@ void LivePreview::updateTablePanels() {
     const qreal width = qMax(qreal(1), m_viewItem->property("width").toReal() - 8);
     const auto visible = visibleBlocks();
     auto *layout = m_view->documentLayout();
-    if (!m_readMode) for (const auto &table : m_tables) {
-        if (!table.model || table.source || table.model->rowCount() == 0) continue;
-        const auto segment = std::find_if(m_segments.cbegin(), m_segments.cend(), [&](const auto &s) { return s.object && s.sourceStart == table.start; });
-        if (segment == m_segments.cend()) continue;
-        const auto block = m_view->findBlock(segment->viewStart);
+    for (const auto &table : m_tables) {
+        if (!table.model || (!m_readMode && table.source) || table.model->rowCount() == 0) continue;
+        int position = -1;
+        if (m_readMode) position = m_readTablePositions.value(table.id, -1);
+        else {
+            const auto segment = std::find_if(m_segments.cbegin(), m_segments.cend(), [&](const auto &s) { return s.object && s.sourceStart == table.start; });
+            if (segment != m_segments.cend()) position = segment->viewStart;
+        }
+        if (position < 0 || m_view->characterAt(position) != QChar::ObjectReplacementCharacter) continue;
+        const auto block = m_view->findBlock(position);
         const auto bounds = layout->blockBoundingRect(block);
         const qreal height = qMin(qreal(480), 32 + 14 + rowHeight(m_viewItem) * table.model->rowCount());
         panels.append(QVariantMap{{"id", table.id}, {"model", QVariant::fromValue(static_cast<QObject *>(table.model))},

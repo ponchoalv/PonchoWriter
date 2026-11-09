@@ -46,9 +46,11 @@ public:
     qreal viewportBottom() const { return m_viewportHeight < 0 ? -1 : m_viewportTop + m_viewportHeight; }
     Q_INVOKABLE QString linkAtPoint(qreal x, qreal y) const;
     Q_INVOKABLE void copySource();
+    Q_INVOKABLE bool copyReadSelection(bool asHtml = false);
     Q_INVOKABLE bool copyCodeBlock(int panelIndex);
     Q_INVOKABLE void prepareEdit();
     Q_INVOKABLE void setTableSource(int id, bool source);
+    Q_INVOKABLE void resetTableSessions();
     Q_INVOKABLE bool copyTableDrafts(int id = 0);
     Q_INVOKABLE void discardTableDrafts();
     Q_PROPERTY(bool tableDraftsPending READ tableDraftsPending NOTIFY tableDraftsChanged)
@@ -165,6 +167,7 @@ private:
     QVariantList m_codeBlockPanels;
     QList<QPair<int, int>> m_readCodeBlocks;
     QHash<QString, QString> m_readImagePaths; // Sanitized native resource -> original local destination.
+    QHash<int, int> m_readTablePositions; // Exact generated resource -> final Read slot position, keyed by session.
     QStringList m_readCodeLanguages;
     bool m_panelsPending = false;
     QPointer<QObject> m_sourceItem, m_viewItem, m_resolver;

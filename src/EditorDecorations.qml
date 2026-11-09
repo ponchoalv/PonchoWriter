@@ -67,7 +67,7 @@ Item {
             if (!item && data.inViewport) item = tableComponent.createObject(decoration, { modelData: data });
             if (!item) continue;
             item.modelData = data;
-            if (!data.inViewport && !item.activeEditor && Object.keys(item.tableModel.drafts).length === 0) item.destroy();
+            if (!data.inViewport && !item.suspended && !item.activeEditor && Object.keys(item.tableModel.drafts).length === 0) item.destroy();
             else next[key] = item;
         }
         for (var old in tableItems) if (!next[old] && panels.every(function(p) { return String(p.id) !== old; })) tableItems[old].destroy();
@@ -76,6 +76,12 @@ Item {
     function commitTables() {
         for (var key in tableItems) if (!tableItems[key].commitCell()) return false;
         return true;
+    }
+    function abandonEditors() {
+        for (var key in tableItems) tableItems[key].discardCell();
+    }
+    function restorePositions() {
+        for (var key in tableItems) { tableItems[key].restored = false; tableItems[key].restorePosition(); }
     }
     // A QVariantList Repeater recreates every delegate when native frame
     // bounds change during scrolling. Keep the Read scrollbar's mouse grab
@@ -99,11 +105,14 @@ Item {
         TableGrid {
             id: tablePanel
             preview: decoration.preview
+            readOnly: decoration.host.readMode
+            suspended: decoration.host.tableExpanded && decoration.host.expandedTableId === modelData.id
             foreground: decoration.host.textColor
             backgroundColor: decoration.host.darkMode ? "#252525" : "#eeeeee"
             borderColor: Qt.rgba(decoration.host.textColor.r, decoration.host.textColor.g, decoration.host.textColor.b, 0.2)
             editorFont: decoration.presentation.font
             onSourceRequested: decoration.presentation.forceActiveFocus()
+            onExpandRequested: decoration.host.expandTable(tablePanel)
             onEditorChanged: function(editor) {
                 if (editor) decoration.host.activeTablePanel = tablePanel;
                 else if (decoration.host.activeTablePanel === tablePanel) decoration.host.activeTablePanel = null;

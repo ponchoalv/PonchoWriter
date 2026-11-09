@@ -13,17 +13,28 @@ Rectangle {
     required property font editorFont
     signal editorChanged(var editor)
     signal sourceRequested()
+    signal expandRequested()
+    property bool readOnly: false
+    property bool expanded: false
+    property bool suspended: false
+    enabled: !suspended
     property var activeEditor: null
     property string error: ""
     property bool restored: false
     property int currentColumn: 0
     property int currentRow: 0
     property var editingWidths: ({})
+    property bool layoutQueued: false
+    function requestLayout() {
+        if (layoutQueued) return;
+        layoutQueued = true;
+        Qt.callLater(function() { layoutQueued = false; grid.forceLayout(); });
+    }
     function expandColumn(column, text) {
         var width = Math.min(4096, Math.ceil(metrics.advanceWidth(text)) + 40);
         if (width <= (editingWidths[column] || tableModel.columnWidth(column))) return;
         var widths = editingWidths; widths[column] = width; editingWidths = widths;
-        grid.forceLayout();
+        requestLayout();
     }
     readonly property var tableModel: modelData.model
     x: modelData.x
@@ -39,6 +50,7 @@ Rectangle {
         grid.closeEditor();
     }
     function commitCell() {
+        if (readOnly) return true;
         if (!activeEditor) {
             if (Object.keys(tableModel.drafts).length) { error = "Correct or discard pending cell edits"; return false; }
             return true;
@@ -63,12 +75,28 @@ Rectangle {
         Label { text: panel.error || "Table"; color: panel.foreground; height: 26; verticalAlignment: Text.AlignVCenter; font.pixelSize: 12 }
         ToolButton {
             objectName: "tableSourceButton"
+            visible: !panel.readOnly
+            enabled: !panel.readOnly
             text: "Source"
             focusPolicy: Qt.NoFocus
             height: 26
             onClicked: if (panel.commitCell()) { panel.preview.setTableSource(panel.modelData.id, true); panel.sourceRequested(); }
         }
         ToolButton {
+            objectName: "tableExpandButton"
+            visible: !panel.expanded
+            text: "⛶"
+            Accessible.name: "Expand table"
+            ToolTip.visible: hovered
+            ToolTip.text: "Expand table"
+            focusPolicy: Qt.NoFocus
+            height: 26
+            onClicked: if (panel.commitCell()) panel.expandRequested()
+        }
+        ToolButton {
+            objectName: "tableActionsButton"
+            visible: !panel.readOnly
+            enabled: !panel.readOnly
             text: "⋯"
             focusPolicy: Qt.NoFocus
             height: 26
@@ -114,18 +142,18 @@ Rectangle {
         model: panel.tableModel
         reuseItems: true
         boundsBehavior: Flickable.StopAtBounds
-        editTriggers: TableView.SingleTapped | TableView.EditKeyPressed
+        editTriggers: panel.readOnly ? TableView.NoEditTriggers : TableView.SingleTapped | TableView.EditKeyPressed
         selectionModel: ItemSelectionModel { model: grid.model }
         columnWidthProvider: function(column) { return Math.max(panel.tableModel.columnWidth(column), panel.editingWidths[column] || 0); }
         rowHeightProvider: function(row) { return Math.ceil(metrics.height) + 16; }
         FontMetrics { id: metrics; font: panel.editorFont }
         onContentWidthChanged: Qt.callLater(panel.restorePosition)
-        onContentXChanged: if (panel.restored) panel.tableModel.scrollX = contentX
-        onContentYChanged: if (panel.restored) panel.tableModel.scrollY = contentY
+        onContentXChanged: if (panel.restored && !panel.suspended) panel.tableModel.scrollX = contentX
+        onContentYChanged: if (panel.restored && !panel.suspended) panel.tableModel.scrollY = contentY
         Component.onCompleted: Qt.callLater(panel.restorePosition)
         Connections {
             target: panel.tableModel
-            function onDataChanged() { grid.forceLayout(); }
+            function onColumnWidthsChanged() { panel.requestLayout(); }
         }
         ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded; focusPolicy: Qt.NoFocus }
         delegate: Rectangle {
@@ -151,17 +179,19 @@ Rectangle {
                 horizontalAlignment: cell.alignment
                 anchors.fill: parent
                 anchors.margins: 8
-                text: panel.tableModel.drafts[cell.row + ":" + cell.column] ? panel.tableModel.drafts[cell.row + ":" + cell.column].text : cell.html
-                textFormat: panel.tableModel.drafts[cell.row + ":" + cell.column] ? Text.PlainText : Text.RichText
+                text: !panel.readOnly && panel.tableModel.drafts[cell.row + ":" + cell.column] ? panel.tableModel.drafts[cell.row + ":" + cell.column].text : cell.html
+                textFormat: !panel.readOnly && panel.tableModel.drafts[cell.row + ":" + cell.column] ? Text.PlainText : Text.RichText
                 wrapMode: Text.NoWrap
                 font.family: panel.editorFont.family
                 font.pixelSize: panel.editorFont.pixelSize
                 font.bold: cell.header
                 color: panel.foreground
+                onLinkActivated: function(link) { if (panel.readOnly) Qt.openUrlExternally(link); }
             }
             TableView.editDelegate: TextField {
                 id: field
                 objectName: "tableCellEditor"
+                enabled: !panel.readOnly
                 anchors.fill: parent
                 font: panel.editorFont
                 text: cell.markdown
@@ -192,6 +222,7 @@ Rectangle {
                 property bool discarded: false
                 property bool committed: false
                 function commit() {
+                    if (panel.readOnly) return false;
                     if (discarded || committed) return true;
                     if (inputMethodComposing) Qt.inputMethod.commit();
                     if (inputMethodComposing) return false;
@@ -208,6 +239,15 @@ Rectangle {
                 onTextEdited: { committed = false; storeDraft(); panel.expandColumn(cell.column, text); Qt.callLater(revealCursor); }
                 onEditingFinished: if (!discarded) commit()
                 TableView.onCommit: commit()
+                // TableView filters Escape before the edit delegate's Keys
+                // handler. Claim the shortcut so cancellation also removes
+                // our session draft, not just Qt's transient editor.
+                Shortcut {
+                    objectName: "tableCancelCellShortcut"
+                    sequence: "Escape"
+                    enabled: field.activeFocus && !field.inputMethodComposing
+                    onActivated: { field.discarded = true; field.clearDraft(); grid.closeEditor(); }
+                }
                 Keys.priority: Keys.BeforeItem
                 Keys.onPressed: function(event) {
                     if (event.key === Qt.Key_Escape && !inputMethodComposing) {
@@ -237,6 +277,8 @@ Rectangle {
         contentWidth: grid.contentWidth
         viewportWidth: grid.width
         offset: grid.contentX
+        wheelOrientation: panel.readOnly ? Qt.Horizontal : Qt.Vertical
+        wheelDevices: panel.readOnly ? PointerDevice.Mouse | PointerDevice.TouchPad : PointerDevice.Mouse
         onScrollRequested: function(offset) { grid.contentX = offset; }
     }
 }

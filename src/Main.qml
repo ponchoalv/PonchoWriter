@@ -18,7 +18,91 @@ ApplicationWindow {
     readonly property var visibleEditor: presentation
     property var activeTablePanel: null
     readonly property var activeTableCell: activeTablePanel ? activeTablePanel.activeEditor : null
-    function commitTableCell() { return foregroundDecorations.commitTables() && !livePreview.tableDraftsPending; }
+    readonly property bool tableExpanded: tableDialog.visible
+    readonly property int expandedTableId: tableDialog.tableData ? tableDialog.tableData.id : 0
+    function commitTableCell() {
+        if (tableDialog.visible && expandedTableLoader.item && !expandedTableLoader.item.commitCell()) return false;
+        return foregroundDecorations.commitTables() && !livePreview.tableDraftsPending;
+    }
+    function expandTable(panel) {
+        if (!commitTableCell()) return;
+        tableDialog.tableData = panel.modelData;
+        tableDialog.open();
+    }
+    function updateExpandedTable() {
+        if (!tableDialog.visible) return;
+        var panels = livePreview.tablePanels;
+        for (var n = 0; n < panels.length; ++n) {
+            if (panels[n].id === expandedTableId && panels[n].model === tableDialog.tableData.model) {
+                tableDialog.tableData = panels[n]; return;
+            }
+        }
+        // A removed/replaced session must never keep an editor on new source.
+        if (expandedTableLoader.item) expandedTableLoader.item.discardCell();
+        tableDialog.close();
+    }
+    Dialog {
+        id: tableDialog
+        objectName: "expandedTableDialog"
+        property var tableData: null
+        parent: Overlay.overlay
+        modal: true
+        focus: true
+        closePolicy: Popup.NoAutoClose
+        title: win.readMode ? "Table" : "Edit table"
+        width: Math.max(1, win.width - 48)
+        height: Math.max(1, win.height - 48)
+        x: (parent.width - width) / 2
+        y: (parent.height - height) / 2
+        function requestClose() {
+            if (expandedTableLoader.item && !expandedTableLoader.item.commitCell()) return;
+            close();
+        }
+        onClosed: {
+            foregroundDecorations.restorePositions();
+            presentation.forceActiveFocus();
+        }
+        contentItem: Item {
+            focus: true
+            Keys.onEscapePressed: function(event) { tableDialog.requestClose(); event.accepted = true; }
+            Loader {
+                id: expandedTableLoader
+                anchors.fill: parent
+                active: tableDialog.visible
+                sourceComponent: Component {
+                    TableGrid {
+                        id: expandedGrid
+                        objectName: "expandedTableGrid"
+                        modelData: tableDialog.tableData
+                        preview: livePreview
+                        readOnly: win.readMode
+                        expanded: true
+                        x: 0; y: 0
+                        width: expandedTableLoader.width
+                        height: expandedTableLoader.height
+                        foreground: win.textColor
+                        backgroundColor: win.darkMode ? "#252525" : "#eeeeee"
+                        borderColor: Qt.rgba(win.textColor.r, win.textColor.g, win.textColor.b, 0.2)
+                        editorFont: presentation.font
+                        onSourceRequested: tableDialog.close()
+                        onEditorChanged: function(editor) {
+                            if (editor) win.activeTablePanel = expandedGrid;
+                            else if (win.activeTablePanel === expandedGrid) win.activeTablePanel = null;
+                        }
+                    }
+                }
+            }
+        }
+        footer: DialogButtonBox {
+            Button {
+                objectName: "closeExpandedTableButton"
+                text: "Close"
+                DialogButtonBox.buttonRole: DialogButtonBox.ActionRole
+                onClicked: tableDialog.requestClose()
+            }
+        }
+    }
+    Connections { target: livePreview; function onTablePanelsChanged() { win.updateExpandedTable(); } }
     ToolButton {
         objectName: "pendingTableDraftsButton"
         anchors.top: parent.top
@@ -348,6 +432,9 @@ ApplicationWindow {
             }
         }
         function onDocumentAboutToReplace() {
+            if (expandedTableLoader.item) expandedTableLoader.item.discardCell();
+            foregroundDecorations.abandonEditors();
+            livePreview.resetTableSessions();
             win.rememberPosition();
             ++win.positionEpoch;
             win.documentReplacing = true;
@@ -602,8 +689,10 @@ ApplicationWindow {
 
     function copyHtml() {
         if (!commitTableCell()) return;
-        if (win.readMode && presentation.selectionStart !== presentation.selectionEnd)
-            backend.copyAsHtml(presentation.selectionStart, presentation.selectionEnd, presentation.textDocument);
+        if (win.readMode && presentation.selectionStart !== presentation.selectionEnd) {
+            if (!livePreview.copyReadSelection(true))
+                backend.copyAsHtml(presentation.selectionStart, presentation.selectionEnd, presentation.textDocument);
+        }
         else if (!win.readMode && editor.selectionStart !== editor.selectionEnd)
             backend.copyAsHtml(editor.selectionStart, editor.selectionEnd);
         else backend.copyAsHtml();
@@ -691,7 +780,7 @@ ApplicationWindow {
         title: "Save File"
         fileMode: Dialogs.FileDialog.SaveFile
         nameFilters: ["Markdown files (*.md *.markdown)", "All files (*)"]
-        onAccepted: backend.saveAs(selectedFile)
+        onAccepted: if (win.commitTableCell()) backend.saveAs(selectedFile)
         onRejected: {
             win.awaitingPendingSave = false;
             win.pendingAction = "";
@@ -738,7 +827,7 @@ ApplicationWindow {
         containerHeight: win.height
 
         onKeepRequested: backend.keepExternalVersion()
-        onReloadRequested: backend.reloadFromDisk()
+        onReloadRequested: if (win.commitTableCell()) backend.reloadFromDisk()
     }
 
     ShortcutsDialog {

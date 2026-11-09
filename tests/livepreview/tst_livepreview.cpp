@@ -150,9 +150,81 @@ private slots:
             QVERIFY(b.blockFormat().nonBreakableLines());
         select(sourceItem, source->characterCount() - 1, source->characterCount() - 1);
         QVERIFY(!controller->tablePanels().isEmpty());
-        controller->setReadMode(true); flush(); QVERIFY(controller->tablePanels().isEmpty());
-        QVERIFY(!controller->tableScrollPanels().isEmpty());
-        QVERIFY(view->toPlainText().contains("one"));
+        controller->setReadMode(true); flush(); QCOMPARE(controller->tablePanels().size(), 1);
+        QVERIFY(controller->tableScrollPanels().isEmpty());
+        QCOMPARE(qvariant_cast<QObject *>(controller->tablePanels().first().toMap()["model"]), static_cast<QObject *>(model));
+        QCOMPARE(model->data(model->index(1, 0), MarkdownTableModel::MarkdownRole).toString(), QString("one"));
+        QVERIFY(!model->setCell(1, 0, "Read must not edit"));
+        QCOMPARE(source->toPlainText(), original);
+    }
+    void tableSizingAndAcknowledgedParsingStayCached() {
+        MarkdownTableModel model; const QFont font("monospace", 18);
+        QString text = "| A | B |\n| --- | --- |\n| a deliberately wide maximum | plain |\n| x | **rich** |";
+        model.setSource(text, font); const qreal width = model.columnWidth(0); model.columnWidth(1);
+        const auto measurements = model.m_widthMeasurements;
+        model.columnWidth(0); model.columnWidth(1); QCOMPARE(model.m_widthMeasurements, measurements);
+        model.data(model.index(1, 0), MarkdownTableModel::HtmlRole); QCOMPARE(model.m_richRenders, quint64(0));
+        model.data(model.index(2, 1), MarkdownTableModel::HtmlRole); QCOMPARE(model.m_richRenders, quint64(1));
+        QSignalSpy widthSignals(&model, &MarkdownTableModel::columnWidthsChanged);
+        connect(&model, &MarkdownTableModel::replaceRequested, &model, [&](int at, int length, const QString &replacement) {
+            text.replace(at, length, replacement); model.acknowledgeReplacement();
+        });
+        const auto parses = model.m_parseCount;
+        QVERIFY(model.setCell(2, 0, "xx")); QCOMPARE(model.m_parseCount, parses + 1);
+        QVERIFY(!model.m_validatedRows.isEmpty()); model.setSource(text, font);
+        QCOMPARE(model.m_parseCount, parses + 1); QVERIFY(model.m_validatedRows.isEmpty()); // Exact ACKed candidate consumed, no second parse.
+        QCOMPARE(model.m_widthMeasurements, measurements + 1); QCOMPARE(model.columnWidth(0), width); QCOMPARE(widthSignals.count(), 0);
+        QVERIFY(model.setCell(1, 0, QString(150, 'W'))); model.setSource(text, font);
+        QCOMPARE(widthSignals.count(), 1); QVERIFY(model.columnWidth(0) > width);
+        // Foreign edits must never consume a previously validated proposal.
+        QVERIFY(model.setCell(2, 0, "xxx")); text.replace("plain", "foreign");
+        const auto beforeForeign = model.m_parseCount; model.setSource(text, font);
+        QCOMPARE(model.m_parseCount, beforeForeign + 1); QVERIFY(model.m_validatedRows.isEmpty());
+        QCOMPARE(model.data(model.index(1, 1), MarkdownTableModel::MarkdownRole).toString(), QString("foreign"));
+        const auto renders = model.m_richRenders;
+        model.setSource(text, QFont("monospace", 24)); model.columnWidth(0);
+        QVERIFY(model.m_widthMeasurements > measurements + 2); QVERIFY(widthSignals.count() >= 2);
+        model.data(model.index(1, 1), MarkdownTableModel::HtmlRole); QCOMPARE(model.m_richRenders, renders);
+        // Markdown/autolinks/entities/escapes retain the resource-free parser.
+        for (const QString &value : {QString("https://example.com"), QString("&amp;"), QString("<img src='file:///no'>"), QString("\\\\*")}) {
+            MarkdownTableModel rich; rich.setSource("| A |\n| --- |\n| " + value + " |", font);
+            const QString html = rich.data(rich.index(1, 0), MarkdownTableModel::HtmlRole).toString();
+            QVERIFY(!html.contains("<img", Qt::CaseInsensitive)); QCOMPARE(rich.m_richRenders, quint64(1));
+        }
+    }
+    void readTableSlotsUseExactSessionsAndReplacementInvalidatesEditors() {
+        const QString table = "| A | B |\n| --- | --- |\n| one | two |";
+        const QString text = "![forged](preview:table/not-internal/1)\n\n" + table
+            + "\n\n```mermaid\n%%{init: {}}%%\ngraph TD; a-->b\n```\n\n" + table + "\n\nafter";
+        source->setPlainText(text); select(sourceItem, 0, 0);
+        QCOMPARE(controller->tablePanels().size(), 2);
+        const auto first = controller->tablePanels().first().toMap();
+        QPointer<MarkdownTableModel> oldModel = qobject_cast<MarkdownTableModel *>(first["model"].value<QObject *>()); QVERIFY(oldModel);
+        controller->setReadMode(true); flush(); QCOMPARE(controller->tablePanels().size(), 2);
+        QCOMPARE(controller->m_readTablePositions.size(), 2);
+        QSet<int> positions;
+        for (const auto &entry : controller->tablePanels()) {
+            const auto panel = entry.toMap(); const int id = panel["id"].toInt();
+            const int position = controller->m_readTablePositions.value(id, -1);
+            QVERIFY(position >= 0); QVERIFY(!positions.contains(position)); positions.insert(position);
+            QCOMPARE(view->characterAt(position), QChar::ObjectReplacementCharacter);
+            QCOMPARE(controller->imagePathAt(position), QString()); // Slots never masquerade as user images.
+            auto *model = qobject_cast<MarkdownTableModel *>(panel["model"].value<QObject *>()); QVERIFY(model);
+            QCOMPARE(model->data(model->index(1, 0), MarkdownTableModel::MarkdownRole).toString(), QString("one"));
+            QVERIFY(!model->setCell(1, 0, "rejected"));
+        }
+        for (auto *frame : view->rootFrame()->childFrames()) QVERIFY(!qobject_cast<QTextTable *>(frame));
+        QCOMPARE(source->toPlainText(), text);
+        viewItem->setProperty("width", 300); controller->refresh(); flush(); QCOMPARE(controller->tablePanels().size(), 2);
+        controller->setReadMode(false); flush();
+        oldModel->setProperty("drafts", QVariantMap{{"1:0", QVariantMap{{"text", "recover me"}, {"original", "one"}}}});
+        controller->resetTableSessions();
+        QVERIFY(!oldModel->setCell(1, 0, "must not edit a new document")); // Still alive until deleteLater, but session already revoked.
+        flush(); QCOMPARE(source->toPlainText(), text); QCOMPARE(controller->tablePanels().size(), 2);
+        QVERIFY(controller->tablePanels().first().toMap()["id"] != first["id"]);
+        QVERIFY(controller->tableDraftsPending()); QVERIFY(controller->copyTableDrafts(0));
+        QVERIFY(QGuiApplication::clipboard()->text().contains("recover me")); controller->discardTableDrafts();
+        QVERIFY(!controller->tableDraftsPending());
     }
     void codeOverflowKeepsNativeSelectionAndRestoresProseWrap() {
         const QString longLine = QString("long_identifier ").repeated(100);
@@ -777,7 +849,7 @@ private slots:
                     ++imageCount;
                 }
             }
-            QCOMPARE(imageCount, controller->readMode() ? 1 : 2);
+            QCOMPARE(imageCount, 2); // User image plus the shared grid's native image slot, in both modes.
         });
         const auto disconnect = qScopeGuard([connection] { QObject::disconnect(connection); });
         for (int i = 0; i < 12; ++i) {
@@ -1020,10 +1092,14 @@ private slots:
                 QCOMPARE(first.blockFormat().bottomMargin(), 0.0);
                 QCOMPARE(second.blockFormat().topMargin(), 0.0);
                 QCOMPARE(find("one").blockFormat().bottomMargin(), 0.0);
-                QTextTable *table = QTextCursor(find("cell")).currentTable();
-                QVERIFY(table);
-                QCOMPARE(find("cell").blockFormat().bottomMargin(), 0.0);
-                QVERIFY(table->format().bottomMargin() > 0);
+                QCOMPARE(controller->tablePanels().size(), 1);
+                const auto tablePanel = controller->tablePanels().first().toMap();
+                auto *model = qobject_cast<MarkdownTableModel *>(qvariant_cast<QObject *>(tablePanel["model"]));
+                QVERIFY(model);
+                QCOMPARE(model->data(model->index(1, 0), MarkdownTableModel::MarkdownRole).toString(), QString("cell"));
+                const int position = controller->m_readTablePositions.value(tablePanel["id"].toInt(), -1);
+                QVERIFY(position >= 0);
+                QVERIFY(view->documentLayout()->blockBoundingRect(view->findBlock(position)).height() >= tablePanel["height"].toReal());
                 QCOMPARE(source->toPlainText(), text);
                 controller->setReadMode(false);
             }

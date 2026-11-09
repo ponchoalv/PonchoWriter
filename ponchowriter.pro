@@ -4,22 +4,27 @@ linux: QT += dbus
 !versionAtLeast(QT_VERSION, 6.7.0): error("Native live preview requires Qt 6.7 or newer")
 
 CONFIG += c++17 release
-TARGET = omawrite
+TARGET = ponchowriter
 include(syntax-highlighting.pri)
 include(spellchecking.pri)
 
 TEMPLATE = app
 macx {
-    ICON = assets/omawrite.icns
+    ICON = assets/ponchowriter.icns
     QMAKE_INFO_PLIST = assets/Info.plist
     syntaxNotices.files = $$PWD/third_party/ksyntaxhighlighting
     syntaxNotices.path = Contents/Resources/third_party
     spellNotices.files = $$PWD/third_party/sonnet
     spellNotices.path = Contents/Resources/third_party
-    QMAKE_BUNDLE_DATA += syntaxNotices spellNotices
+    appNotices.files = $$PWD/LICENSE $$PWD/COPYRIGHT.md
+    appNotices.path = Contents/Resources
+    fontNotice.files = $$PWD/fonts/OFL.txt
+    fontNotice.path = Contents/Resources/fonts
+    QMAKE_BUNDLE_DATA += syntaxNotices spellNotices appNotices fontNotice
 }
 
 HEADERS += \
+    src/profile.h \
     src/backend.h \
     src/windowmanager.h \
     src/instancebroker.h \

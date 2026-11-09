@@ -31,6 +31,7 @@
 #include "cli.h"
 
 #include "backend.h"
+#include "profile.h"
 #include "windowmanager.h"
 #include "fileopenrequests.h"
 #include <QFileOpenEvent>
@@ -71,7 +72,7 @@ public slots:
     void open(const QUrl &url) { urls.append(url); }
 };
 
-class OmawriteTest : public QObject {
+class PonchoWriterTest : public QObject {
     Q_OBJECT
 
     static void editorKeyClick(QQuickWindow *window, Qt::Key key,
@@ -95,6 +96,34 @@ class OmawriteTest : public QObject {
     }
 
 private slots:
+    void renamedProfileKeepsDraftStoreAndImportsOnlyMissingPreferences() {
+        QTemporaryDir temporary; QVERIFY(temporary.isValid());
+        const QString old = temporary.filePath("previous");
+        const QString fresh = temporary.filePath("current");
+        QVERIFY(QDir().mkpath(old + "/attachments/id"));
+        const QByteArray draft = "{\"text\":\"unsaved\",\"attachments\":{\"id\":\"draft.png\"}}";
+        QFile file(old + "/recovery-0.json"); QVERIFY(file.open(QIODevice::WriteOnly)); file.write(draft); file.close();
+        QFile image(old + "/attachments/id/draft.png"); QVERIFY(image.open(QIODevice::WriteOnly)); image.write("original image bytes"); image.close();
+        QSettings settings(temporary.filePath("preferences.ini"), QSettings::IniFormat);
+        settings.setValue("zoom", 1.4);
+        const QVariantMap legacy{{"zoom", 1.0}, {"font", "IBM Plex Mono"}, {"readingPositions/file", 0.6}};
+        QVERIFY(Profile::adopt(settings, legacy, old, fresh));
+        QCOMPARE(settings.value("zoom").toDouble(), 1.4);
+        QCOMPARE(settings.value("font").toString(), QString("IBM Plex Mono"));
+        QCOMPARE(settings.value("readingPositions/file").toDouble(), 0.6);
+        QCOMPARE(settings.value("profileStorageRoot").toString(), old);
+        settings.setValue("font", "new preference");
+        QVERIFY(Profile::adopt(settings, legacy, {}, fresh));
+        QCOMPARE(settings.value("font").toString(), QString("new preference"));
+        QCOMPARE(settings.value("profileStorageRoot").toString(), old);
+        QVERIFY(!QFileInfo::exists(fresh)); // No snapshot/image copying or collision.
+        QVERIFY(file.open(QIODevice::ReadOnly)); QCOMPARE(file.readAll(), draft);
+        QVERIFY(image.open(QIODevice::ReadOnly)); QCOMPARE(image.readAll(), QByteArray("original image bytes"));
+        QSettings clean(temporary.filePath("clean.ini"), QSettings::IniFormat);
+        QVERIFY(Profile::adopt(clean, {}, temporary.filePath("absent"), fresh));
+        QCOMPARE(clean.value("profileStorageRoot").toString(), fresh);
+        QCOMPARE(Profile::ipcDirectoryName(), QStringLiteral("omawrite-instance")); // Stable cross-version lock namespace.
+    }
     void codePanelHoverCopyAndReadLanguageUseQtClipboard() {
         QTemporaryDir directory; QVERIFY(directory.isValid());
         Backend backend; backend.m_recoveryPath = directory.filePath("recovery.json");
@@ -468,9 +497,9 @@ private slots:
         QCOMPARE(visibility.count(), 0); QCOMPARE(source->property("text").toString(), text);
     }
     void tenThousandLineNativeTypingBenchmark() {
-        if (!qEnvironmentVariableIsSet("OMAWRITE_INCREMENTAL_PERF")) QSKIP("Opt-in native 10,000-line benchmark");
+        if (!qEnvironmentVariableIsSet("PONCHOWRITER_INCREMENTAL_PERF")) QSKIP("Opt-in native 10,000-line benchmark");
         if (QGuiApplication::platformName() == "offscreen" || QGuiApplication::platformName() == "minimal") QSKIP("Requires native rendered frames");
-        QFile fixture(qEnvironmentVariable("OMAWRITE_INCREMENTAL_PERF_FIXTURE"));
+        QFile fixture(qEnvironmentVariable("PONCHOWRITER_INCREMENTAL_PERF_FIXTURE"));
         QVERIFY(fixture.open(QIODevice::ReadOnly)); const QString text = QString::fromUtf8(fixture.readAll());
         QVERIFY(text.count('\n') >= 10000); // The manual scratch note may contain the writer's later edits.
         for (const char *name : {"Regular", "Italic", "Bold", "BoldItalic"}) {
@@ -496,7 +525,7 @@ private slots:
         // QTest delivers measured events directly; the benchmark window never
         // accepts OS focus, even during a slow reference layout.
         window->setFlag(Qt::WindowDoesNotAcceptFocus, true);
-        const QString screenName = qEnvironmentVariable("OMAWRITE_INCREMENTAL_PERF_SCREEN");
+        const QString screenName = qEnvironmentVariable("PONCHOWRITER_INCREMENTAL_PERF_SCREEN");
         if (!screenName.isEmpty()) {
             QScreen *selected = nullptr; for (auto *screen : QGuiApplication::screens()) if (screen->name() == screenName) selected = screen;
             QVERIFY2(selected, "Requested benchmark display not found"); window->setScreen(selected);
@@ -552,7 +581,7 @@ private slots:
             milliseconds = double(frame->ns) / 1000000.0; return frame->done.load();
         };
         QJsonArray modeSamples;
-        if (qEnvironmentVariableIsSet("OMAWRITE_MODE_PERF")) {
+        if (qEnvironmentVariableIsSet("PONCHOWRITER_MODE_PERF")) {
             auto *projection = root->findChild<LivePreview *>(); QVERIFY(projection);
             QSignalSpy visibility(window, &QQuickWindow::visibleChanged);
             for (int n = 0; n < 6; ++n) {
@@ -595,21 +624,21 @@ private slots:
             samples.append(milliseconds);
         }
         if (!screenName.isEmpty()) QCOMPARE(window->screen()->name(), screenName);
-        QJsonObject result{{"label", qEnvironmentVariable("OMAWRITE_INCREMENTAL_PERF_LABEL")}, {"lines", text.count('\n')},
+        QJsonObject result{{"label", qEnvironmentVariable("PONCHOWRITER_INCREMENTAL_PERF_LABEL")}, {"lines", text.count('\n')},
             {"bytes_utf8", text.toUtf8().size()}, {"fixture_sha256", QString::fromLatin1(QCryptographicHash::hash(text.toUtf8(), QCryptographicHash::Sha256).toHex())},
             {"screen", window->screen()->name()}, {"refresh_hz", window->screen()->refreshRate()}, {"device_pixel_ratio", window->devicePixelRatio()},
             {"font", view->property("font").value<QFont>().toString()},
             {"typing_to_followup_frame_ms", samples}, {"mode_to_followup_frame_ms", modeSamples},
             {"qt", QString::fromLatin1(qVersion())}, {"platform", QGuiApplication::platformName()},
             {"scope", "Native Main.qml physical typing to marked follow-up frame submission; spelling disabled; not display latency"}};
-        QFile report(qEnvironmentVariable("OMAWRITE_INCREMENTAL_PERF_OUTPUT")); QVERIFY(report.open(QIODevice::WriteOnly));
+        QFile report(qEnvironmentVariable("PONCHOWRITER_INCREMENTAL_PERF_OUTPUT")); QVERIFY(report.open(QIODevice::WriteOnly));
         report.write(QJsonDocument(result).toJson()); qInfo().noquote() << QJsonDocument(result).toJson(QJsonDocument::Compact);
     }
     void largeCodeBlockKeepsItsFullScrollRangeWhenClicked() {
         QTemporaryDir directory;
         QVERIFY(directory.isValid());
         QString text;
-        const QString fixture = qEnvironmentVariable("OMAWRITE_LARGE_CODE_FIXTURE");
+        const QString fixture = qEnvironmentVariable("PONCHOWRITER_LARGE_CODE_FIXTURE");
         if (!fixture.isEmpty()) {
             QFile file(fixture); QVERIFY(file.open(QIODevice::ReadOnly));
             text = QString::fromUtf8(file.readAll()); // Never attach Backend to the original path.
@@ -829,11 +858,11 @@ private slots:
     }
 
     void initTestCase() {
-        qmlRegisterType<LivePreview>("Omawrite", 1, 0, "LivePreview");
+        qmlRegisterType<LivePreview>("PonchoWriter", 1, 0, "LivePreview");
         QCoreApplication::setApplicationVersion(QStringLiteral("1.2.3-test"));
         QStandardPaths::setTestModeEnabled(true);
         QVERIFY(m_settingsDirectory.isValid());
-        QCoreApplication::setApplicationName(QStringLiteral("omawrite-tests-")
+        QCoreApplication::setApplicationName(QStringLiteral("ponchowriter-tests-")
             + QFileInfo(m_settingsDirectory.path()).fileName());
         QQuickStyle::setStyle(QStringLiteral("Material"));
         QSettings::setDefaultFormat(QSettings::IniFormat);
@@ -857,7 +886,7 @@ private slots:
         }
         QVERIFY(QDir(directory.path()).mkdir(QStringLiteral("img")));
         QString text = QStringLiteral("# Render regression\n\nBefore **bold**, *italic* and `code`.\n\n| A | B |\n| --- | --- |\n| one | two |\n\n```cpp\n/* open\nclose */\nint value = 42;\n```\n\n```mermaid\nflowchart LR\n A[Source] --> B[Preview]\n```\n\n![Large](img/image.png)\n\nAfter.\n");
-        const QString fixturePath = qEnvironmentVariable("OMAWRITE_RENDER_FIXTURE");
+        const QString fixturePath = qEnvironmentVariable("PONCHOWRITER_RENDER_FIXTURE");
         if (!fixturePath.isEmpty()) {
             // Optional real-world fixture: read/copy only. Auto-save and recovery
             // are attached exclusively to this temporary directory.
@@ -1542,13 +1571,13 @@ private slots:
 
     void answersHelpBeforeOpeningAWindow() {
         const QString usage = Cli::usage();
-        QVERIFY(usage.contains(QStringLiteral("omawrite [FILE ...]")));
+        QVERIFY(usage.contains(QStringLiteral("ponchowriter [FILE ...]")));
         QVERIFY(usage.contains(QStringLiteral("-h, --help")));
         QVERIFY(usage.contains(QStringLiteral("-v, --version")));
 
         const QString version = QStringLiteral("1.2.3");
         const auto answer = [&](const QStringList &arguments) {
-            return Cli::handleArguments(QStringList{QStringLiteral("omawrite")} + arguments,
+            return Cli::handleArguments(QStringList{QStringLiteral("ponchowriter")} + arguments,
                                         version);
         };
         QCOMPARE(answer({QStringLiteral("--help")}), std::optional<int>(0));
@@ -4029,7 +4058,7 @@ private slots:
             QVERIFY(versionLabel);
             QVERIFY(versionLabel->property("visible").toBool());
             QCOMPARE(versionLabel->property("text").toString(),
-                     QStringLiteral("Omawrite ") + QCoreApplication::applicationVersion());
+                     QStringLiteral("PonchoWriter ") + QCoreApplication::applicationVersion());
             QTest::keyClick(window, Qt::Key_Minus, Qt::ControlModifier);
             QCOMPARE(backend.textScale(), scale);
             QVERIFY(dialog->property("x").toReal() >= 0);
@@ -4560,7 +4589,7 @@ private slots:
         }
         QCOMPARE(readFile(path), QByteArray());
 
-        // The file moves on before Omawrite comes back.
+        // The file moves on before PonchoWriter comes back.
         writeFile(path, "newer on disk");
 
         // Earlier tests may have left drafts of their own; claim until ours.
@@ -4856,5 +4885,5 @@ private:
     QTemporaryDir m_settingsDirectory;
 };
 
-QTEST_MAIN(OmawriteTest)
-#include "tst_omawrite.moc"
+QTEST_MAIN(PonchoWriterTest)
+#include "tst_ponchowriter.moc"

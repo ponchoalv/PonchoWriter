@@ -78,7 +78,7 @@ WindowManager::Entry *WindowManager::create(bool recover) {
     ptr->engine->rootContext()->setContextProperty(QStringLiteral("backend"), ptr->backend.get());
     ptr->engine->load(m_mainQml);
     if (ptr->engine->rootObjects().isEmpty()) {
-        emit errorOccurred(QStringLiteral("Could not load the OmaWrite interface."));
+        emit errorOccurred(QStringLiteral("Could not load the PonchoWriter interface."));
         return nullptr;
     }
     ptr->window = qobject_cast<QWindow *>(ptr->engine->rootObjects().first());

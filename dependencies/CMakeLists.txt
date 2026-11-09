@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(OmaWriteDependencies LANGUAGES CXX)
+project(PonchoWriterDependencies LANGUAGES CXX)
 include(ExternalProject)
 find_package(Qt6 6.7 REQUIRED COMPONENTS Core Gui Network)
 

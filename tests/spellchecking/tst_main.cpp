@@ -80,14 +80,14 @@ private slots:
     void initTestCase() {
         QVERIFY(settings.isValid());
         const QString id = QFileInfo(settings.path()).fileName();
-        QCoreApplication::setOrganizationName(QStringLiteral("omawrite-spelling-main-") + id);
-        QCoreApplication::setApplicationName(QStringLiteral("omawrite-spelling-main-") + id);
+        QCoreApplication::setOrganizationName(QStringLiteral("ponchowriter-spelling-main-") + id);
+        QCoreApplication::setApplicationName(QStringLiteral("ponchowriter-spelling-main-") + id);
         QCoreApplication::setApplicationVersion(QStringLiteral("1.2.3-test"));
         QStandardPaths::setTestModeEnabled(true);
         QSettings::setDefaultFormat(QSettings::IniFormat);
         QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, settings.path());
         QQuickStyle::setStyle(QStringLiteral("Material"));
-        qmlRegisterType<LivePreview>("Omawrite", 1, 0, "LivePreview");
+        qmlRegisterType<LivePreview>("PonchoWriter", 1, 0, "LivePreview");
     }
     void init() {
         warnings.clear();

@@ -5,11 +5,11 @@ include(../syntax-highlighting.pri)
 include(../spellchecking.pri)
 
 TEMPLATE = app
-TARGET = tst_omawrite
+TARGET = tst_ponchowriter
 
 INCLUDEPATH += ../src
 SOURCES += \
-    tst_omawrite.cpp \
+    tst_ponchowriter.cpp \
     ../src/backend.cpp \
     ../src/windowmanager.cpp \
     ../src/fileopenrequests.cpp \

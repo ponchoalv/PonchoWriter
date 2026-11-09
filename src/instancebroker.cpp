@@ -1,4 +1,5 @@
 #include "instancebroker.h"
+#include "profile.h"
 
 #include <QCryptographicHash>
 #include <QDir>
@@ -95,8 +96,8 @@ QString InstanceBroker::prepareFallbackDirectory(const QString &base)
 
 QString InstanceBroker::defaultDirectory()
 {
-    const QString base = QStandardPaths::writableLocation(QStandardPaths::RuntimeLocation);
-    if (!base.isEmpty()) return QDir(base).filePath(QStringLiteral("omawrite-instance"));
+    const QString base = Profile::runtimeLocation();
+    if (!base.isEmpty()) return QDir(base).filePath(Profile::ipcDirectoryName());
     const auto user = QCryptographicHash::hash(QDir::homePath().toUtf8(),
                                               QCryptographicHash::Sha256).toHex().left(16);
     return prepareFallbackDirectory(QDir::tempPath() + QStringLiteral("/ow-") + QString::fromLatin1(user));
@@ -133,7 +134,7 @@ QString InstanceBroker::endpointAddress(const QString &directory, const QString 
     // prefixes and the pipe-name length limit even with a long user profile.
     const auto hash = QCryptographicHash::hash((QDir::cleanPath(directory).toCaseFolded()
                        + QLatin1Char('/') + name).toUtf8(), QCryptographicHash::Sha256).toHex();
-    return QStringLiteral("omawrite-") + QString::fromLatin1(hash);
+    return Profile::pipePrefix() + QString::fromLatin1(hash);
 #else
     return QDir(directory).filePath(name);
 #endif

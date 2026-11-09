@@ -43,13 +43,13 @@ This is **one matched pair on one large mixed Markdown note**, not a statistical
 Build normal suites first (`bin/test`). On an interactive macOS desktop, use the main test executable; Unix builds have the corresponding non-bundle executable:
 
 ```sh
-OMAWRITE_INCREMENTAL_PERF=1 \
-OMAWRITE_INCREMENTAL_PERF_FIXTURE='/absolute/path/to/a/disposable-large-note.md' \
-OMAWRITE_INCREMENTAL_PERF_SCREEN=Q27G2G3R3B \
-OMAWRITE_INCREMENTAL_PERF_LABEL=incremental-native \
-OMAWRITE_INCREMENTAL_PERF_OUTPUT=/tmp/omawrite-10k.json \
+PONCHOWRITER_INCREMENTAL_PERF=1 \
+PONCHOWRITER_INCREMENTAL_PERF_FIXTURE='/absolute/path/to/a/disposable-large-note.md' \
+PONCHOWRITER_INCREMENTAL_PERF_SCREEN=Q27G2G3R3B \
+PONCHOWRITER_INCREMENTAL_PERF_LABEL=incremental-native \
+PONCHOWRITER_INCREMENTAL_PERF_OUTPUT=/tmp/ponchowriter-10k.json \
 QSG_INFO=1 \
-build-tests/tst_omawrite.app/Contents/MacOS/tst_omawrite \
+build-tests/tst_ponchowriter.app/Contents/MacOS/tst_ponchowriter \
   tenThousandLineNativeTypingBenchmark
 ```
 
@@ -64,6 +64,6 @@ Choose an actual connected display name or omit the screen selector. A requested
 - Viewport threshold crossing, Read/Edit and shrinking documents are covered. Real native glyph pixels are checked after distant scrolls, in addition to text/height/model assertions.
 - Seven native UI bodies (including two image data rows): **9 checks passed**, covering Edit link click/context/blank-space behavior, code hover/padding/scroll glyphs, clipboard, image menus and reading-position lifecycle.
 - Two separate native threaded-render bodies: **6 checks passed**, including 100 mode switches with images. Each matched benchmark run passed its body plus setup/cleanup.
-- App rebuilt successfully as `build/omawrite.app` (version remains 0.7.2). Homebrew Qt newer-deployment-target linker warnings remain; this is not proof of older macOS compatibility.
+- App rebuilt successfully as `build/ponchowriter.app` (version remains 0.7.2). Homebrew Qt newer-deployment-target linker warnings remain; this is not proof of older macOS compatibility.
 
 Windows/Linux code paths use the same public Qt APIs but were **not compiled or runtime-tested here**. No user app was killed/replaced, no dictionary was learned, no external renderer was installed, and the original scratch note's hash remained unchanged. Existing static syntax/spelling dependency redistribution/license audit requirements remain in force.

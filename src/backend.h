@@ -159,7 +159,7 @@ signals:
     void externalChangeDetected(bool deleted, bool locallyModified);
 
 private:
-    friend class OmawriteTest;
+    friend class PonchoWriterTest;
 
     void loadDocumentText(const QString &text);
     qreal steppedTextZoom(int direction) const;

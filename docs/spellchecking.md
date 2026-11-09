@@ -1,6 +1,6 @@
 # Minimal desktop spell-checking
 
-OmaWrite's spelling feature uses **Sonnet Core 6.13.0** with a single platform
+PonchoWriter's spelling feature uses **Sonnet Core 6.13.0** with a single platform
 backend. It keeps the Qt Quick editor, ordinary Markdown and one source undo
 history. It does not embed Kate, a browser, Sonnet's editor widgets or a cloud
 service. This is spelling assistance, not grammar checking or autocorrect.
@@ -35,7 +35,7 @@ for manual checks; its checklist is not itself a record of automated passes.
 There is no single universal Linux dictionary/personal-word store shared by all
 applications. On Linux, install the dictionaries for the languages you write in
 using your distribution's package manager. On Windows/macOS, use the OS language
-and spelling settings. OmaWrite does not download dictionaries automatically.
+and spelling settings. PonchoWriter does not download dictionaries automatically.
 
 Native language identifiers differ: the tested Mac accepts generic `en`, while
 `en_US` and `en-US` were invalid. Choose an identifier actually exposed by the
@@ -92,7 +92,7 @@ chosen backend. No runtime Sonnet plugin search path or KDE desktop is needed.
 
 Linux additionally needs `pkg-config` and the Hunspell development library at
 build time, plus language dictionaries at runtime. See [installation](install.md).
-An external private prefix can be selected with `OMAWRITE_SPELL_PREFIX`; it must
+An external private prefix can be selected with `PONCHOWRITER_SPELL_PREFIX`; it must
 match the same Qt kit, compiler, architecture and Release configuration.
 
 Sonnet is not MIT-licensed; see [upstream notices](../third_party/sonnet/README.md).

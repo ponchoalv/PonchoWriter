@@ -69,7 +69,7 @@ return 123
 
 An unknown language or an untagged fence stays plain code. Markdown emphasis markers inside code stay literal.
 
-```unknown-omawrite-language
+```unknown-ponchowriter-language
 plain _code_ with **literal markers**
 ```
 

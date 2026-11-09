@@ -4,7 +4,7 @@
 
 QString Cli::usage() {
     return QStringLiteral(
-        "Usage: omawrite [FILE ...]\n"
+        "Usage: ponchowriter [FILE ...]\n"
         "\n"
         "Opens Markdown files; already-open files are focused, others get new windows.\n"
         "Without files, starts an untitled window or activates the running app.\n"
@@ -24,7 +24,7 @@ std::optional<int> Cli::handleArguments(const QStringList &arguments, const QStr
         return 0;
     }
     if (first == QLatin1String("-v") || first == QLatin1String("--version")) {
-        QTextStream(stdout) << QStringLiteral("omawrite %1\n").arg(version);
+        QTextStream(stdout) << QStringLiteral("ponchowriter %1\n").arg(version);
         return 0;
     }
 

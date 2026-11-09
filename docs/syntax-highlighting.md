@@ -1,6 +1,6 @@
 # Native language-fence syntax highlighting
 
-Language-tagged **backtick and tilde fences are highlighted in both Edit and Read**. OmaWrite uses standalone **KSyntaxHighlighting 6.13.0**, not Kate, KTextEditor or Qt WebEngine. This is token coloring inside the native Markdown writing surface, not autocomplete, an LSP client, code execution or a graphical code editor.
+Language-tagged **backtick and tilde fences are highlighted in both Edit and Read**. PonchoWriter uses standalone **KSyntaxHighlighting 6.13.0**, not Kate, KTextEditor or Qt WebEngine. This is token coloring inside the native Markdown writing surface, not autocomplete, an LSP client, code execution or a graphical code editor.
 
 For an immediately usable test document, open [code-highlighting-example.md](code-highlighting-example.md).
 
@@ -11,7 +11,7 @@ Paste these ordinary Markdown examples into a disposable note:
 ````markdown
 ```python
 # A comment, a keyword and a string
-for name in ["OmaWrite"]:
+for name in ["PonchoWriter"]:
     print(name)
 ```
 
@@ -75,7 +75,7 @@ The explicit bootstrap is optional: `bin/build` and `bin/test` automatically cal
 
 On **Windows**, use the matching MinGW CMD environment or MSVC Developer Command Prompt to configure/build `dependencies` **before qmake or Qt Creator**, as shown in [§1.4/§1.5 of the installation guide](install.md#14-build-with-mingw-in-command-prompt). Select the same kit and **Release** for the app and all tests. Static dependency/qmake Release settings must match the Windows CRT; **Debug is currently unsupported**. The static library needs no extra KDE DLL, but Qt deployment is still required.
 
-When changing Qt kit, compiler or architecture, delete `.deps` and generated app/test build directories before bootstrapping again. Never delete personal notes or attachments. An optional `OMAWRITE_SYNTAX_PREFIX` can point to a prebuilt **static** installation prefix, but it must match the exact kit/compiler/architecture.
+When changing Qt kit, compiler or architecture, delete `.deps` and generated app/test build directories before bootstrapping again. Never delete personal notes or attachments. An optional `PONCHOWRITER_SYNTAX_PREFIX` can point to a prebuilt **static** installation prefix, but it must match the exact kit/compiler/architecture.
 
 ### Pinned developer downloads
 

@@ -1,9 +1,9 @@
 # Sonnet Core 6.13.0
 
-OmaWrite uses KDE Sonnet Core with one static platform backend: Apple's
+PonchoWriter uses KDE Sonnet Core with one static platform backend: Apple's
 NSSpellChecker on macOS, Windows ISpellChecker on Windows, or system Hunspell on
 Linux. Sonnet's Widgets/QML components and other backends are disabled. No
-spelling dictionaries are bundled or downloaded by OmaWrite.
+spelling dictionaries are bundled or downloaded by PonchoWriter.
 
 Upstream: https://invent.kde.org/frameworks/sonnet
 
@@ -12,7 +12,7 @@ Pinned source: https://download.kde.org/stable/frameworks/6.13/sonnet-6.13.0.tar
 SHA-256: `d47465a9d623257cfb0192c3a4dc24733490aa8952310422e402d828ad461eee`
 
 `LICENSES/` contains the four upstream license texts, copied unmodified. Sonnet
-is not covered by OmaWrite's MIT license. See individual upstream source files
+is not covered by PonchoWriter's MIT license. See individual upstream source files
 for their copyright and SPDX declarations (including LGPL-2.1-or-later and the
 Windows backend's LGPL-2.0-or-later).
 

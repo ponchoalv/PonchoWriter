@@ -5,7 +5,7 @@ import QtQuick.Dialogs as Dialogs
 import QtQuick.Layouts
 import QtQuick.Window
 import "EditorMutations.js" as EditorMutations
-import Omawrite 1.0
+import PonchoWriter 1.0
 
 ApplicationWindow {
     id: win
@@ -15,7 +15,7 @@ ApplicationWindow {
     minimumHeight: 520
     visible: !backend.routesFileOpen
     signal windowCloseAccepted()
-    title: (backend.modified ? "* " : "") + backend.fileName + " - Omawrite"
+    title: (backend.modified ? "* " : "") + backend.fileName + " - PonchoWriter"
 
     readonly property bool darkMode: backend.darkMode
     readonly property color pageColor: backend.themeBackground

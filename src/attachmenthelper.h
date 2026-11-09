@@ -241,7 +241,7 @@ inline bool copyInto(const QString &source, const QString &root, const QString &
     }
     QFile input(source);
     if (!input.open(QIODevice::ReadOnly)) return fail(QStringLiteral("Could not read attachment: %1").arg(relative));
-    QTemporaryFile output(QDir(parent).filePath(QStringLiteral(".omawrite-XXXXXX")));
+    QTemporaryFile output(QDir(parent).filePath(QStringLiteral(".ponchowriter-XXXXXX")));
     if (!output.open()) return fail(QStringLiteral("Could not stage attachment: %1").arg(relative));
     while (!input.atEnd()) {
         const QByteArray bytes = input.read(65536);

@@ -11,7 +11,7 @@
 #include "backend.h"
 #include "attachmenthelper.h"
 
-class OmawriteTest : public QObject {
+class PonchoWriterTest : public QObject {
     Q_OBJECT
     static void bind(Backend &backend, QTextDocument &document) {
         backend.m_document = &document;
@@ -36,7 +36,7 @@ class OmawriteTest : public QObject {
 private slots:
     void initTestCase() {
         QStandardPaths::setTestModeEnabled(true);
-        QCoreApplication::setOrganizationName(QStringLiteral("OmaWriteAttachmentTests"));
+        QCoreApplication::setOrganizationName(QStringLiteral("PonchoWriterAttachmentTests"));
         QCoreApplication::setApplicationName(QUuid::createUuid().toString(QUuid::WithoutBraces));
     }
     void cleanupTestCase() {
@@ -325,5 +325,5 @@ private slots:
         QVERIFY(!QFileInfo::exists(dir.filePath("outside/image.png")));
     }
 };
-QTEST_MAIN(OmawriteTest)
+QTEST_MAIN(PonchoWriterTest)
 #include "tst_attachments.moc"

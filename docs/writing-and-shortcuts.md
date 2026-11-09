@@ -1,12 +1,12 @@
 # Writing, visual blocks, attachments and shortcuts
 
-This is the user guide for [ponchoalv/omawrite](https://github.com/ponchoalv/omawrite), a fork of [omacom/omawrite](https://github.com/omacom/omawrite). Markdown remains the file format; this is not a rich-text document format or an Obsidian plugin.
+This is the user guide for [PonchoWriter](https://github.com/ponchoalv/PonchoWriter), maintained by Alfonso Alvarez. See [copyright and dependency notices](../COPYRIGHT.md). Markdown remains the file format; this is not a rich-text document format or an Obsidian plugin.
 
 ## Files and windows
 
 Opening a file already owned by this app activates its existing window without reloading. A different file opens separately; the file picker no longer replaces or discards the originating draft. Cmd/Ctrl+N always opens a fresh untitled window. Save As cannot overwrite a file owned by another window. Recovery drafts retain independent slots and do not get consumed by New Window.
 
-On macOS, prefer `open -a "/path/to/omawrite.app" "/path/to/note.md"` rather than `-n` or `--args`. Windows/Linux executable launches forward file requests through the same local Qt broker. Quit older, un-routed copies before using this build. See the [cross-platform opening guide](opening-files-and-windows.md) for commands, failure/recovery behavior and test limits.
+On macOS, prefer `open -a "/path/to/ponchowriter.app" "/path/to/note.md"` rather than `-n` or `--args`. Windows/Linux executable launches forward file requests through the same local Qt broker. Quit older, un-routed copies before using this build. See the [cross-platform opening guide](opening-files-and-windows.md) for commands, failure/recovery behavior and test limits.
 
 ## macOS key names
 
@@ -116,7 +116,7 @@ Read validates its source/import alignment before baking colors into HTML; compl
 
 ## Paste screenshots without saving them manually
 
-On macOS, **Cmd+Ctrl+Shift+4** copies a selected screenshot region to the clipboard (an OS shortcut, not OmaWrite's). Then paste with **Cmd+V** into the document.
+On macOS, **Cmd+Ctrl+Shift+4** copies a selected screenshot region to the clipboard (an OS shortcut, not PonchoWriter's). Then paste with **Cmd+V** into the document.
 
 The app stages a PNG in persistent application data and inserts ordinary Markdown:
 
@@ -170,10 +170,10 @@ Mermaid is not built into Qt. If **`mmdc`** (Mermaid CLI) is already installed a
 
 ```sh
 command -v mmdc
-./build/omawrite.app/Contents/MacOS/omawrite docs/preview-example.md
+./build/ponchowriter.app/Contents/MacOS/ponchowriter docs/preview-example.md
 ```
 
-Launching from Finder may give a different PATH than your shell. Restart the app after changing renderer availability. OmaWrite does **not** install or download the renderer. Mermaid CLI normally needs its own Node/Puppeteer/Chromium setup: no embedded WebEngine does not mean no external browser runtime.
+Launching from Finder may give a different PATH than your shell. Restart the app after changing renderer availability. PonchoWriter does **not** install or download the renderer. Mermaid CLI normally needs its own Node/Puppeteer/Chromium setup: no embedded WebEngine does not mean no external browser runtime.
 
 Rendering is currently enabled only on macOS/Linux; Windows keeps Mermaid source. Document-provided configuration, HTML labels, click actions, styling directives, encoded escapes and remote-resource syntax are rejected by the constrained renderer. This conservative syntax filter is not an OS/browser sandbox; do not treat an external renderer as a general untrusted-code execution boundary. Missing CLI, invalid/incomplete/unsupported syntax and render failures leave source usable. There is no drag-node editor, whiteboard or arbitrary Mermaid graphical round-trip support.
 
@@ -184,18 +184,18 @@ Install **Qt 6.7 or newer** and a C++17 compiler; this development checkout used
 ```sh
 ./bin/build
 ./bin/test
-open build/omawrite.app
+open build/ponchowriter.app
 ```
 
-The macOS bundle includes a multi-resolution `.icns` icon based on the upstream artwork. No icon-generation tool is required for a normal build.
+The macOS bundle includes an original multi-resolution PonchoWriter journal/P `.icns` icon. No icon-generation tool is required for a normal build.
 
 Open a file directly:
 
 ```sh
-./build/omawrite.app/Contents/MacOS/omawrite /absolute/path/notes.md
+./build/ponchowriter.app/Contents/MacOS/ponchowriter /absolute/path/notes.md
 ```
 
-On Linux, the executable is `./build/omawrite`. `--help` and `--version` work without opening a window. Native macOS file dialogs replace the Linux desktop portal; do not install a portal on macOS just for this app.
+On Linux, the executable is `./build/ponchowriter`. `--help` and `--version` work without opening a window. Native macOS file dialogs replace the Linux desktop portal; do not install a portal on macOS just for this app.
 
 ## Design reference
 

@@ -1,10 +1,12 @@
-# Install OmaWrite on Windows, macOS and Linux
+# Install PonchoWriter on Windows, macOS and Linux
 
-This guide builds the **[ponchoalv/omawrite fork](https://github.com/ponchoalv/omawrite)**, branch **`fix/mode-transitions-caret-and-pairs`**, not an upstream binary or an Obsidian plugin. There is no prebuilt fork installer/release promised here. Clone the feature branch explicitly; do not silently substitute the upstream/default branch.
+This guide builds the **[PonchoWriter project](https://github.com/ponchoalv/PonchoWriter)**, branch **`master`**, not an upstream binary or an Obsidian plugin. There is no prebuilt installer/release promised here. Clone this repository's default `master` branch explicitly; do not substitute a similarly named package or another repository.
 
 ## Current development branch
 
-`fix/mode-transitions-caret-and-pairs` follows incremental editing at `d35b347` (itself based on `master` at `f94d69e`); the old performance/cache experiment remains parked and unmerged. Current additions retain Edit/Read native documents, fix the distant-scroll caret, pair brackets/quotes and add Cmd/Ctrl+T / Shift+T code commands. See [mode behavior, measurement and limits](mode-transitions-and-code-shortcuts.md): **351** offscreen checks passed, separate native macOS UI/render/10,000-line checks passed, app rebuilt. Windows/Linux remain uncompiled/runtime-untested. The commands below select this branch; save local work before switching an existing checkout.
+`master` follows incremental editing at `d35b347` (itself based on `master` at `f94d69e`); the old performance/cache experiment remains parked and unmerged. Current additions retain Edit/Read native documents, fix the distant-scroll caret, pair brackets/quotes and add Cmd/Ctrl+T / Shift+T code commands. See [mode behavior, measurement and limits](mode-transitions-and-code-shortcuts.md): **352** offscreen checks passed, separate native macOS UI/render/10,000-line checks passed, app rebuilt. Windows/Linux remain uncompiled/runtime-untested. The commands below select this branch; save local work before switching an existing checkout.
+
+The current name is **PonchoWriter**, maintained by Alfonso Alvarez. Use `ponchowriter.pro`, `build/ponchowriter.app` and `PONCHOWRITER_*` configuration variables. Existing preferences/draft stores and cross-version locks are preserved; quit old copies before launching the renamed build. [Identity, copyright and upgrade details](ponchowriter-identity.md).
 
 ## Status and requirements
 
@@ -29,7 +31,7 @@ cmake --version
 JOBS=4 ./bin/build-dependencies
 ```
 
-CMake defaults to Unix Makefiles on these Unix instructions; Ninja is optional. `.deps` is ignored by Git. When changing Qt kit, compiler or architecture, **delete `.deps` and the generated app/test build directories**, then rebuild; never delete personal notes or attachments. Alternatively, set `OMAWRITE_SYNTAX_PREFIX` and/or `OMAWRITE_SPELL_PREFIX` to existing static installation prefixes matching exactly the same Qt kit/compiler/architecture. The dependency and qmake app/tests must all use **Release**, to match the Windows CRT; **Debug is currently unsupported**.
+CMake defaults to Unix Makefiles on these Unix instructions; Ninja is optional. `.deps` is ignored by Git. When changing Qt kit, compiler or architecture, **delete `.deps` and the generated app/test build directories**, then rebuild; never delete personal notes or attachments. Alternatively, set `PONCHOWRITER_SYNTAX_PREFIX` and/or `PONCHOWRITER_SPELL_PREFIX` to existing static installation prefixes matching exactly the same Qt kit/compiler/architecture. The dependency and qmake app/tests must all use **Release**, to match the Windows CRT; **Debug is currently unsupported**.
 
 The engine is MIT-licensed, but embedded definition data has mixed GPL/LGPL/other licenses: **not everything bundled is MIT**. See `third_party/ksyntaxhighlighting/README.md` and its `LICENSES/` files for upstream notices. A local build is **not a redistribution-ready release**; resource/license/source auditing remains required. Sonnet adds LGPL obligations, including static-library relinking requirements; see `third_party/sonnet/README.md`. Historical Arch packaging is disabled pending that audit. Deployment commands below describe local deployment mechanics, not permission or readiness to redistribute binaries.
 
@@ -60,23 +62,23 @@ The Windows command blocks below are **Command Prompt (`cmd.exe`)**, not PowerSh
 ```bat
 mkdir "%USERPROFILE%\source"
 cd /d "%USERPROFILE%\source"
-git clone --branch fix/mode-transitions-caret-and-pairs https://github.com/ponchoalv/omawrite.git
-cd omawrite
+git clone --branch master https://github.com/ponchoalv/PonchoWriter.git ponchowriter
+cd ponchowriter
 git branch --show-current
 git rev-parse HEAD
 ```
 
-The branch should be `fix/mode-transitions-caret-and-pairs`. Save the commit hash for bug reports. If you already have a checkout, do not clone over it or discard local work; see Updating.
+The branch should be `master`. Save the commit hash for bug reports. If you already have a checkout, do not clone over it or discard local work; see Updating.
 
 ### 1.3 Build with Qt Creator (recommended GUI route)
 
 **First complete the dependency configure/build in §1.4 (MinGW) or §1.5 (MSVC), from the repository root using the exact kit you will select in Qt Creator.** Stop after that dependency step if you want the GUI route. Opening/running qmake before the dependency exists will fail.
 
-1. Open Qt Creator and use **File → Open File or Project** to open `omawrite.pro` from this checkout.
+1. Open Qt Creator and use **File → Open File or Project** to open `ponchowriter.pro` from this checkout.
 2. In project configuration, select only your matching **Qt 6.7+ desktop kit**. If unavailable, inspect **Preferences/Options → Kits**: Qt version, compiler, debugger and architecture must agree.
 3. Choose **Release** and a fresh shadow-build directory, for example `build-win-mingw-qt6` outside the source files. Do not reuse a directory generated with another compiler/Qt kit.
 4. Run qmake if prompted, then **Build Project**. Use Qt Creator's Run action for the first launch; its kit environment supplies Qt paths.
-5. Locate the resulting `omawrite.exe` in the build directory. This fork forces Release and disables qmake's dual Debug/Release build; inspect both the build root and `release\omawrite.exe` rather than assuming a path.
+5. Locate the resulting `ponchowriter.exe` in the build directory. This fork forces Release and disables qmake's dual Debug/Release build; inspect both the build root and `release\ponchowriter.exe` rather than assuming a path.
 6. For a standalone folder, follow §1.6 using the same kit's command prompt/tools and the actual build directory.
 
 ### 1.4 Build with MinGW in Command Prompt
@@ -104,25 +106,25 @@ Stop on failure. Then either use Qt Creator (§1.3), or build the app:
 ```bat
 mkdir build-win-mingw
 cd build-win-mingw
-qmake ..\omawrite.pro CONFIG+=release
+qmake ..\ponchowriter.pro CONFIG+=release
 mingw32-make -j4
 ```
 
 Inspect and launch the file that exists:
 
 ```bat
-dir release\omawrite.exe
-dir omawrite.exe
+dir release\ponchowriter.exe
+dir ponchowriter.exe
 ```
 
 ```bat
-release\omawrite.exe
+release\ponchowriter.exe
 ```
 
 Or, if output is at the build root:
 
 ```bat
-omawrite.exe
+ponchowriter.exe
 ```
 
 This fork's static-dependency configuration removes `debug_and_release` and forces Release; the executable may therefore be at the build root rather than under `release\`. Check both locations and use the actual generated path in the launch/deployment/test commands below. Do not continue with a stale executable after a failed build.
@@ -130,10 +132,10 @@ This fork's static-dependency configuration removes `debug_and_release` and forc
 Open a document using a quoted path:
 
 ```bat
-release\omawrite.exe "C:\Users\yourname\Documents\Notes\example.md"
+release\ponchowriter.exe "C:\Users\yourname\Documents\Notes\example.md"
 ```
 
-Use `omawrite.exe` instead if that is the actual output. `bin/build`, `bin/test` and `bin/install` are **Unix shell scripts**, not native Windows build/test commands. Git Bash does not make their Unix assumptions into supported Windows instructions.
+Use `ponchowriter.exe` instead if that is the actual output. `bin/build`, `bin/test` and `bin/install` are **Unix shell scripts**, not native Windows build/test commands. Git Bash does not make their Unix assumptions into supported Windows instructions.
 
 ### 1.5 Optional MSVC command-line alternative
 
@@ -153,11 +155,11 @@ The dependency step must succeed **before qmake/Qt Creator**. The example uses a
 ```bat
 mkdir build-win-msvc
 cd build-win-msvc
-qmake ..\omawrite.pro CONFIG+=release
+qmake ..\ponchowriter.pro CONFIG+=release
 nmake
 ```
 
-Check both `release\omawrite.exe` and `omawrite.exe`, as above. Never reuse a MinGW build directory for MSVC or mix their libraries/plugins.
+Check both `release\ponchowriter.exe` and `ponchowriter.exe`, as above. Never reuse a MinGW build directory for MSVC or mix their libraries/plugins.
 
 ### 1.6 Deploy a runnable Windows folder
 
@@ -165,14 +167,14 @@ Run from your **actual build directory**, with the same Qt kit and compiler envi
 
 ```bat
 mkdir dist
-copy release\omawrite.exe dist\omawrite.exe
-windeployqt --release --compiler-runtime --qmldir ..\src dist\omawrite.exe
+copy release\ponchowriter.exe dist\ponchowriter.exe
+windeployqt --release --compiler-runtime --qmldir ..\src dist\ponchowriter.exe
 ```
 
-If the EXE is at the build root, replace the copy command with `copy omawrite.exe dist\omawrite.exe`. If Qt Creator built elsewhere, replace `..\src` with the absolute source directory, e.g. `--qmldir "C:\Users\yourname\source\omawrite\src"`. The important pattern is:
+If the EXE is at the build root, replace the copy command with `copy ponchowriter.exe dist\ponchowriter.exe`. If Qt Creator built elsewhere, replace `..\src` with the absolute source directory, e.g. `--qmldir "C:\Users\yourname\source\ponchowriter\src"`. The important pattern is:
 
 ```text
-windeployqt --release --compiler-runtime --qmldir <repository>/src dist/omawrite.exe
+windeployqt --release --compiler-runtime --qmldir <repository>/src dist/ponchowriter.exe
 ```
 
 - KSyntaxHighlighting and Sonnet Core plus the native Windows spelling backend are statically linked; there is no extra KDE DLL/plugin to deploy. Windows must provide a supported installed spelling language; an OS display-language pack alone is not a guarantee. This does not remove the license/resource/source and LGPL relinking requirements above.
@@ -184,7 +186,7 @@ windeployqt --release --compiler-runtime --qmldir <repository>/src dist/omawrite
 
   ```bat
   set "PATH=%SystemRoot%\System32;%SystemRoot%"
-  omawrite.exe
+  ponchowriter.exe
   ```
 
   Close that terminal afterward. This is not as strong as a clean-machine test.
@@ -202,16 +204,16 @@ cd build-tests-win-core
 qmake "%REPO%\tests\tests.pro" CONFIG+=release
 mingw32-make -j4
 set "QT_QPA_PLATFORM=offscreen"
-release\tst_omawrite.exe
+release\tst_ponchowriter.exe
 set "QT_QPA_PLATFORM="
 cd /d "%REPO%"
 ```
 
-If the executable is at the build root, use `tst_omawrite.exe` instead. For MSVC use `nmake` instead of `mingw32-make -j4`. Repeat the same pattern with a distinct directory for **every** row:
+If the executable is at the build root, use `tst_ponchowriter.exe` instead. For MSVC use `nmake` instead of `mingw32-make -j4`. Repeat the same pattern with a distinct directory for **every** row:
 
 | Project relative to repository | Executable target (append `.exe`) |
 | --- | --- |
-| `tests/tests.pro` | `tst_omawrite` |
+| `tests/tests.pro` | `tst_ponchowriter` |
 | `tests/shortcutlabels.pro` | `tst_shortcutlabels` |
 | `tests/headings/headings.pro` | `tst_headings` |
 | `tests/attachments/attachments.pro` | `tst_attachments` |
@@ -250,17 +252,17 @@ Do not paste CMD's `set`, `%USERPROFILE%`, `copy` conventions or `cd /d` into Po
 
 ```powershell
 $env:Path = 'C:\Qt\<Qt-version>\<MinGW-kit>\bin;C:\Qt\Tools\<matching-MinGW-toolchain>\bin;' + $env:Path
-Set-Location "$env:USERPROFILE\source\omawrite"
+Set-Location "$env:USERPROFILE\source\ponchowriter"
 Get-Command qmake
 qmake -v
 New-Item -ItemType Directory -Path build-win-mingw-ps
 Set-Location build-win-mingw-ps
-qmake ..\omawrite.pro 'CONFIG+=release'
+qmake ..\ponchowriter.pro 'CONFIG+=release'
 mingw32-make -j4
-.\release\omawrite.exe
+.\release\ponchowriter.exe
 ```
 
-Again inspect the actual output; use `.\omawrite.exe` if it is at the root. PowerShell requires `&` to invoke a quoted executable path, e.g. `& 'C:\Qt\<Qt-version>\<MinGW-kit>\bin\qmake.exe' -v`. For tests use `$env:QT_QPA_PLATFORM = 'offscreen'`, run `.\release\tst_omawrite.exe`, then `Remove-Item Env:QT_QPA_PLATFORM`. `$LASTEXITCODE` reports the last native tool's exit status. Use `Copy-Item .\release\omawrite.exe .\dist\omawrite.exe` for deployment after creating `dist`; the `windeployqt` arguments remain the same.
+Again inspect the actual output; use `.\ponchowriter.exe` if it is at the root. PowerShell requires `&` to invoke a quoted executable path, e.g. `& 'C:\Qt\<Qt-version>\<MinGW-kit>\bin\qmake.exe' -v`. For tests use `$env:QT_QPA_PLATFORM = 'offscreen'`, run `.\release\tst_ponchowriter.exe`, then `Remove-Item Env:QT_QPA_PLATFORM`. `$LASTEXITCODE` reports the last native tool's exit status. Use `Copy-Item .\release\ponchowriter.exe .\dist\ponchowriter.exe` for deployment after creating `dist`; the `windeployqt` arguments remain the same.
 
 ## 2. macOS
 
@@ -291,13 +293,13 @@ Choose a writable parent directory:
 ```sh
 mkdir -p ~/source
 cd ~/source
-git clone --branch fix/mode-transitions-caret-and-pairs https://github.com/ponchoalv/omawrite.git
-cd omawrite
+git clone --branch master https://github.com/ponchoalv/PonchoWriter.git ponchowriter
+cd ponchowriter
 git branch --show-current
 git rev-parse HEAD
 ./bin/build
 ./bin/test
-open build/omawrite.app
+open build/ponchowriter.app
 ```
 
 Stop and resolve any build/test failure before continuing. The scripts prefer `qmake6` over `qmake`: check both if you have multiple installations. They build into `build/` and `build-tests/`; do not reuse those directories across incompatible kits.
@@ -305,12 +307,12 @@ Stop and resolve any build/test failure before continuing. The scripts prefer `q
 Launch directly to inherit the shell environment, open a file or capture diagnostic output:
 
 ```sh
-./build/omawrite.app/Contents/MacOS/omawrite
-./build/omawrite.app/Contents/MacOS/omawrite "/absolute/path/to/notes.md"
-./build/omawrite.app/Contents/MacOS/omawrite --version
+./build/ponchowriter.app/Contents/MacOS/ponchowriter
+./build/ponchowriter.app/Contents/MacOS/ponchowriter "/absolute/path/to/notes.md"
+./build/ponchowriter.app/Contents/MacOS/ponchowriter --version
 ```
 
-The `.app` includes a multi-resolution icon based on the upstream document artwork. The committed `assets/omawrite.icns` needs no icon-conversion tools at build time. `bin/build` refreshes generated bundle metadata, including the icon, even in an existing build directory. Quit/reopen the app if macOS still shows an older cached icon.
+The `.app` includes the original PonchoWriter journal/P icon in multiple resolutions. The committed `assets/ponchowriter.icns` needs no icon-conversion tools at build time. `bin/build` refreshes generated bundle metadata, including the icon, even in an existing build directory. Quit/reopen the app if macOS still shows an older cached icon.
 
 Native macOS dialogs are expected. **Do not install Linux portals or QtDBus for macOS.** Personal development builds do not require a Developer ID/notarization workflow.
 
@@ -319,8 +321,8 @@ Native macOS dialogs are expected. **Do not install Linux portals or QtDBus for 
 From the source root, using the same Qt installation:
 
 ```sh
-macdeployqt build/omawrite.app -qmldir=src
-open build/omawrite.app
+macdeployqt build/ponchowriter.app -qmldir=src
+open build/ponchowriter.app
 ```
 
 The `-qmldir=src` option deploys QML imports; Qt frameworks and plugins are also needed. Keep the entire `.app`. Verify on a Mac without Homebrew Qt and test the relevant CPU architecture. For sharing beyond your own development machine, Developer ID signing, hardened runtime/notarization and distribution policy are separate steps; modern `macdeployqt` uses ad-hoc signing by default, which is not a notarized release. Do not disable Gatekeeper globally to run a development build.
@@ -365,14 +367,14 @@ Add your desktop's portal/provider packages separately. Qt Quick runtime imports
 ```sh
 mkdir -p ~/source
 cd ~/source
-git clone --branch fix/mode-transitions-caret-and-pairs https://github.com/ponchoalv/omawrite.git
-cd omawrite
+git clone --branch master https://github.com/ponchoalv/PonchoWriter.git ponchowriter
+cd ponchowriter
 git branch --show-current
 git rev-parse HEAD
 ./bin/build
 ./bin/test
-./build/omawrite
-./build/omawrite "/absolute/path/to/notes.md"
+./build/ponchowriter
+./build/ponchowriter "/absolute/path/to/notes.md"
 ```
 
 Stop on failure rather than launching an older executable. Run in your normal graphical desktop session. The test script uses `QT_QPA_PLATFORM=offscreen` for its processes only; that does not test Wayland/X11 integration or portal dialogs. If the Qt platform plugin fails, install the kit's documented distro runtime dependencies rather than copying arbitrary plugins from another Qt version.
@@ -387,31 +389,31 @@ First remove `.deps` and generated build/test directories if changing kit/compil
 JOBS=4 ./bin/build-dependencies
 mkdir build-new-kit
 cd build-new-kit
-qmake ../omawrite.pro CONFIG+=release
+qmake ../ponchowriter.pro CONFIG+=release
 make -j4
 cd ..
 mkdir build-tests-new-kit
 cd build-tests-new-kit
 qmake ../tests/tests.pro CONFIG+=release
 make -j4
-QT_QPA_PLATFORM=offscreen ./tst_omawrite
+QT_QPA_PLATFORM=offscreen ./tst_ponchowriter
 ```
 
-On macOS the test may instead be `./tst_omawrite.app/Contents/MacOS/tst_omawrite`; use the path actually generated. Repeat all twelve projects/targets in the Windows test table in separate directories, using absolute project paths if convenient. This manual core test alone is **not** the complete suite. The app output is `build-new-kit/omawrite` on Linux or `build-new-kit/omawrite.app` on macOS.
+On macOS the test may instead be `./tst_ponchowriter.app/Contents/MacOS/tst_ponchowriter`; use the path actually generated. Repeat all twelve projects/targets in the Windows test table in separate directories, using absolute project paths if convenient. This manual core test alone is **not** the complete suite. The app output is `build-new-kit/ponchowriter` on Linux or `build-new-kit/ponchowriter.app` on macOS.
 
 ## Opening files after installation
 
 The current build routes file requests to one running process: an already-open canonical file is focused without reloading its draft, while a different file gets its own window. **New window** still creates an untitled window. Run the executable with multiple file paths, or use the OS's Open With association. The macOS bundle declares Markdown document support but does not forcibly replace your preferred editor.
 
-Quit older copies first; an earlier app in `/Applications` cannot participate in this new routing protocol. macOS `open -a … --args …` is only a launch-time argument mechanism; use `open -a "/path/to/omawrite.app" "/path/to/note.md"` for a native document-open request or call the bundle executable directly. See [Opening files and windows](opening-files-and-windows.md), including `open -n`, recovery and desktop focus limits. Windows/Linux behavior is source-supported but has not been run here.
+Quit older copies first; an earlier app in `/Applications` cannot participate in this new routing protocol. macOS `open -a … --args …` is only a launch-time argument mechanism; use `open -a "/path/to/ponchowriter.app" "/path/to/note.md"` for a native document-open request or call the bundle executable directly. See [Opening files and windows](opening-files-and-windows.md), including `open -n`, recovery and desktop focus limits. Windows/Linux behavior is source-supported but has not been run here.
 
 ## 4. Optional Mermaid rendering and feature boundaries
 
-OmaWrite is a native Markdown editor with Edit/Read views, not a browser, whiteboard or graphical diagram designer. Tables/images/diagrams reveal their Markdown source when edited; **there is no drag-node diagram editor or arbitrary graphical Mermaid round-trip editing**.
+PonchoWriter is a native Markdown editor with Edit/Read views, not a browser, whiteboard or graphical diagram designer. Tables/images/diagrams reveal their Markdown source when edited; **there is no drag-node diagram editor or arbitrary graphical Mermaid round-trip editing**.
 
 - **Windows:** Mermaid deliberately remains **source fallback**, even if Node and `mmdc` are installed. Rendering is disabled until safe process-tree cancellation is implemented. This is not solved by changing PATH.
 - **macOS/Linux (Unix):** rendering can use an independently installed Mermaid CLI (`mmdc`) on the application's PATH. That optional setup needs its own supported Node version and Puppeteer/Chromium/browser dependencies. Consult the [Mermaid CLI project](https://github.com/mermaid-js/mermaid-cli) before installing; Node alone is not the renderer. External tooling installation can have its own browser-download behavior.
-- OmaWrite **does not automatically install or download** Node, Mermaid CLI or a browser. No embedded WebEngine does not mean that an external renderer needs no browser runtime.
+- PonchoWriter **does not automatically install or download** Node, Mermaid CLI or a browser. No embedded WebEngine does not mean that an external renderer needs no browser runtime.
 - Check `command -v mmdc` in the launching terminal. On macOS, start the app via its executable to inherit this PATH; Finder launches can have a different environment. Restart after changing renderer availability.
 - Missing CLI, invalid/unsupported syntax, rejected configuration or render failure leave usable source. Document-provided configuration, click actions/HTML and remote-resource syntax are constrained. Remote images are not automatically fetched.
 
@@ -427,10 +429,10 @@ mmdc --version
 command -v mmdc
 ```
 
-The official npm package uses Puppeteer/Chrome and may download a browser during installation. Do not use the old unsupported Homebrew `mermaid-cli` formula. Quit OmaWrite, then, from your source checkout, launch the executable directly so it inherits this terminal's PATH:
+The official npm package uses Puppeteer/Chrome and may download a browser during installation. Do not use the old unsupported Homebrew `mermaid-cli` formula. Quit PonchoWriter, then, from your source checkout, launch the executable directly so it inherits this terminal's PATH:
 
 ```sh
-./build/omawrite.app/Contents/MacOS/omawrite "$PWD/docs/preview-example.md"
+./build/ponchowriter.app/Contents/MacOS/ponchowriter "$PWD/docs/preview-example.md"
 ```
 
 Move the caret outside the Mermaid block or switch to Read. A version check alone does not verify browser availability or successful rendering; if the CLI fails, inspect its terminal error rather than assuming the app can render it.
@@ -442,7 +444,7 @@ Mermaid is optional: do the first installation and smoke checks without it.
 Use a disposable document in a temporary **notes folder**, not your only copy of real work. Passing automated tests does not replace these checks:
 
 1. Open the app, then its F1 shortcut reference. Confirm text and controls are readable at your display scale. Toggle OS light/dark appearance and check the app.
-2. Open, edit, Save and Save As a Markdown file, including a folder/name with spaces and Unicode. Reopen it and verify its contents outside OmaWrite. Named files auto-save after a pause; untitled files need an explicit save.
+2. Open, edit, Save and Save As a Markdown file, including a folder/name with spaces and Unicode. Reopen it and verify its contents outside PonchoWriter. Named files auto-save after a pause; untitled files need an explicit save.
 3. Verify native Open/Save and Print (cancel printing if desired). Windows/macOS native Qt dialogs are expected; Linux depends on the desktop/portal integration. Record unexpected fallback behavior rather than assuming an offscreen test covers it.
 4. Type headings, emphasis, a table and an image reference. Toggle Edit/Read using the book/pencil button. Click supported blocks to reveal source; confirm toggling does not rewrite the Markdown.
    Also try tagged backtick and tilde code fences (`python`/`py`, `cpp`/`c++`, `js`, `json`, `bash`, `yaml`), unknown/untagged fences, multiline tokens and adjacent fences. Check Edit/Read colors, light/dark, font/zoom, search and unchanged source/undo; see the [examples](syntax-highlighting.md).
@@ -453,17 +455,17 @@ Use a disposable document in a temporary **notes folder**, not your only copy of
 
 ## 6. Updating, backups and identifying the build
 
-1. Close OmaWrite. Back up notes and their complete `img/` folders. A source-control update is not a backup of your writing or recovery data.
+1. Close PonchoWriter. Back up notes and their complete `img/` folders. A source-control update is not a backup of your writing or recovery data.
 2. In the source checkout, inspect changes and confirm the branch:
 
    ```sh
    git status
    git branch --show-current
-   git pull --ff-only origin fix/mode-transitions-caret-and-pairs
+   git pull --ff-only origin master
    git rev-parse HEAD
    ```
 
-   These Git commands work in CMD/PowerShell too. Run the pull only while on `fix/mode-transitions-caret-and-pairs`. If the tree is dirty or the pull refuses a fast-forward, stop and resolve it deliberately; do not use reset/clean to discard work.
+   These Git commands work in CMD/PowerShell too. Run the pull only while on `master`. If the tree is dirty or the pull refuses a fast-forward, stop and resolve it deliberately; do not use reset/clean to discard work.
 3. Rebuild and rerun all suites with the intended kit, then repeat smoke checks. For Qt/compiler/architecture changes, **delete `.deps` and generated build/test directories**, then bootstrap with the matching environment before qmake. Never delete notes, `img/`, persistent app data or recovery files as a build-cleanup step. Recreate deployment folders from the new build; do not merge old/new DLLs or plugins.
 4. `--version` may still report **0.7.2**. Identify this fork by repository URL, branch and **`git rev-parse HEAD`**, not that version string alone. Record Qt/compiler/OS/architecture and test results with bug reports.
 

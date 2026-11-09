@@ -12,7 +12,7 @@ private slots:
     void init() { previousPath = qgetenv("PATH"); }
     void cleanup() {
         qputenv("PATH", previousPath);
-        qunsetenv("OMAWRITE_TEST_PNG");
+        qunsetenv("PONCHOWRITER_TEST_PNG");
     }
     void supportedSyntax() {
         QVERIFY(MermaidRenderer::supported("flowchart LR\nA-->B"));
@@ -27,7 +27,7 @@ private slots:
         QVERIFY(!MermaidRenderer::supported("flowchart LR\nA@{ img: 'something' }"));
     }
     void unavailable() {
-        qputenv("PATH", "/nonexistent/omawrite-mermaid-renderer");
+        qputenv("PATH", "/nonexistent/ponchowriter-mermaid-renderer");
         MermaidRenderer renderer;
         QSignalSpy ready(&renderer, &MermaidRenderer::ready);
         QVERIFY(renderer.request(fenced("flowchart LR\nA-->B"), false, 500).isNull());
@@ -43,7 +43,7 @@ private slots:
         fixture.fill(Qt::red);
         const QString png = dir.filePath("fixture.png");
         QVERIFY(fixture.save(png));
-        qputenv("OMAWRITE_TEST_PNG", png.toUtf8());
+        qputenv("PONCHOWRITER_TEST_PNG", png.toUtf8());
         const QString script = dir.filePath("mmdc");
         QFile file(script);
         QVERIFY(file.open(QIODevice::WriteOnly));
@@ -51,7 +51,7 @@ private slots:
         // let a permissive fake renderer conceal this compatibility bug.
         file.write("#!/bin/sh\nfor arg in \"$@\"; do\n"
                    "case \"$arg\" in -w|--width) echo 'unknown option' >&2; exit 1;; esac\n"
-                   "done\ncp \"$OMAWRITE_TEST_PNG\" \"$4\"\n");
+                   "done\ncp \"$PONCHOWRITER_TEST_PNG\" \"$4\"\n");
         file.close();
         QVERIFY(file.setPermissions(QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner));
         qputenv("PATH", dir.path().toUtf8() + ":" + previousPath);

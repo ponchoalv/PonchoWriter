@@ -1,6 +1,6 @@
 # Opening files and windows
 
-OmaWrite uses one app process per user/session endpoint, with an independent document, undo history, recovery slot and QML engine for each window. The Qt local connection adds no browser, network service, polling loop or extra dependency.
+PonchoWriter uses one app process per user/session endpoint, with an independent document, undo history, recovery slot and QML engine for each window. The Qt local connection adds no browser, network service, polling loop or extra dependency.
 
 - An already-open local file activates its existing window **without reloading it**.
 - Another file opens in another window. Open from the file picker does not replace the originating draft or ask you to discard it.
@@ -15,7 +15,7 @@ OmaWrite uses one app process per user/session endpoint, with an independent doc
 After quitting older copies and opening the rebuilt app, use native file opening:
 
 ```bash
-open -a "/Users/alfonso.alvarez/github/vendor/omawrite/build/omawrite.app" "/absolute/path/to/note.md"
+open -a "/Users/alfonso.alvarez/github/vendor/ponchowriter/build/ponchowriter.app" "/absolute/path/to/note.md"
 ```
 
 Several files can follow the application path. Finder Open With uses the same native file-open event handler; the app bundle declares Markdown extensions without taking over your default association automatically.
@@ -25,7 +25,7 @@ Prefer this to `--args`: macOS does not reliably deliver new command-line argume
 The executable also supports repeatable command-line requests:
 
 ```bash
-"/Users/alfonso.alvarez/github/vendor/omawrite/build/omawrite.app/Contents/MacOS/omawrite" "/absolute/path/to/note.md"
+"/Users/alfonso.alvarez/github/vendor/ponchowriter/build/ponchowriter.app/Contents/MacOS/ponchowriter" "/absolute/path/to/note.md"
 ```
 
 ### Windows
@@ -33,7 +33,7 @@ The executable also supports repeatable command-line requests:
 From Command Prompt, using your deployed build:
 
 ```bat
-"C:\Apps\OmaWrite\omawrite.exe" "C:\Notes\note.md"
+"C:\Apps\PonchoWriter\ponchowriter.exe" "C:\Notes\note.md"
 ```
 
 PowerShell uses `&` before a quoted executable path. Register Open With yourself if desired; this source build does not install a Windows file association.
@@ -41,7 +41,7 @@ PowerShell uses `&` before a quoted executable path. Register Open With yourself
 ### Linux
 
 ```bash
-omawrite "/home/me/Notes/note.md"
+ponchowriter "/home/me/Notes/note.md"
 ```
 
 Desktop file-association requests reach the same router. Existing desktop launchers can pass one file per launch; multiple launches still converge on one process.
@@ -52,7 +52,7 @@ Routing compares canonical local paths, including symlink/relative aliases where
 
 Save and Save As check ownership **before copying attachments or writing Markdown**. If another window owns the target, the save fails, that owner is activated, and the originating draft/URL/modified state remain intact. Choose another name. Saves are serialized on the GUI thread; no merging or collaborative editing is attempted.
 
-Normal duplicate opens therefore do not create competing autosavers. This cannot protect against older versions without routing, another editor, another login/session, or external filesystem changes. Quit all older OmaWrite processes before switching to this build. In particular, an older `/Applications/omawrite.app` is not updated by rebuilding `build/omawrite.app`.
+Normal duplicate opens therefore do not create competing autosavers. This cannot protect against older versions without routing, another editor, another login/session, or external filesystem changes. Quit all older PonchoWriter processes before switching to this build. In particular, an older `/Applications/ponchowriter.app` is not updated by rebuilding `build/ponchowriter.app`.
 
 ## Recovery and failure behavior
 

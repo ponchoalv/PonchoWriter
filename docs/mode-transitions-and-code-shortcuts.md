@@ -25,7 +25,7 @@ Pairing does not transform paste or IME commit text, does not operate in Read/ov
 | Toggle inline code | **Cmd+T** | **Ctrl+T** |
 | Toggle fenced code block | **Cmd+Shift+T** | **Ctrl+Shift+T** |
 
-No existing OmaWrite shortcut used these combinations. They appear in F1. Both commands are Edit-only, finish composition and synchronize the projection before reading selection, preserve the body selection, and use one source undo action.
+No existing PonchoWriter shortcut used these combinations. They appear in F1. Both commands are Edit-only, finish composition and synchronize the projection before reading selection, preserve the body selection, and use one source undo action.
 
 Inline code uses one backtick normally, or a longer delimiter when the body contains backticks. Markdown padding is added when necessary. With no selection it inserts an empty pair and puts the caret inside. A single surrounding code span can be removed; multiple unrelated spans or literal backticks are wrapped rather than stripped.
 
@@ -47,16 +47,16 @@ First Read after an edit or invalidation still requires document-sized conversio
 
 Raw reports: [previous](performance/mode-transitions/previous-10k.json), [retained documents](performance/mode-transitions/retained-10k.json).
 
-To reproduce after building the tests, run the native `tst_omawrite` executable with `tenThousandLineNativeTypingBenchmark` and set:
+To reproduce after building the tests, run the native `tst_ponchowriter` executable with `tenThousandLineNativeTypingBenchmark` and set:
 
 ```sh
 QSG_RENDER_LOOP=threaded
-OMAWRITE_INCREMENTAL_PERF=1
-OMAWRITE_MODE_PERF=1
-OMAWRITE_INCREMENTAL_PERF_FIXTURE=/absolute/path/to/a/frozen-10000-line-copy.md
-OMAWRITE_INCREMENTAL_PERF_SCREEN=Q27G2G3R3B # Use an actually attached screen name.
-OMAWRITE_INCREMENTAL_PERF_OUTPUT=/tmp/mode-result.json
-OMAWRITE_INCREMENTAL_PERF_LABEL=my-build
+PONCHOWRITER_INCREMENTAL_PERF=1
+PONCHOWRITER_MODE_PERF=1
+PONCHOWRITER_INCREMENTAL_PERF_FIXTURE=/absolute/path/to/a/frozen-10000-line-copy.md
+PONCHOWRITER_INCREMENTAL_PERF_SCREEN=Q27G2G3R3B # Use an actually attached screen name.
+PONCHOWRITER_INCREMENTAL_PERF_OUTPUT=/tmp/mode-result.json
+PONCHOWRITER_INCREMENTAL_PERF_LABEL=my-build
 ```
 
 Export these variables before invoking the executable. Compare identical fixture hashes, harness, actual display, font and window size. Do not automate typing into an app the writer is currently using.
@@ -69,4 +69,4 @@ Export these variables before invoking the executable. Compare identical fixture
 - Both native benchmark runs passed; macOS app rebuilt as 0.7.2.
 - Regression fixtures refetch the active document on `QQuickTextDocument::textDocumentChanged`; Edit and Read intentionally no longer have the same pointer. Spelling still appears only in Edit.
 
-The built app is `build/omawrite.app`; this update does not replace `/Applications/omawrite.app` or terminate existing app instances.
+The built app is `build/ponchowriter.app`; this update does not replace `/Applications/ponchowriter.app` or terminate existing app instances.

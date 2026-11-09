@@ -9,14 +9,14 @@ class NativeSpellcheckingTest : public QObject {
     Q_OBJECT
 private slots:
     void osDictionarySmoke() {
-        if (qEnvironmentVariable("OMAWRITE_NATIVE_SPELLCHECK") != QStringLiteral("1"))
-            QSKIP("Manual opt-in only: set OMAWRITE_NATIVE_SPELLCHECK=1 on macOS.");
+        if (qEnvironmentVariable("PONCHOWRITER_NATIVE_SPELLCHECK") != QStringLiteral("1"))
+            QSKIP("Manual opt-in only: set PONCHOWRITER_NATIVE_SPELLCHECK=1 on macOS.");
 #ifndef Q_OS_MACOS
         QSKIP("This smoke test exercises the macOS NSSpellChecker backend only.");
 #else
         QTemporaryDir settingsDirectory;
         QVERIFY(settingsDirectory.isValid());
-        QCoreApplication::setOrganizationName("OmawriteNativeSpellingTest");
+        QCoreApplication::setOrganizationName("PonchoWriterNativeSpellingTest");
         QCoreApplication::setApplicationName("IsolatedSmokeTest");
         QSettings::setDefaultFormat(QSettings::IniFormat);
         QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, settingsDirectory.path());

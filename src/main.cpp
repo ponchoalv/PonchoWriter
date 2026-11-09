@@ -14,20 +14,21 @@
 #include "livepreview.h"
 #include "windowmanager.h"
 
-#define OMAWRITE_VERSION "0.7.2"
+#include "profile.h"
+
+#define PONCHOWRITER_VERSION "0.7.2"
 
 int main(int argc, char *argv[]) {
-    if (const auto code = Cli::handleArguments(argc, argv, QStringLiteral(OMAWRITE_VERSION)))
+    if (const auto code = Cli::handleArguments(argc, argv, QStringLiteral(PONCHOWRITER_VERSION)))
         return *code;
     if (qgetenv("QT_QPA_PLATFORMTHEME") == "gtk3")
         qputenv("QT_QPA_PLATFORMTHEME", "xdgdesktopportal");
     QApplication app(argc, argv);
-    app.setApplicationName(QStringLiteral("omawrite"));
-    app.setApplicationVersion(QStringLiteral(OMAWRITE_VERSION));
-    app.setOrganizationName(QStringLiteral("Omacom"));
-    app.setOrganizationDomain(QStringLiteral("omacom.io"));
-    app.setDesktopFileName(QStringLiteral("omawrite"));
-    app.setWindowIcon(QIcon::fromTheme(QStringLiteral("omawrite")));
+    Profile::configureIdentity();
+    app.setApplicationDisplayName(QStringLiteral("PonchoWriter"));
+    app.setApplicationVersion(QStringLiteral(PONCHOWRITER_VERSION));
+    app.setDesktopFileName(QStringLiteral("ponchowriter"));
+    app.setWindowIcon(QIcon::fromTheme(QStringLiteral("ponchowriter")));
     app.setQuitOnLastWindowClosed(false);
 
     FileOpenRequests nativeFiles(&app);
@@ -41,11 +42,12 @@ int main(int argc, char *argv[]) {
         }, Qt::QueuedConnection); // ACK transport acceptance before any disk/QML work.
     };
     const auto becomePrimary = [&](const QStringList &initialFiles) {
+        if (!Profile::activate()) { qCritical("Could not initialize PonchoWriter preferences; no drafts were changed."); app.exit(1); return; }
         nativeFiles.activate(false);
         for (const char *weight : {"Regular", "Italic", "Bold", "BoldItalic"})
             QFontDatabase::addApplicationFont(QStringLiteral(":/fonts/IBMPlexMono-%1.ttf").arg(QLatin1String(weight)));
         QQuickStyle::setStyle(QStringLiteral("Material"));
-        qmlRegisterType<LivePreview>("Omawrite", 1, 0, "LivePreview");
+        qmlRegisterType<LivePreview>("PonchoWriter", 1, 0, "LivePreview");
         windows = std::make_unique<WindowManager>();
         QObject::connect(windows.get(), &WindowManager::noWindowsRemaining, &app, &QCoreApplication::quit);
         QObject::connect(windows.get(), &WindowManager::errorOccurred, &app,

@@ -11,7 +11,7 @@
 #include <memory>
 
 // Optional external mmdc. It uses its own Node/Puppeteer/Chromium installation;
-// Omawrite does not bundle a browser. Missing/failed renders remain Markdown.
+// PonchoWriter does not bundle a browser. Missing/failed renders remain Markdown.
 class MermaidRenderer : public QObject {
     Q_OBJECT
 public:

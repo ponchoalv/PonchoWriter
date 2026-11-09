@@ -9,12 +9,12 @@ if command -v qmake6 >/dev/null 2>&1; then
 elif command -v qmake >/dev/null 2>&1; then
   QMAKE=qmake
 else
-  echo "qmake6 or qmake is required to build omawrite." >&2
+  echo "qmake6 or qmake is required to build ponchowriter." >&2
   exit 1
 fi
 
-if { [ -z "${OMAWRITE_SYNTAX_PREFIX:-}" ] && [ ! -f "$ROOT/.deps/install/include/KF6/KSyntaxHighlighting/KSyntaxHighlighting/Repository" ]; } ||
-   { [ -z "${OMAWRITE_SPELL_PREFIX:-}" ] && [ ! -f "$ROOT/.deps/install/include/KF6/SonnetCore/Sonnet/Speller" ]; }; then
+if { [ -z "${PONCHOWRITER_SYNTAX_PREFIX:-}" ] && [ ! -f "$ROOT/.deps/install/include/KF6/KSyntaxHighlighting/KSyntaxHighlighting/Repository" ]; } ||
+   { [ -z "${PONCHOWRITER_SPELL_PREFIX:-}" ] && [ ! -f "$ROOT/.deps/install/include/KF6/SonnetCore/Sonnet/Speller" ]; }; then
   "$ROOT/bin/build-dependencies"
 fi
 
@@ -25,14 +25,14 @@ cd "$BUILD_DIR"
 
 # qmake can retain an old generated plist after ICON changes in an existing build.
 if [ "$(uname -s)" = "Darwin" ]; then
-  rm -f "$BUILD_DIR/omawrite.app/Contents/Info.plist"
+  rm -f "$BUILD_DIR/ponchowriter.app/Contents/Info.plist"
 fi
 
-"$QMAKE" "$ROOT/omawrite.pro"
+"$QMAKE" "$ROOT/ponchowriter.pro"
 make -j"$JOBS"
 
-if [ -x "$BUILD_DIR/omawrite.app/Contents/MacOS/omawrite" ]; then
-  echo "Built $BUILD_DIR/omawrite.app (open it with: open \"$BUILD_DIR/omawrite.app\")"
+if [ -x "$BUILD_DIR/ponchowriter.app/Contents/MacOS/ponchowriter" ]; then
+  echo "Built $BUILD_DIR/ponchowriter.app (open it with: open \"$BUILD_DIR/ponchowriter.app\")"
 else
-  echo "Built $BUILD_DIR/omawrite"
+  echo "Built $BUILD_DIR/ponchowriter"
 fi

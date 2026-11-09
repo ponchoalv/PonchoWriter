@@ -1,9 +1,10 @@
-# Omawrite
+# PonchoWriter
 
 A dead-simple Markdown writing app built with Qt Quick and C++ that automatically follows system dark/light mode.
 
-This is the [ponchoalv fork](https://github.com/ponchoalv/omawrite) of
-[omacom/omawrite](https://github.com/omacom/omawrite). See the
+See [the PonchoWriter rename, upgrade and compatibility guide](docs/ponchowriter-identity.md).
+
+Created and maintained by **Alfonso Alvarez**: [ponchoalv/PonchoWriter](https://github.com/ponchoalv/PonchoWriter). Application contributions use the [MIT license](LICENSE); required upstream and dependency attribution is in [COPYRIGHT.md](COPYRIGHT.md). See the
 [writing and shortcut guide](docs/writing-and-shortcuts.md),
 [native preview design](docs/live-preview-design.md),
 [example document](docs/preview-example.md), and
@@ -13,7 +14,7 @@ This is the [ponchoalv fork](https://github.com/ponchoalv/omawrite) of
 [file/window routing guide](docs/opening-files-and-windows.md), and
 [Windows, macOS and Linux installation guide](docs/install.md).
 
-## Fork additions
+## Features
 
 - Native Edit/Read toggle with inactive table/local-image previews and caret-aware heading markers. Markdown stays the source of truth with one undo history.
 - Clipboard screenshot paste, durable recovery-safe staging, `img/` materialization and collision-safe attachment handling across Save As.
@@ -28,20 +29,16 @@ This is the [ponchoalv fork](https://github.com/ponchoalv/omawrite) of
 - Edit Cmd/Ctrl-click or context **Open Link**; Read retains single-click links.
 - Lightweight selection word counts, per-file position memory, cross-platform Reveal, and selection-aware HTML copying. See the [writing guide](docs/writing-and-shortcuts.md); code-block overflow remains a [future TODO](docs/TODO.md).
 
-The screenshots below are from upstream, before these fork additions.
-
-<img width="2948" height="3227" alt="screenshot-2026-06-23_15-24-08" src="https://github.com/user-attachments/assets/4e930c0d-edda-4046-b444-a59eff523329" />
-<img width="2948" height="3227" alt="screenshot-2026-06-23_15-23-23" src="https://github.com/user-attachments/assets/8ced7c26-961b-4ded-b263-84403001a951" />
-
+<img width="128" height="128" alt="PonchoWriter journal icon" src="pkgbuild/ponchowriter.svg" />
 
 ## Install
 
-The **upstream** app is available through the Omarchy Package Repository as `omawrite` and is included in new Omarchy installations (from Quattro forward). These fork features require building this checkout; they are not part of that upstream package.
+Build PonchoWriter from this repository; see the [platform installation guide](docs/install.md). No prebuilt installer or distribution package is promised. Existing distribution packages for other applications are not PonchoWriter releases.
 
 ## Command line
 
-`omawrite FILE ...` routes files to the running app: existing documents are focused, other files get separate windows. Without filenames, it starts an untitled window if closed or activates the running app. Cmd/Ctrl+N always creates an untitled window. On macOS use `open -a /path/to/omawrite.app /path/to/note.md`, without `-n` or `--args`; see [opening files](docs/opening-files-and-windows.md).
-`omawrite --help` and `omawrite --version` answer in the terminal without opening a window.
+`ponchowriter FILE ...` routes files to the running app: existing documents are focused, other files get separate windows. Without filenames, it starts an untitled window if closed or activates the running app. Cmd/Ctrl+N always creates an untitled window. On macOS use `open -a /path/to/ponchowriter.app /path/to/note.md`, without `-n` or `--args`; see [opening files](docs/opening-files-and-windows.md).
+`ponchowriter --help` and `ponchowriter --version` answer in the terminal without opening a window.
 
 ## Shortcuts
 
@@ -52,7 +49,7 @@ The `F1` reference displays platform-specific key names, including Option on Mac
 - `Ctrl+Shift+S` saves as.
 - `Ctrl+O` opens a Markdown file through the platform file picker.
 - `Ctrl+P` opens the system print dialog.
-- `Ctrl+N` opens a new Omawrite window.
+- `Ctrl+N` opens a new PonchoWriter window.
 - `Ctrl+Z`, `Ctrl+Shift+Z`, and `Ctrl+Y` handle undo and redo.
 - `Super+F` toggles fullscreen on Linux; `Cmd+Ctrl+F` on macOS. `F11` is also available.
 - `Ctrl+F` searches the document. Use `Enter` or `Ctrl+G` for the next match and `Shift+Enter` for the previous match.
@@ -68,18 +65,18 @@ The `F1` reference displays platform-specific key names, including Option on Mac
 
 Once a document has been saved to a file, edits are auto-saved to that file a
 moment after you stop typing, so `Ctrl+S` is rarely needed. Untitled drafts are
-never auto-saved — they wait for an explicit save so Omawrite never picks a file
-name for you. Unsaved drafts are recovered after an abnormal exit. Omawrite also
+never auto-saved — they wait for an explicit save so PonchoWriter never picks a file
+name for you. Unsaved drafts are recovered after an abnormal exit. PonchoWriter also
 watches open files and warns before an external change can replace local work;
 auto-save pauses until you reload, keep your version, or save. A recovered draft
 is never auto-saved over its file — save it to keep it.
 
 The font button in the footer picks the writing font from any installed text font,
-and Omawrite remembers the choice. IBM Plex Mono is the default.
+and PonchoWriter remembers the choice. IBM Plex Mono is the default.
 
 Text follows the desktop text size — `omarchy display text size`, or GNOME's
 `text-scaling-factor` — and re-flows without a restart. The default of 12px leaves
-Omawrite at the size it is designed around; larger and smaller sizes scale from there.
+PonchoWriter at the size it is designed around; larger and smaller sizes scale from there.
 `Ctrl+=`, `Ctrl+-`, and `Ctrl+scroll` set your own size on top of that, from 50% to
 300% in browser-sized steps. It is remembered for the next window you open.
 
@@ -106,20 +103,19 @@ currently use Release to match the private static library, including Windows' CR
 ```sh
 ./bin/build
 ./bin/test
-./build/omawrite
+./build/ponchowriter
 ```
 
-On macOS, launch the app with `open build/omawrite.app`; the executable is
-`build/omawrite.app/Contents/MacOS/omawrite`. Homebrew Qt supplies `qmake6`.
-The bundle includes `assets/omawrite.icns`, generated from the upstream SVG artwork;
-no icon converter is needed to build.
+On macOS, launch the app with `open build/ponchowriter.app`; the executable is
+`build/ponchowriter.app/Contents/MacOS/ponchowriter`. Homebrew Qt supplies `qmake6`.
+The bundle includes the original PonchoWriter journal/P icon as `assets/ponchowriter.icns` (vector source: `pkgbuild/ponchowriter.svg`); no icon converter is needed to build.
 
 `bin/test` runs the Qt test suites with the offscreen platform, so they do not
 require an active graphical session. It handles both Unix executables and macOS
 app bundles. To open a file with the local Linux build:
 
 ```sh
-./build/omawrite path/to/document.md
+./build/ponchowriter path/to/document.md
 ```
 
 ### Binary distribution status
@@ -128,5 +124,5 @@ Local development builds are supported. **No prebuilt release is being published
 The syntax engine is MIT, but embedded language definitions have mixed additional terms. Sonnet adds LGPL obligations, including static-library relinking/source requirements; see [Sonnet notices](third_party/sonnet/README.md).
 See [provenance and license/source audit status](third_party/ksyntaxhighlighting/README.md).
 The historical Arch `pkgbuild/PKGBUILD` / `bin/install` packaging route is disabled
-for this fork until that audit and a maintained fork recipe are complete. Upstream
+for this project until that audit and a maintained package recipe are complete. Upstream
 Omarchy packages are unaffected.

@@ -22,6 +22,7 @@ public:
     // clears the selection. Call alongside setCaret when the editor selects.
     void setSelection(int start, int end);
     void refreshFont();
+    void setListMarkers(const QHash<int, int> &markers);
 
     struct Span {
         int start;
@@ -67,6 +68,7 @@ public:
     // as one. Folding keeps one UTF-16 unit per unit, so offsets and lengths
     // are the text's own.
     static QList<int> findMatches(const QString &text, const QString &query);
+    static bool searchTouchesPrefix(const QString &text, int prefixLength, const QString &query);
 
 protected:
     void highlightBlock(const QString &text) override;
@@ -85,6 +87,7 @@ private:
     void highlightSearch(const QString &text);
     void highlightSpelling(const QString &text);
     QList<Span> m_spellingRanges;
+    QHash<int, int> m_listMarkers;
 
     bool m_darkMode = true;
     QString m_customBackground;

@@ -786,6 +786,47 @@ private slots:
         QVERIFY(settings.childKeys().size() <= 100);
     }
 
+    void listPreviewMarkersRemainEditableWithStableIndentation() {
+        QTemporaryDir dir; QVERIFY(dir.isValid());
+        Backend backend; backend.m_recoveryPath = dir.filePath("recovery.json");
+        QQmlEngine engine;
+        engine.rootContext()->setContextProperty("backend", &backend);
+        QQmlComponent component(&engine, QUrl::fromLocalFile(QFINDTESTDATA("../src/Main.qml")));
+        QScopedPointer<QObject> root(component.create());
+        auto *window = qobject_cast<QQuickWindow *>(root.data()); QVERIFY(window);
+        window->show(); QVERIFY(QTest::qWaitForWindowExposed(window));
+        auto *source = window->findChild<QObject *>("sourceEditor");
+        auto *view = window->findChild<QQuickItem *>("previewEditor");
+        auto *preview = window->findChild<LivePreview *>("livePreviewController");
+        QVERIFY(source && view && preview);
+        const QString text = "- alpha beta gamma\n- second item\n\nafter\n";
+        source->setProperty("text", text);
+        QVERIFY(QMetaObject::invokeMethod(source, "select", Q_ARG(int, int(text.size())), Q_ARG(int, int(text.size()))));
+        QTRY_COMPARE(preview->listMarkers().size(), 2);
+        QPointer<QQuickItem> marker;
+        for (auto *child : view->childItems())
+            if (child->objectName() == "listPreviewMarker" && child->property("modelData").toMap().value("baseline") == preview->listMarkers().first().toMap().value("baseline")) { marker = child; break; }
+        QVERIFY(marker && marker->isVisible());
+        QCOMPARE(marker->property("text").toString(), QString(QChar(0x2022)));
+        QRectF before;
+        QVERIFY(QMetaObject::invokeMethod(view, "positionToRectangle", Q_RETURN_ARG(QRectF, before), Q_ARG(int, 2)));
+        QTest::mouseClick(window, Qt::LeftButton, Qt::NoModifier, marker->mapToScene(QPointF(marker->width()/2, marker->height()/2)).toPoint());
+        QTRY_VERIFY(marker && !marker->isVisible());
+        QRectF active;
+        QVERIFY(QMetaObject::invokeMethod(view, "positionToRectangle", Q_RETURN_ARG(QRectF, active), Q_ARG(int, 2)));
+        QCOMPARE(active.x(), before.x());
+        QRectF body;
+        QVERIFY(QMetaObject::invokeMethod(view, "positionToRectangle", Q_RETURN_ARG(QRectF, body), Q_ARG(int, 6)));
+        QTest::mouseClick(window, Qt::LeftButton, Qt::NoModifier, view->mapToScene(body.center()).toPoint());
+        QTRY_VERIFY(marker && marker->isVisible());
+        QTest::keyClick(window, Qt::Key_X); // Actual visible-editor route, one source undo.
+        QTRY_VERIFY(source->property("text").toString().contains('x'));
+        QTest::keyClick(window, Qt::Key_Z, Qt::ControlModifier);
+        QTRY_COMPARE(source->property("text").toString(), text);
+        window->setProperty("readMode", true);
+        QTRY_VERIFY(preview->listMarkers().isEmpty());
+    }
+
     void selectionFooterPositionReopenAndClipboardActions() {
         QTemporaryDir dir;
         QVERIFY(dir.isValid());
@@ -825,7 +866,9 @@ private slots:
         QTest::keyClick(window, Qt::Key_C, Qt::ControlModifier | Qt::ShiftModifier);
         QVERIFY(QGuiApplication::clipboard()->mimeData()->html().contains("font-weight"));
         QVERIFY(!QGuiApplication::clipboard()->text().contains("Section"));
-        QCOMPARE(QGuiApplication::clipboard()->text().trimmed(), QStringLiteral("alpha beta"));
+        QCOMPARE(QGuiApplication::clipboard()->text(), QGuiApplication::clipboard()->mimeData()->html());
+        QTextDocument pastedHtml; pastedHtml.setHtml(QGuiApplication::clipboard()->text());
+        QCOMPARE(pastedHtml.toPlainText().trimmed(), QStringLiteral("alpha beta"));
         window->setProperty("readMode", true);
         QTRY_VERIFY(!view->property("text").toString().isEmpty());
         QVERIFY(QMetaObject::invokeMethod(view, "select", Q_ARG(int, 0), Q_ARG(int, 10)));
@@ -833,8 +876,25 @@ private slots:
         auto *quick = qvariant_cast<QQuickTextDocument *>(view->property("textDocument")); QVERIFY(quick);
         QMetaObject::invokeMethod(view, "forceActiveFocus");
         QTest::keyClick(window, Qt::Key_C, Qt::ControlModifier | Qt::ShiftModifier);
-        QCOMPARE(QGuiApplication::clipboard()->text().trimmed(), QStringLiteral("alpha beta"));
+        QCOMPARE(QGuiApplication::clipboard()->text(), QGuiApplication::clipboard()->mimeData()->html());
+        pastedHtml.setHtml(QGuiApplication::clipboard()->text());
+        QCOMPARE(pastedHtml.toPlainText().trimmed(), QStringLiteral("alpha beta"));
         QVERIFY(QGuiApplication::clipboard()->mimeData()->html().contains("font-weight"));
+        QTest::keyClick(window, Qt::Key_C, Qt::ControlModifier);
+        QCOMPARE(QGuiApplication::clipboard()->text(), QStringLiteral("alpha beta"));
+        QVERIFY(QMetaObject::invokeMethod(view, "select", Q_ARG(int, 0), Q_ARG(int, 0)));
+        QTest::keyClick(window, Qt::Key_C, Qt::ControlModifier);
+        QCOMPARE(QGuiApplication::clipboard()->text(), text);
+        auto *copyAction = window->findChild<QObject *>("copyAction"); QVERIFY(copyAction);
+        QVERIFY(copyAction->property("enabled").toBool());
+        QGuiApplication::clipboard()->setText("sentinel");
+        QVERIFY(QMetaObject::invokeMethod(copyAction, "triggered"));
+        QCOMPARE(QGuiApplication::clipboard()->text(), text);
+        auto *htmlAction = window->findChild<QObject *>("copyHtmlAction"); QVERIFY(htmlAction);
+        QGuiApplication::clipboard()->setText("sentinel");
+        QVERIFY(QMetaObject::invokeMethod(htmlAction, "triggered"));
+        QCOMPARE(QGuiApplication::clipboard()->text(), QGuiApplication::clipboard()->mimeData()->html());
+        QVERIFY(QGuiApplication::clipboard()->text().contains("Section 99"));
         const int imagePosition = quick->textDocument()->toPlainText().indexOf(QChar::ObjectReplacementCharacter);
         QVERIFY(imagePosition >= 0);
         QVERIFY(QMetaObject::invokeMethod(view, "select", Q_ARG(int, imagePosition), Q_ARG(int, imagePosition + 1)));
@@ -2892,7 +2952,7 @@ private slots:
         QVERIFY(html.contains(QStringLiteral("font-weight:700;\">bold</span>")));
         QVERIFY(!html.contains(QStringLiteral("font-family")));
         QVERIFY(!html.contains(QStringLiteral("margin")));
-        QCOMPARE(mimeData->text(), QStringLiteral("Title\nFirst bold.\nSecond."));
+        QCOMPARE(mimeData->text(), html);
     }
 
     void flashesScrollBarOnlyWhenPaging() {

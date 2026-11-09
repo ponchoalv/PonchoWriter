@@ -608,6 +608,78 @@ void LivePreview::completeProjectionLayout() {
         layout->documentSize();
     m_viewText = documentText(m_view);
     updateCodeBlockPanels();
+    updateListMarkers();
+}
+void LivePreview::styleEditLists() {
+    const bool textChanged = m_listText != m_viewText;
+    if (!textChanged && m_listStyleValid && m_listFont == m_view->defaultFont()
+        && m_listIndentWidth == m_view->indentWidth()) return;
+    if (textChanged) { m_listItems = ListPreview::parse(m_viewText); m_listText = m_viewText; }
+    m_listFont = m_view->defaultFont();
+    m_listIndentWidth = m_view->indentWidth();
+    m_listStyleValid = true;
+    QHash<int, ListPreview::Item> items;
+    QHash<int, int> markers;
+    for (const auto &item : m_listItems) {
+        items.insert(item.block, item);
+        if (!item.marker.isEmpty()) markers.insert(m_view->findBlockByNumber(item.block).position(), item.prefix);
+    }
+    m_highlighter->setListMarkers(markers);
+    const QFontMetricsF metrics(m_view->defaultFont());
+    auto *layout = m_view->documentLayout();
+    QSignalBlocker blocked(layout);
+    QTextCursor batch(m_view);
+    batch.beginEditBlock();
+    bool changed = false;
+    for (auto block = m_view->begin(); block.isValid(); block = block.next()) {
+        const auto it = items.constFind(block.blockNumber());
+        const qreal margin = it == items.cend() ? 0 : m_view->indentWidth() * it->depth;
+        const qreal indent = it == items.cend() ? 0 : -metrics.horizontalAdvance(block.text().left(it->prefix));
+        auto format = block.blockFormat();
+        if (format.leftMargin() == margin && format.textIndent() == indent) continue;
+        format.setLeftMargin(margin); format.setTextIndent(indent);
+        QTextCursor(block).setBlockFormat(format);
+        changed = true;
+    }
+    batch.endEditBlock();
+    blocked.unblock();
+    if (changed) m_view->markContentsDirty(0, m_view->characterCount());
+}
+void LivePreview::updateListMarkers() {
+    if (!m_view || !m_viewItem || m_view->pageSize() == QSizeF(0, 0)) return;
+    if (m_pending && !m_readMode && !m_composing) return; // Keep the last projection until its queued replacement.
+    QVariantList markers;
+    if (!m_readMode && !m_composing) {
+        const qreal left = m_viewItem->property("leftPadding").toReal() - m_view->documentMargin();
+        qreal top = m_viewItem->property("topPadding").toReal();
+        const qreal spare = m_viewItem->property("height").toReal() - top
+            - m_viewItem->property("bottomPadding").toReal() - m_viewItem->property("contentHeight").toReal();
+        const int alignment = m_viewItem->property("verticalAlignment").toInt();
+        if (alignment == Qt::AlignVCenter) top += spare / 2;
+        else if (alignment == Qt::AlignBottom) top += spare;
+        const QFontMetricsF metrics(m_view->defaultFont());
+        for (const auto &item : m_listItems) {
+            if (item.marker.isEmpty()) continue;
+            const auto block = m_view->findBlockByNumber(item.block);
+            const auto text = block.text();
+            if (!block.isValid() || item.prefix < 0 || item.prefix > text.size()) {
+                if (!m_listMarkers.isEmpty()) { m_listMarkers.clear(); emit listMarkersChanged(); }
+                return; // Stale metadata after native input/IME must never index text.
+            }
+            auto *layout = block.layout();
+            if (!layout || !layout->lineCount()) return; // Retain last complete geometry.
+            const auto line = layout->lineAt(0);
+            int separator = item.prefix;
+            while (separator > 0 && text[separator - 1].isSpace()) --separator;
+            const qreal right = left + layout->position().x() + line.cursorToX(item.prefix)
+                - metrics.horizontalAdvance(text.mid(separator, item.prefix - separator));
+            markers.append(QVariantMap{{"text", item.marker}, {"right", right},
+                {"baseline", top + layout->position().y() + line.y() + line.ascent()},
+                {"start", sourcePosition(block.position())}, {"end", sourcePosition(block.position() + item.prefix)},
+                {"searchReveal", MarkdownHighlighter::searchTouchesPrefix(text, item.prefix, m_searchQuery)}});
+        }
+    }
+    if (markers != m_listMarkers) { m_listMarkers = markers; emit listMarkersChanged(); }
 }
 void LivePreview::scheduleCodeBlockPanels() {
     if (m_panelsPending) return;
@@ -616,7 +688,7 @@ void LivePreview::scheduleCodeBlockPanels() {
         m_panelsPending = false;
         // Geometry is read-only and must follow wrapped IME preedit as well;
         // source/projection rebuilding remains deferred until composition ends.
-        if (!m_guard) updateCodeBlockPanels();
+        if (!m_guard) { updateCodeBlockPanels(); updateListMarkers(); }
     });
 }
 void LivePreview::updateCodeBlockPanels() {
@@ -813,6 +885,7 @@ void LivePreview::rebuild() {
                                 strongForeground(m_viewItem).name(),
                                 m_viewItem->property("previewAccent").value<QColor>().name(),
                                 dark ? QStringLiteral("#252525") : QStringLiteral("#eeeeee"));
+        styleEditLists();
         m_highlighter->setSearch(m_searchQuery, m_currentMatch < 0 ? -1 : viewPosition(m_currentMatch));
         m_highlighter->setCaret(viewPosition(m_caret));
         m_highlighter->setSelection(viewPosition(m_anchor), viewPosition(m_caret));
@@ -832,6 +905,7 @@ void LivePreview::rebuild() {
     // Native rich-text image objects, never hidden multiline source overlays.
     clearViewResources();
     m_view->clear();
+    m_listStyleValid = false;
     QTextCursor cursor(m_view);
     cursor.beginEditBlock();
     sourceAt = 0;
@@ -876,10 +950,13 @@ void LivePreview::prepareEdit() {
         m_projectionKey.clear();
         clearViewResources();
         m_view->setPlainText(documentText(m_source));
+        m_listStyleValid = false;
         m_segments = {{0, int(m_source->toPlainText().size()), 0,
                       int(m_source->toPlainText().size()), false}};
         m_viewText = documentText(m_view);
+        styleEditLists();
         select(m_viewItem, m_anchor, m_caret);
+        completeProjectionLayout();
     }
 }
 QString LivePreview::imagePathAt(int position) const {
@@ -921,8 +998,12 @@ bool LivePreview::copyCodeBlock(int panelIndex) {
 }
 
 void LivePreview::copySource() {
+    if (!m_source || !m_viewItem) return;
     if (m_readMode) {
-        QMetaObject::invokeMethod(m_viewItem, "copy");
+        if (m_viewItem->property("selectionStart") != m_viewItem->property("selectionEnd"))
+            QMetaObject::invokeMethod(m_viewItem, "copy");
+        else
+            QGuiApplication::clipboard()->setText(documentText(m_source));
         return;
     }
     QTextCursor cursor(m_source);
@@ -931,10 +1012,21 @@ void LivePreview::copySource() {
     QGuiApplication::clipboard()->setText(cursor.selectedText().replace(QChar::ParagraphSeparator, QLatin1Char('\n')));
 }
 bool LivePreview::eventFilter(QObject *object, QEvent *event) {
-    if (object != m_viewItem || m_readMode)
+    if (object != m_viewItem)
         return QObject::eventFilter(object, event);
     if (event->type() == QEvent::KeyPress) {
         auto *key = static_cast<QKeyEvent *>(event);
+        if (key->keyCombination() == QKeyCombination(Qt::ControlModifier | Qt::ShiftModifier, Qt::Key_C)) {
+            // Focused-editor fallback: native Qt Quick shortcut activation can
+            // depend on window activation. Never insert C or perform plain Copy.
+            emit copyHtmlRequested();
+            return true;
+        }
+        if (key->matches(QKeySequence::Copy)) {
+            copySource();
+            return true;
+        }
+        if (m_readMode) return QObject::eventFilter(object, event);
         // Qt Quick can consume Undo's ShortcutOverride even with the view's
         // undo stack disabled. Always route native undo to the source item.
         if (key->matches(QKeySequence::Undo) || key->matches(QKeySequence::Redo)) {
@@ -942,12 +1034,8 @@ bool LivePreview::eventFilter(QObject *object, QEvent *event) {
                                      key->matches(QKeySequence::Undo) ? "undo" : "redo");
             return true;
         }
-        if (key->matches(QKeySequence::Copy)) {
-            copySource();
-            return true;
-        }
         prepareEdit();
-    } else if (event->type() == QEvent::InputMethod) {
+    } else if (!m_readMode && event->type() == QEvent::InputMethod) {
         auto *input = static_cast<QInputMethodEvent *>(event);
         if (!m_composing)
             prepareEdit();

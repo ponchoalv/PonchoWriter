@@ -86,6 +86,111 @@ private slots:
         flush();
     }
     void cleanup() { controller.reset(); root.reset(); }
+    void listMarkersKeepHangingAlignmentAndSource() {
+        viewItem->setProperty("width", 260);
+        const QString text = "- alpha " + QString("words ").repeated(18)
+            + "\n  - nested beta\n- gamma\n\n8. eight\n1. nine\n1. ten\n\nafter\n";
+        source->setPlainText(text); source->clearUndoRedoStacks();
+        select(sourceItem, text.size(), text.size());
+        QCOMPARE(view->toPlainText(), text);
+        QCOMPARE(controller->listMarkers().size(), 6);
+        QCOMPARE(controller->listMarkers()[4].toMap().value("text").toString(), QString("9."));
+        QCOMPARE(controller->listMarkers()[5].toMap().value("text").toString(), QString("10."));
+        const auto bodyX = [&] { auto *layout = view->begin().layout(); return layout->position().x() + layout->lineAt(0).cursorToX(2); };
+        view->documentLayout()->documentSize();
+        const qreal x = bodyX();
+        QVERIFY(view->begin().layout()->lineCount() > 1);
+        const auto *layout = view->begin().layout();
+        QVERIFY(qAbs(x - layout->position().x() - layout->lineAt(1).x()) < 1);
+        const auto prefixColor = [&] {
+            for (const auto &range : view->begin().layout()->formats())
+                if (range.start == 0) return range.format.foreground().color();
+            return QColor();
+        };
+        QCOMPARE(prefixColor().alpha(), 0);
+        const auto markers = controller->listMarkers();
+        select(sourceItem, 0, 0);
+        QCOMPARE(controller->listMarkers(), markers); // Caret visibility never resets all delegates.
+        QVERIFY(prefixColor().alpha() > 0);
+        QCOMPARE(bodyX(), x);
+        select(sourceItem, 5, 5);
+        QCOMPARE(prefixColor().alpha(), 0);
+        QCOMPARE(bodyX(), x);
+        controller->setSearchHighlight("- a", 0); flush(); // Match crosses the prefix/body boundary.
+        QVERIFY(prefixColor().alpha() > 0);
+        QVERIFY(controller->listMarkers().first().toMap().value("searchReveal").toBool());
+        controller->setSearchHighlight("", -1); flush();
+        QCOMPARE(prefixColor().alpha(), 0);
+        select(sourceItem, 4, 0); // Selection reveals literal prefixes, in either direction.
+        QVERIFY(prefixColor().alpha() > 0);
+        QCOMPARE(source->toPlainText(), text);
+        QVERIFY(!source->isUndoAvailable());
+        controller->setReadMode(true); flush();
+        QVERIFY(controller->listMarkers().isEmpty());
+        layout = view->begin().layout();
+        QVERIFY(qAbs(layout->position().x() + layout->lineAt(0).cursorToX(0) - x) < 1);
+        controller->setReadMode(false); flush();
+        QCOMPARE(view->toPlainText(), text);
+        QCOMPARE(bodyX(), x);
+        const auto excluded = ListPreview::parse("    - code\n\n```\n- code\n```\n\n<!--\n- hidden\n-->\n\n<div>\n- hidden\n</div>\n\na | b\n--- | ---\n- literal | row\n");
+        QVERIFY(excluded.isEmpty());
+        QVERIFY(ListPreview::parse("Paragraph\n2. literal continuation\n").isEmpty());
+        QVERIFY(ListPreview::parse("<details>\n- literal\n</details>\n").isEmpty());
+        QVERIFY(ListPreview::parse("<div>\n</div>\n- literal\n\n").isEmpty());
+        const auto dedented = ListPreview::parse("- outer\n  - inner\n\n  outer continuation\n");
+        QCOMPARE(dedented.last().depth, 1);
+        const auto separate = ListPreview::parse("8. first\n1) second\n");
+        QCOMPARE(separate.size(), 2);
+        QCOMPARE(separate.last().marker, QString("1)"));
+        const auto siblings = ListPreview::parse("- outer\n - sibling\n  - sibling\n");
+        QCOMPARE(siblings.size(), 3);
+        for (const auto &item : siblings) QCOMPARE(item.depth, 1);
+        const auto outsideFence = ListPreview::parse("8. old\n\n```\ncode\n```\n\n1. new\n");
+        QCOMPARE(outsideFence.last().marker, QString("1."));
+        const auto nestedFence = ListPreview::parse("8. old\n\n   ```\n   - code\n   ```\n\n1. next\n");
+        QCOMPARE(nestedFence.last().marker, QString("9."));
+        const auto outerFence = ListPreview::parse("8. outer\n   - inner\n\n   ```\n   code\n   ```\n\n1. next\n");
+        QCOMPARE(outerFence.last().marker, QString("9."));
+        const auto afterRule = ListPreview::parse("Paragraph\n***\n2. item\n");
+        QCOMPARE(afterRule.size(), 1); QCOMPARE(afterRule.first().marker, QString("2."));
+        QVERIFY(ListPreview::parse("<custom>\n- literal\n</custom>\n\n").isEmpty());
+        controller->setReadMode(false); flush();
+        select(sourceItem, 0, 7);
+        QInputMethodEvent preedit("漢", {});
+        QCoreApplication::sendEvent(viewItem, &preedit); flush();
+        QVERIFY(controller->listMarkers().isEmpty());
+        QInputMethodEvent cancel;
+        QCoreApplication::sendEvent(viewItem, &cancel); flush();
+        // Native IME removes an initial selection even when preedit is cancelled.
+        QCOMPARE(source->toPlainText(), text.mid(7));
+        QVERIFY(source->isUndoAvailable()); source->undo(); flush();
+        QCOMPARE(source->toPlainText(), text);
+    }
+    void listLayoutCachesCaretWorkAndPreservesPrefixUndo() {
+        QString text;
+        for (int i = 0; i < 1000; ++i) text += QString("- item %1 body words\n").arg(i);
+        text += "\nafter";
+        source->setPlainText(text); source->clearUndoRedoStacks();
+        select(sourceItem, text.size(), text.size());
+        QCOMPARE(controller->listMarkers().size(), 1000);
+        QSignalSpy modelChanges(controller.get(), &LivePreview::listMarkersChanged);
+        QElapsedTimer timer; timer.start();
+        for (int i = 0; i < 32; ++i) select(sourceItem, 4 + i % 10, 4 + i % 10);
+        QVERIFY2(timer.elapsed() < 5000, "Caret movement should not reparse/reformat the full list or recreate its QML delegates");
+        QCOMPARE(modelChanges.size(), 0);
+        QCOMPARE(source->toPlainText(), text); QVERIFY(!source->isUndoAvailable());
+        select(viewItem, 0, 1); type("+");
+        QCOMPARE(source->toPlainText(), "+" + text.mid(1));
+        QVERIFY(source->isUndoAvailable()); source->undo(); flush();
+        QCOMPARE(source->toPlainText(), text);
+        QFont font = view->defaultFont(); font.setPixelSize(28);
+        viewItem->setProperty("font", font); viewItem->setProperty("width", 280);
+        controller->refresh(); flush();
+        const auto *layout = view->begin().layout();
+        const qreal body = layout->position().x() + layout->lineAt(0).cursorToX(2);
+        QVERIFY(qAbs(body - view->documentMargin() - view->indentWidth()) < 1);
+        QCOMPARE(source->toPlainText(), text); QVERIFY(!source->isUndoAvailable());
+    }
     void inactiveHorizontalRulesRevealSourceAndKeepUndo() {
         const QString text = "before\n\n---\n\nafter\n\n```\n---\n```\n";
         source->setPlainText(text); source->clearUndoRedoStacks();

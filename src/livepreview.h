@@ -5,6 +5,7 @@
 #include <QTextDocument>
 #include <QVariant>
 #include "previewblocks.h"
+#include "listpreview.h"
 
 class MarkdownHighlighter;
 class MermaidRenderer;
@@ -17,6 +18,7 @@ class LivePreview : public QObject {
     Q_PROPERTY(QObject *resolver READ resolver WRITE setResolver)
     Q_PROPERTY(QObject *spelling READ spelling WRITE setSpelling)
     Q_PROPERTY(QVariantList codeBlockPanels READ codeBlockPanels NOTIFY codeBlockPanelsChanged)
+    Q_PROPERTY(QVariantList listMarkers READ listMarkers NOTIFY listMarkersChanged)
 public:
     struct Segment {
         int sourceStart, sourceEnd, viewStart, viewEnd;
@@ -45,9 +47,12 @@ public:
     static int toView(const QList<Segment> &segments, int position);
     const QList<Segment> &segments() const { return m_segments; }
     QVariantList codeBlockPanels() const { return m_codeBlockPanels; }
+    QVariantList listMarkers() const { return m_listMarkers; }
 signals:
     void readModeChanged();
+    void copyHtmlRequested();
     void codeBlockPanelsChanged();
+    void listMarkersChanged();
     void projectionAboutToChange();
     void projectionChanged();
 private slots:
@@ -67,6 +72,14 @@ private:
     void clearViewResources();
     void completeProjectionLayout();
     void updateCodeBlockPanels();
+    void styleEditLists();
+    void updateListMarkers();
+    QVariantList m_listMarkers;
+    QList<ListPreview::Item> m_listItems;
+    QString m_listText;
+    QFont m_listFont;
+    qreal m_listIndentWidth = 0;
+    bool m_listStyleValid = false;
     void scheduleCodeBlockPanels();
     QVariantList m_codeBlockPanels;
     QList<QPair<int, int>> m_readCodeBlocks;

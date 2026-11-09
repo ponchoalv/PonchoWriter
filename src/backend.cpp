@@ -600,7 +600,9 @@ void Backend::copyAsHtml(int start, int end, QObject *renderedDocument) {
 
     auto *mimeData = new QMimeData;
     mimeData->setHtml(html);
-    mimeData->setText(rendered.toPlainText());
+    // Rich destinations use text/html; code/plain-text destinations must get
+    // the exported markup too, not silently fall back to rendered words.
+    mimeData->setText(html);
     QGuiApplication::clipboard()->setMimeData(mimeData);
     setStatus(QStringLiteral("Copied as HTML."));
 }

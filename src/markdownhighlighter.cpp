@@ -385,9 +385,32 @@ void MarkdownHighlighter::highlightBlock(const QString &text) {
         // Last among markup styles, so inline links/emphasis cannot restore
         // heading markers that should be hidden (or hide active ones).
         highlightHeadingMarkers(text);
+        const int prefix = m_listMarkers.value(currentBlock().position());
+        if (prefix) {
+            const int start = currentBlock().position();
+            const bool active = !m_caret.isNull() && m_caret.position() >= start && m_caret.position() < start + prefix;
+            const bool selected = m_selection.hasSelection() && m_selection.selectionStart() < start + prefix && m_selection.selectionEnd() > start;
+            auto format = m_markerFormat;
+            const bool searched = searchTouchesPrefix(text, prefix, m_searchQuery);
+            if (!active && !selected && !searched) format.setForeground(Qt::transparent);
+            // Only ink changes: preserve prefix advances and hanging geometry.
+            setFormat(0, qMin(prefix, int(text.size())), format);
+        }
     }
     highlightSpelling(text);
     highlightSearch(text);
+}
+
+bool MarkdownHighlighter::searchTouchesPrefix(const QString &text, int prefixLength, const QString &query) {
+    if (query.isEmpty()) return false;
+    for (int start : findMatches(text, query)) if (start < prefixLength) return true;
+    return false;
+}
+
+void MarkdownHighlighter::setListMarkers(const QHash<int, int> &markers) {
+    if (m_listMarkers == markers) return;
+    m_listMarkers = markers;
+    rehighlightAll();
 }
 
 void MarkdownHighlighter::setSpellingRanges(const QList<Span> &ranges) {

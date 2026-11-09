@@ -116,6 +116,7 @@ ApplicationWindow {
         objectName: "livePreviewController"
         resolver: backend
         spelling: backend.spelling
+        onCopyHtmlRequested: win.copyHtml()
         onProjectionAboutToChange: {
             win.projectionChanging = true;
             win.useRelativeScrollAnchor = readMode || win.lastProjectionReadMode;
@@ -227,7 +228,8 @@ ApplicationWindow {
         MenuItem { text: "Redo"; enabled: !win.readMode && editor.canRedo; onTriggered: editor.redo() }
         MenuSeparator {}
         MenuItem { text: "Cut"; enabled: !win.readMode && presentation.selectedText.length > 0; onTriggered: editor.cut() }
-        MenuItem { text: "Copy"; enabled: presentation.selectedText.length > 0; onTriggered: livePreview.copySource() }
+        MenuItem { objectName: "copyAction"; text: "Copy"; enabled: win.readMode || presentation.selectedText.length > 0; onTriggered: livePreview.copySource() }
+        MenuItem { objectName: "copyHtmlAction"; text: "Copy as HTML"; onTriggered: win.copyHtml() }
         MenuItem {
             text: "Paste"
             enabled: !win.readMode && (presentation.canPaste || backend.clipboardImageAvailable)
@@ -554,15 +556,16 @@ ApplicationWindow {
         onActivated: backend.printDocument()
     }
 
+    function copyHtml() {
+        if (win.readMode && presentation.selectionStart !== presentation.selectionEnd)
+            backend.copyAsHtml(presentation.selectionStart, presentation.selectionEnd, presentation.textDocument);
+        else if (!win.readMode && editor.selectionStart !== editor.selectionEnd)
+            backend.copyAsHtml(editor.selectionStart, editor.selectionEnd);
+        else backend.copyAsHtml();
+    }
     Shortcut {
         sequence: "Ctrl+Shift+C"
-        onActivated: {
-            if (win.readMode && presentation.selectionStart !== presentation.selectionEnd)
-                backend.copyAsHtml(presentation.selectionStart, presentation.selectionEnd, presentation.textDocument);
-            else if (!win.readMode && editor.selectionStart !== editor.selectionEnd)
-                backend.copyAsHtml(editor.selectionStart, editor.selectionEnd);
-            else backend.copyAsHtml();
-        }
+        onActivated: win.copyHtml()
     }
 
     Shortcut {
@@ -1366,6 +1369,28 @@ ApplicationWindow {
                         border.width: 0.5
                         border.color: Qt.rgba(win.textColor.r, win.textColor.g, win.textColor.b, 0.12)
                         antialiasing: true
+                    }
+                }
+                Repeater {
+                    model: livePreview.listMarkers
+                    delegate: Text {
+                        required property var modelData
+                        objectName: "listPreviewMarker"
+                        text: modelData.text
+                        textFormat: Text.PlainText
+                        font: presentation.font
+                        renderType: presentation.renderType
+                        color: win.bodyTextColor
+                        x: modelData.right - width
+                        y: modelData.baseline - baselineOffset
+                        visible: !presentation.inputMethodComposing && !modelData.searchReveal
+                            && !(editor.cursorPosition >= modelData.start && editor.cursorPosition < modelData.end)
+                            && !(editor.selectionStart !== editor.selectionEnd
+                                 && editor.selectionStart < modelData.end && editor.selectionEnd > modelData.start)
+                        // Visibility is a binding, not a reset of the full list
+                        // model whenever the caret enters/leaves one prefix.
+                        // Passive decoration: native text retains all pointer,
+                        // selection, keyboard, accessibility and source offsets.
                     }
                 }
                 Repeater {

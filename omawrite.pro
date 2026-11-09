@@ -28,6 +28,7 @@ HEADERS += \
     src/spellingprose.h \
     src/cli.h \
     src/livepreview.h \
+    src/listpreview.h \
     src/mermaidrenderer.h \
     src/previewblocks.h \
     src/markdownhighlighter.h \

@@ -1,5 +1,20 @@
 # Install PonchoWriter on Windows, macOS and Linux
 
+## Trying the table-grid feature
+
+Latest table/code scrolling work is on **`feature/table-grid-and-horizontal-overflow`**, based on `master` at `23f309d`. Save local changes before switching; from an existing checkout:
+
+```sh
+git fetch origin
+git switch feature/table-grid-and-horizontal-overflow
+# If only the remote branch exists, use:
+# git switch --track origin/feature/table-grid-and-horizontal-overflow
+```
+
+Then build/test using the platform recipe below. Those stable recipes still clone/pull **`master`**; substitute **`feature/table-grid-and-horizontal-overflow`** in those Git commands to install this feature instead. Do not reset/clean local work. This branch adds native editable table grids, raw Markdown fallback and independent unwrapped code/table scrolling. **356 checks passed**, plus native Mac UI/render checks, and the 0.7.2 app rebuilt. Windows/Linux are still untested. [Behavior, safety and limits](tables-and-horizontal-overflow.md).
+
+## Stable platform recipes
+
 This guide builds the **[PonchoWriter project](https://github.com/ponchoalv/PonchoWriter)**, branch **`master`**, not an upstream binary or an Obsidian plugin. There is no prebuilt installer/release promised here. Clone this repository's default `master` branch explicitly; do not substitute a similarly named package or another repository.
 
 ## Current development branch

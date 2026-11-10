@@ -294,9 +294,14 @@ void Parser::edit(const QString &source, int position, int removed, int added) {
     QList<Record> changed;
     State state = initial; m_parsedLines = 0;
     bool converged = false;
+    static const QRegularExpression precedingSensitiveRule(QStringLiteral("^ {0,3}(?:-[ \\t]*){3,}$"));
     for (int line = restart; line < m_lines.size();) {
         while (resume < m_records.size() && m_records[resume].first + lineDelta < line) ++resume;
-        if (line > first + replacement.size() && resume < m_records.size()
+        // Rule/Setext classification also reads the previous physical line,
+        // which is not represented by State. Revisit this one cheap successor
+        // while still converging before an unchanged, potentially huge table.
+        if (line >= first + replacement.size() && resume < m_records.size()
+            && (line > first + replacement.size() || !precedingSensitiveRule.match(m_lines[line].text).hasMatch())
             && m_records[resume].first + lineDelta == line && m_records[resume].before == state) { converged = true; break; }
         changed.append(scan(line, state, source));
     }

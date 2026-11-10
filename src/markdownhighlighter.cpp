@@ -386,6 +386,16 @@ void MarkdownHighlighter::highlightBlock(const QString &text) {
         // Last among markup styles, so inline links/emphasis cannot restore
         // heading markers that should be hidden (or hide active ones).
         highlightHeadingMarkers(text);
+        const int quotePrefix = currentBlock().blockFormat().intProperty(QuotePrefixProperty);
+        if (quotePrefix) {
+            const auto block = currentBlock();
+            const bool active = !m_caret.isNull() && m_caret.block() == block;
+            const bool selected = m_selection.hasSelection() && m_selection.selectionStart() < block.position() + block.length()
+                && m_selection.selectionEnd() >= block.position();
+            auto format = m_markerFormat;
+            if (!active && !selected && !searchTouchesPrefix(text, quotePrefix, m_searchQuery)) format.setForeground(Qt::transparent);
+            setFormat(0, qMin(quotePrefix, int(text.size())), format);
+        }
         const int prefix = currentBlock().blockFormat().intProperty(ListPrefixProperty);
         if (prefix) {
             const int start = currentBlock().position();
@@ -686,7 +696,7 @@ void MarkdownHighlighter::highlightMarkers(const QString &text) {
     }
 
     if (firstChar == QLatin1Char('>')) {
-        static const QRegularExpression quoteRe(QStringLiteral("^(\\s*>+\\s?)(.*)$"));
+        static const QRegularExpression quoteRe(QStringLiteral("^((?: {0,3}>[ \\t]?)+)(.*)$"));
         const QRegularExpressionMatch quote = quoteRe.match(text);
         if (quote.hasMatch()) {
             setFormat(0, quote.capturedLength(1), m_markerFormat);

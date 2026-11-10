@@ -4,12 +4,13 @@
 #include <QList>
 #include <QTextDocument>
 #include <QTextBlock>
+#include <QUuid>
 #include <algorithm>
 
 // Conservative, view-only list paragraphs. Checkpoints belong to this parser,
 // not QTextBlockUserData, which is reserved for the embedded code lexer.
 namespace ListPreview {
-struct Item { int block, prefix, depth; QString marker; };
+struct Item { int block, prefix, depth; QString marker; bool quote = false, soft = false; };
 struct Level {
     int indent, content, number; bool ordered; QChar delimiter;
     bool operator==(const Level &b) const {
@@ -23,12 +24,36 @@ struct State {
     QChar fenceMarker;
     bool comment = false, table = false, blank = true;
     QString html;
+    int quoteDepth = 0, quoteFence = 0, quoteTicks = 0, quoteBrackets = 0, quoteDestination = 0;
+    bool quoteLabel = false, quoteAngle = false;
+    QChar quoteTitle;
+    QChar quoteFenceMarker;
+    QString quoteHtml;
+    bool quoteComment = false, quoteTable = false, quoteList = false;
     bool operator==(const State &b) const {
         return levels == b.levels && fence == b.fence && fenceIndent == b.fenceIndent
             && fenceMarker == b.fenceMarker && comment == b.comment && table == b.table
-            && blank == b.blank && html == b.html;
+            && blank == b.blank && html == b.html && quoteDepth == b.quoteDepth
+            && quoteFence == b.quoteFence && quoteTicks == b.quoteTicks
+            && quoteFenceMarker == b.quoteFenceMarker && quoteHtml == b.quoteHtml
+            && quoteComment == b.quoteComment && quoteTable == b.quoteTable && quoteList == b.quoteList
+            && quoteBrackets == b.quoteBrackets && quoteDestination == b.quoteDestination
+            && quoteLabel == b.quoteLabel && quoteAngle == b.quoteAngle && quoteTitle == b.quoteTitle;
     }
 };
+// Explicit quote prefixes only; never reinterpret indented code or lazy lines.
+inline QPair<int, int> quotePrefix(const QString &line, int maximum = 0) {
+    int prefix = 0, depth = 0;
+    for (;;) {
+        if (maximum && depth >= maximum) break;
+        int at = prefix, spaces = 0;
+        while (at < line.size() && line[at] == ' ' && spaces < 3) { ++at; ++spaces; }
+        if (at >= line.size() || line[at] != '>') break;
+        ++depth; prefix = at + 1;
+        if (prefix < line.size() && (line[prefix] == ' ' || line[prefix] == '\t')) ++prefix;
+    }
+    return {prefix, depth};
+}
 inline QList<Item> step(State &state, const QString &line, const QString &next, int n) {
     auto &levels = state.levels;
     int &fence = state.fence, &fenceIndent = state.fenceIndent;
@@ -49,6 +74,13 @@ inline QList<Item> step(State &state, const QString &line, const QString &next, 
         return true;
     };
     const QString trimmed = line.trimmed();
+    const auto quote = quotePrefix(line, state.quoteFence || state.quoteTicks || state.quoteComment
+                                   || !state.quoteHtml.isEmpty() ? state.quoteDepth : 0);
+    if (quote.second != state.quoteDepth) {
+        state.quoteDepth = quote.second; state.quoteFence = state.quoteTicks = state.quoteBrackets = state.quoteDestination = 0;
+        state.quoteLabel = state.quoteAngle = false; state.quoteTitle = {};
+        state.quoteHtml.clear(); state.quoteComment = state.quoteTable = state.quoteList = false;
+    }
     int leading = 0;
     while (leading < line.size() && line[leading] == QLatin1Char(' ')) ++leading;
     if (fence) {
@@ -76,6 +108,78 @@ inline QList<Item> step(State &state, const QString &line, const QString &next, 
     }
     if (table) { if (trimmed.isEmpty() || !line.contains('|')) table = false; else return result; }
     if (line.contains('|') && delimiter(next)) { table = true; levels.clear(); return result; }
+    if (quote.second) {
+        levels.clear(); blank = false;
+        const QString body = line.mid(quote.first), content = body.trimmed();
+        if (state.quoteFence) {
+            if (MarkdownHighlighter::closesFence(body, state.quoteFence, state.quoteFenceMarker)) state.quoteFence = 0;
+            return result;
+        }
+        if (state.quoteComment) { if (body.contains("-->")) state.quoteComment = false; return result; }
+        if (!state.quoteHtml.isEmpty()) {
+            const auto tag = state.quoteHtml;
+            const bool raw = tag == "pre" || tag == "script" || tag == "style" || tag == "textarea";
+            if ((raw && content.contains("</" + tag, Qt::CaseInsensitive)) || (!raw && content.isEmpty())) state.quoteHtml.clear();
+            return result;
+        }
+        if (body.contains("<!--")) { state.quoteComment = !body.contains("-->"); return result; }
+        static const QRegularExpression incompleteTag(QStringLiteral("<[/!]?[A-Za-z][A-Za-z0-9-]*(?:\\s[^>]*)?$"));
+        if (!state.quoteTicks && !state.quoteDestination && incompleteTag.match(body).hasMatch()) {
+            state.quoteHtml = QStringLiteral("block"); return result;
+        }
+        const auto htmlTag = htmlRe.match(content);
+        if (htmlTag.hasMatch() || completeTag.match(content).hasMatch()) {
+            state.quoteHtml = htmlTag.hasMatch() ? htmlTag.captured(1).toLower() : QStringLiteral("block");
+            if (content.contains("</" + state.quoteHtml, Qt::CaseInsensitive)) state.quoteHtml.clear();
+            return result;
+        }
+        const int opening = MarkdownHighlighter::openingFenceLength(body);
+        if (opening) { state.quoteFence = opening; state.quoteFenceMarker = content.front(); state.quoteTicks = 0; return result; }
+        if (state.quoteTable) { if (content.isEmpty() || !body.contains('|')) state.quoteTable = false; else return result; }
+        const auto nextQuote = quotePrefix(next);
+        if (body.contains('|') && nextQuote.second == quote.second && delimiter(next.mid(nextQuote.first))) { state.quoteTable = true; return result; }
+        static const QRegularExpression listStart(QStringLiteral("^(?:[-+*](?:\\s|$)|[0-9]{1,9}[.)]\\s)"));
+        if (listStart.match(content).hasMatch()) state.quoteList = true;
+        if (state.quoteList) { if (content.isEmpty()) state.quoteList = false; else return result; }
+        static const QRegularExpression structural(QStringLiteral("^(?:#{1,6}(?:\\s|$)|\\[.*\\]:|=+\\s*$)"));
+        if (body.startsWith("    ") || body.startsWith('\t') || structural.match(content).hasMatch()
+            || MarkdownHighlighter::isThematicBreak(body)) { state.quoteTicks = 0; return result; }
+        const bool beforeInline = state.quoteTicks || state.quoteBrackets || state.quoteDestination || state.quoteLabel;
+        for (int i = 0; i < body.size(); ++i) {
+            const auto c = body[i];
+            if (c == '\\' && !state.quoteTicks) { ++i; continue; }
+            if (c == '`' && !state.quoteDestination) {
+                int end = i + 1; while (end < body.size() && body[end] == '`') ++end;
+                if (!state.quoteTicks) state.quoteTicks = end - i;
+                else if (state.quoteTicks == end - i) state.quoteTicks = 0;
+                i = end - 1; continue;
+            }
+            if (state.quoteTicks) continue;
+            if (state.quoteDestination) {
+                if (!state.quoteTitle.isNull()) { if (c == state.quoteTitle) state.quoteTitle = {}; continue; }
+                if (state.quoteAngle) { if (c == '>') state.quoteAngle = false; continue; }
+                if (c == '<') state.quoteAngle = true;
+                else if ((c == '\'' || c == '"') && (!i || body[i - 1].isSpace())) state.quoteTitle = c;
+                else if (c == '(') ++state.quoteDestination;
+                else if (c == ')') --state.quoteDestination;
+                continue;
+            }
+            if (state.quoteLabel && !c.isSpace()) {
+                state.quoteLabel = false;
+                if (c == '(') { state.quoteDestination = 1; continue; }
+            }
+            if (c == '[') ++state.quoteBrackets;
+            else if (c == ']' && state.quoteBrackets && !--state.quoteBrackets) state.quoteLabel = true;
+        }
+        if (content.isEmpty()) {
+            state.quoteTicks = state.quoteBrackets = state.quoteDestination = 0;
+            state.quoteLabel = state.quoteAngle = false; state.quoteTitle = {};
+        }
+        result.append({n, quote.first, quote.second, {}, true,
+                       !content.isEmpty() && !beforeInline && !state.quoteTicks && !state.quoteBrackets
+                       && !state.quoteDestination && !state.quoteLabel});
+        return result;
+    }
     if (trimmed.isEmpty()) { blank = true; return result; }
     int enclosing = int(levels.size()) - 1;
     while (enclosing >= 0 && leading < levels[enclosing].content) --enclosing;
@@ -122,6 +226,52 @@ inline QList<Item> parse(const QString &text) {
     const auto lines = text.split(QLatin1Char('\n'));
     for (int n = 0; n < lines.size(); ++n) items.append(step(state, lines[n], lines.value(n + 1), n));
     return items;
+}
+// Read-only preparation after source-offset object replacements. Preserve
+// explicit quote prose soft breaks, never mutate saved Markdown or code/HTML.
+inline QString readQuoteBreaks(const QString &source, QStringList *markers = nullptr) {
+    auto lines = source.split('\n');
+    const auto items = parse(source);
+    QString name;
+    if (markers) {
+        markers->clear();
+        do { name = "PWQUOTE" + QUuid::createUuid().toString(QUuid::Id128); } while (source.contains(name));
+    }
+    for (int i = 0; i + 1 < items.size(); ++i) {
+        const auto &a = items[i]; const auto &b = items[i + 1];
+        if (!a.quote || !a.soft || !b.quote || !b.soft || b.block != a.block + 1 || a.depth != b.depth) continue;
+        if (markers) {
+            const QString marker = name + QString::number(markers->size()) + "END";
+            markers->append(marker);
+            lines[b.block].insert(b.prefix, marker + ' ');
+            continue;
+        }
+        auto &line = lines[a.block];
+        int slashes = 0; for (int j = line.size() - 1; j >= 0 && line[j] == '\\'; --j) ++slashes;
+        if (!line.endsWith("  ") && !(slashes % 2)) line += QStringLiteral("  ");
+    }
+    return lines.join('\n');
+}
+// Qt's Markdown hard breaks can import as separate paragraphs. Exact disposable
+// sentinels let us restore native line separators without guessing nth blocks,
+// losing inline formatting, or adding a blank paragraph gap per source line.
+inline bool restoreReadQuoteBreaks(QTextDocument &document, const QStringList &markers) {
+    QList<QPair<int, int>> ranges;
+    for (const auto &marker : markers) {
+        const auto found = document.find(marker, 0, QTextDocument::FindCaseSensitively);
+        if (found.isNull() || !document.find(marker, found.selectionEnd(), QTextDocument::FindCaseSensitively).isNull()) return false;
+        const int first = found.selectionStart() - 1, last = found.selectionEnd();
+        if (first < 0 || document.characterAt(last) != ' ') return false;
+        const auto before = document.characterAt(first);
+        if (before != ' ' && before != QChar::ParagraphSeparator && before != QChar::LineSeparator) return false;
+        ranges.append({first, last + 1});
+    }
+    std::sort(ranges.begin(), ranges.end(), [](const auto &a, const auto &b) { return a.first > b.first; });
+    for (const auto &range : ranges) {
+        QTextCursor cursor(&document); cursor.setPosition(range.first);
+        cursor.setPosition(range.second, QTextCursor::KeepAnchor); cursor.insertText(QString(QChar::LineSeparator));
+    }
+    return true;
 }
 class Parser {
     struct Row { QString text, next; State before, after; QList<Item> items; bool valid = false; };

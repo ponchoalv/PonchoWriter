@@ -17,6 +17,14 @@ Item {
     height: modelData.height
     z: 2
     HoverHandler { id: codeHover }
+    BlockOverflow {
+        anchors.fill: parent
+        viewportBottom: controls.preview.viewportBottom < 0 ? height : controls.preview.viewportBottom - controls.y
+        contentWidth: controls.modelData.contentWidth
+        viewportWidth: controls.modelData.viewportWidth
+        offset: controls.preview.blockOffsets[controls.modelData.id] || 0
+        onScrollRequested: function(offset) { controls.preview.scrollBlock(controls.modelData.id, offset); }
+    }
     Row {
         anchors.top: parent.top
         anchors.right: parent.right
@@ -34,6 +42,14 @@ Item {
             width: Math.min(implicitWidth, Math.max(0, Math.min(140, controls.width - 80)))
             elide: Text.ElideRight
             verticalAlignment: Text.AlignVCenter
+        }
+        ToolButton {
+            objectName: "tableGridButton"
+            text: "Grid"
+            visible: !!controls.modelData.tableId
+            focusPolicy: Qt.NoFocus
+            height: 24
+            onClicked: controls.preview.setTableSource(controls.modelData.tableId, false)
         }
         ToolButton {
             id: copyButton

@@ -25,6 +25,7 @@
 #include <QScopeGuard>
 #include "../../src/mermaidrenderer.h"
 #include "../../src/livepreview.h"
+#include "../../src/markdowntablemodel.h"
 #include "../../src/codehighlighter.h"
 #include "../../src/markdownhighlighter.h"
 
@@ -90,6 +91,225 @@ private slots:
         flush();
     }
     void cleanup() { controller.reset(); root.reset(); }
+    void tableModelEditsAreSignalOnlyBoundedAndSafe() {
+        MarkdownTableModel model;
+        QString table = "| A | B |\n| :--- | ---: |\n| x | y |";
+        model.setSource(table, QFont());
+        QCOMPARE(model.rowCount(), 2); QCOMPARE(model.columnCount(), 2);
+        QSignalSpy request(&model, &MarkdownTableModel::replaceRequested);
+        bool accept = true;
+        connect(&model, &MarkdownTableModel::replaceRequested, &model, [&] { if (accept) model.acknowledgeReplacement(); });
+        QVERIFY(model.setCell(1, 1, QString::fromUtf8("😀 | literal")));
+        QCOMPARE(request.size(), 1);
+        QCOMPARE(model.data(model.index(1, 1), MarkdownTableModel::MarkdownRole).toString(), QString("y"));
+        auto apply = [&] {
+            const auto args = request.takeLast(); request.clear();
+            table.replace(args[0].toInt(), args[1].toInt(), args[2].toString());
+            model.setSource(table, QFont());
+        };
+        apply(); QVERIFY(table.contains(QString::fromUtf8("😀 \\| literal")));
+        QCOMPARE(model.columnAlignment(1), int(Qt::AlignRight));
+        QVERIFY(model.setColumnAlignment(1, "center")); apply();
+        QCOMPARE(model.columnAlignment(1), int(Qt::AlignHCenter)); QVERIFY(table.contains(":---:"));
+        QVERIFY(model.setColumnAlignment(1, "left")); apply(); QCOMPARE(model.columnAlignment(1), int(Qt::AlignLeft));
+        QVERIFY(!model.setColumnAlignment(-1, "left")); QVERIFY(!model.setColumnAlignment(0, "bogus"));
+        QVERIFY(model.setColumnAlignment(1, "right")); apply();
+        accept = false; QVERIFY(!model.setCell(1, 1, "stale")); request.clear(); accept = true;
+        QVERIFY(!model.setCell(0, 0, "line\nbreak"));
+        QVERIFY(!model.removeRow(0));
+        QVERIFY(model.insertRow(1)); apply(); QCOMPARE(model.rowCount(), 3);
+        QVERIFY(model.insertColumn(0)); apply(); QCOMPARE(model.columnCount(), 3);
+        QVERIFY(table.contains(":---")); QVERIFY(table.contains("---:"));
+        QVERIFY(model.removeColumn(1)); apply(); QCOMPARE(model.columnCount(), 2);
+        QVERIFY(model.removeRow(2)); apply(); QCOMPARE(model.rowCount(), 2);
+        model.setSource("| A |\n| --- |\n| ![x](https://invalid.example/a.png) <script>x</script> |", QFont());
+        const auto html = model.data(model.index(1, 0), MarkdownTableModel::HtmlRole).toString();
+        QVERIFY(!html.contains("<img")); QVERIFY(!html.contains("<script>"));
+        QVERIFY(!model.removeColumn(0));
+        model.setProperty("drafts", QVariantMap{{"1:0", QVariantMap{{"text", "uncommitted"}, {"original", ""}}}});
+        const auto revision = model.draftRevision();
+        model.setSource("| A |\n| --- |\n| different |", QFont());
+        QVERIFY(model.draftRevision() > revision);
+        const auto recovered = model.property("drafts").toMap();
+        QVERIFY(!recovered.contains("1:0")); QVERIFY(recovered.firstKey().startsWith("recovered/"));
+        QCOMPARE(recovered.first().toMap()["text"].toString(), QString("uncommitted"));
+        model.setSource(QString(4 * 1024 * 1024 + 1, 'x'), QFont()); QCOMPARE(model.rowCount(), 0);
+    }
+    void rectangularTableFillIsAtomicBoundedAndRevisionChecked() {
+        const QString original = "before\n\n| A | B | C |\n| :--- | ---: | --- |\n| a | b | untouched |\n| c | d | retained |\n| e | f | stable |\n\nafter";
+        source->setPlainText(original); select(sourceItem, 0, 0); flush();
+        auto *model = qobject_cast<MarkdownTableModel *>(qvariant_cast<QObject *>(controller->tablePanels().first().toMap()["model"])); QVERIFY(model);
+        source->clearUndoRedoStacks(); QSignalSpy requests(model, &MarkdownTableModel::replaceRequested);
+        const auto revision = model->sourceRevision();
+        QVERIFY(model->fillCells(1, 0, 3, 1, QString::fromUtf8("😀 | fill"), revision)); flush();
+        QCOMPARE(requests.count(), 1);
+        for (int r = 1; r <= 3; ++r) for (int c = 0; c < 2; ++c)
+            QCOMPARE(model->data(model->index(r, c), MarkdownTableModel::MarkdownRole).toString(), QString::fromUtf8("😀 \\| fill"));
+        QVERIFY(source->toPlainText().contains("| :--- | ---: | --- |"));
+        QVERIFY(source->toPlainText().contains("| retained |"));
+        QVERIFY(!model->fillCells(1, 0, 3, 1, "stale", revision));
+        source->undo(); flush(); QCOMPARE(source->toPlainText(), original); QVERIFY(!source->isUndoAvailable());
+        source->redo(); flush(); QVERIFY(model->fillCells(1, 0, 3, 1, "", model->sourceRevision())); flush();
+        QCOMPARE(model->rowCount(), 4); QCOMPARE(model->columnCount(), 3);
+        const QString beforeReject = source->toPlainText();
+        QVERIFY(!model->fillCells(0, 0, 3, 2, QString(65537, 'x'), model->sourceRevision()));
+        QVERIFY(!model->fillCells(0, 0, 4, 2, "bad", model->sourceRevision()));
+        QVERIFY(!model->fillCells(0, 0, 3, 2, "new\nline", model->sourceRevision()));
+        QCOMPARE(source->toPlainText(), beforeReject);
+        MarkdownTableModel bounded; bounded.setSource("| A |\n| --- |\n" + QString("| x |\n").repeated(70), QFont());
+        QSignalSpy oversized(&bounded, &MarkdownTableModel::replaceRequested);
+        QVERIFY(!bounded.fillCells(0, 0, 70, 0, QString(65536, 'x'), bounded.sourceRevision())); QCOMPARE(oversized.count(), 0);
+        controller->setReadMode(true); flush();
+        QVERIFY(!model->fillCells(0, 0, 3, 2, "Read", model->sourceRevision()));
+        controller->setReadMode(false); flush();
+        MarkdownTableModel unbordered; QString text = "A | B\r\n:--- | ---:\r\na | b\r\nc | d";
+        unbordered.setSource(text, QFont());
+        QSignalSpy borderRequests(&unbordered, &MarkdownTableModel::replaceRequested);
+        QVERIFY(!unbordered.fillCells(0, 0, 2, 1, "", unbordered.sourceRevision())); // No canonical ACK.
+        connect(&unbordered, &MarkdownTableModel::replaceRequested, &unbordered, [&](int at, int length, const QString &replacement) {
+            text.replace(at, length, replacement); unbordered.acknowledgeReplacement(); unbordered.setSource(text, QFont());
+        });
+        QVERIFY(unbordered.fillCells(0, 0, 2, 1, "", unbordered.sourceRevision()));
+        QCOMPARE(unbordered.rowCount(), 3); QCOMPARE(unbordered.columnCount(), 2);
+        QVERIFY(text.contains(":--- | ---:")); QCOMPARE(text.count("\r\n"), 3);
+        for (int r = 0; r < 3; ++r) for (int c = 0; c < 2; ++c)
+            QVERIFY(unbordered.data(unbordered.index(r, c), MarkdownTableModel::MarkdownRole).toString().isEmpty());
+        MarkdownTableModel exact; QString atLimit = "|A|\n|---|\n" + ("|" + QString(65500, 'x') + "|\n").repeated(64);
+        atLimit += "|" + QString(4 * 1024 * 1024 - atLimit.size() - 3, 'y') + "|\n";
+        exact.setSource(atLimit, QFont()); QCOMPARE(exact.rowCount(), 66);
+        QSignalSpy exactRequests(&exact, &MarkdownTableModel::replaceRequested);
+        QVERIFY(exact.fillCells(1, 0, 1, 0, QString(65500, 'x'), exact.sourceRevision())); QCOMPARE(exactRequests.count(), 0);
+        connect(&exact, &MarkdownTableModel::replaceRequested, &exact, [&](int at, int length, const QString &replacement) {
+            atLimit.replace(at, length, replacement); exact.acknowledgeReplacement(); exact.setSource(atLimit, QFont());
+        });
+        QVERIFY(exact.fillCells(1, 0, 1, 0, QString(65500, 'z'), exact.sourceRevision())); QCOMPARE(exactRequests.count(), 1);
+        QCOMPARE(atLimit.size(), 4 * 1024 * 1024);
+    }
+    void tableGridUsesCanonicalUndoAndSourceEscape() {
+        const auto panel = controller->tablePanels().first().toMap();
+        auto *model = qobject_cast<MarkdownTableModel *>(qvariant_cast<QObject *>(panel["model"])); QVERIFY(model);
+        const QString original = source->toPlainText(); source->clearUndoRedoStacks();
+        QVERIFY(model->setCell(1, 1, "**changed**")); flush();
+        QVERIFY(source->toPlainText().contains("**changed**"));
+        QCOMPARE(controller->tablePanels().first().toMap()["id"], panel["id"]);
+        source->undo(); flush(); QCOMPARE(source->toPlainText(), original); QVERIFY(!source->isUndoAvailable());
+        controller->setTableSource(panel["id"].toInt(), true); flush();
+        QVERIFY(controller->tablePanels().isEmpty()); QVERIFY(view->toPlainText().contains("| A | B |"));
+        const auto raw = controller->codeBlockPanels().first().toMap(); QCOMPARE(raw["tableId"].toInt(), panel["id"].toInt());
+        for (auto b = view->findBlockByNumber(raw["firstBlock"].toInt()); b.blockNumber() <= raw["lastBlock"].toInt(); b = b.next())
+            QVERIFY(b.blockFormat().nonBreakableLines());
+        select(sourceItem, source->characterCount() - 1, source->characterCount() - 1);
+        QVERIFY(!controller->tablePanels().isEmpty());
+        controller->setReadMode(true); flush(); QCOMPARE(controller->tablePanels().size(), 1);
+        QVERIFY(controller->tableScrollPanels().isEmpty());
+        QCOMPARE(qvariant_cast<QObject *>(controller->tablePanels().first().toMap()["model"]), static_cast<QObject *>(model));
+        QCOMPARE(model->data(model->index(1, 0), MarkdownTableModel::MarkdownRole).toString(), QString("one"));
+        QVERIFY(!model->setCell(1, 0, "Read must not edit"));
+        QCOMPARE(source->toPlainText(), original);
+    }
+    void tableSizingAndAcknowledgedParsingStayCached() {
+        MarkdownTableModel model; const QFont font("monospace", 18);
+        QString text = "| A | B |\n| --- | --- |\n| a deliberately wide maximum | plain |\n| x | **rich** |";
+        model.setSource(text, font); const qreal width = model.columnWidth(0); model.columnWidth(1);
+        const auto measurements = model.m_widthMeasurements;
+        model.columnWidth(0); model.columnWidth(1); QCOMPARE(model.m_widthMeasurements, measurements);
+        model.data(model.index(1, 0), MarkdownTableModel::HtmlRole); QCOMPARE(model.m_richRenders, quint64(0));
+        model.data(model.index(2, 1), MarkdownTableModel::HtmlRole); QCOMPARE(model.m_richRenders, quint64(1));
+        QSignalSpy widthSignals(&model, &MarkdownTableModel::columnWidthsChanged);
+        connect(&model, &MarkdownTableModel::replaceRequested, &model, [&](int at, int length, const QString &replacement) {
+            text.replace(at, length, replacement); model.acknowledgeReplacement();
+        });
+        const auto parses = model.m_parseCount;
+        QVERIFY(model.setCell(2, 0, "xx")); QCOMPARE(model.m_parseCount, parses + 1);
+        QVERIFY(!model.m_validatedRows.isEmpty()); model.setSource(text, font);
+        QCOMPARE(model.m_parseCount, parses + 1); QVERIFY(model.m_validatedRows.isEmpty()); // Exact ACKed candidate consumed, no second parse.
+        QCOMPARE(model.m_widthMeasurements, measurements + 1); QCOMPARE(model.columnWidth(0), width); QCOMPARE(widthSignals.count(), 0);
+        QVERIFY(model.setCell(1, 0, QString(150, 'W'))); model.setSource(text, font);
+        QCOMPARE(widthSignals.count(), 1); QVERIFY(model.columnWidth(0) > width);
+        // Foreign edits must never consume a previously validated proposal.
+        QVERIFY(model.setCell(2, 0, "xxx")); text.replace("plain", "foreign");
+        const auto beforeForeign = model.m_parseCount; model.setSource(text, font);
+        QCOMPARE(model.m_parseCount, beforeForeign + 1); QVERIFY(model.m_validatedRows.isEmpty());
+        QCOMPARE(model.data(model.index(1, 1), MarkdownTableModel::MarkdownRole).toString(), QString("foreign"));
+        const auto renders = model.m_richRenders;
+        model.setSource(text, QFont("monospace", 24)); model.columnWidth(0);
+        QVERIFY(model.m_widthMeasurements > measurements + 2); QVERIFY(widthSignals.count() >= 2);
+        model.data(model.index(1, 1), MarkdownTableModel::HtmlRole); QCOMPARE(model.m_richRenders, renders);
+        // Markdown/autolinks/entities/escapes retain the resource-free parser.
+        for (const QString &value : {QString("https://example.com"), QString("&amp;"), QString("<img src='file:///no'>"), QString("\\\\*")}) {
+            MarkdownTableModel rich; rich.setSource("| A |\n| --- |\n| " + value + " |", font);
+            const QString html = rich.data(rich.index(1, 0), MarkdownTableModel::HtmlRole).toString();
+            QVERIFY(!html.contains("<img", Qt::CaseInsensitive)); QCOMPARE(rich.m_richRenders, quint64(1));
+        }
+    }
+    void readTableSlotsUseExactSessionsAndReplacementInvalidatesEditors() {
+        const QString table = "| A | B |\n| --- | --- |\n| one | two |";
+        const QString text = "![forged](preview:table/not-internal/1)\n\n" + table
+            + "\n\n```mermaid\n%%{init: {}}%%\ngraph TD; a-->b\n```\n\n" + table + "\n\nafter";
+        source->setPlainText(text); select(sourceItem, 0, 0);
+        QCOMPARE(controller->tablePanels().size(), 2);
+        const auto first = controller->tablePanels().first().toMap();
+        QPointer<MarkdownTableModel> oldModel = qobject_cast<MarkdownTableModel *>(first["model"].value<QObject *>()); QVERIFY(oldModel);
+        controller->setReadMode(true); flush(); QCOMPARE(controller->tablePanels().size(), 2);
+        QCOMPARE(controller->m_readTablePositions.size(), 2);
+        QSet<int> positions;
+        for (const auto &entry : controller->tablePanels()) {
+            const auto panel = entry.toMap(); const int id = panel["id"].toInt();
+            const int position = controller->m_readTablePositions.value(id, -1);
+            QVERIFY(position >= 0); QVERIFY(!positions.contains(position)); positions.insert(position);
+            QCOMPARE(view->characterAt(position), QChar::ObjectReplacementCharacter);
+            QCOMPARE(controller->imagePathAt(position), QString()); // Slots never masquerade as user images.
+            auto *model = qobject_cast<MarkdownTableModel *>(panel["model"].value<QObject *>()); QVERIFY(model);
+            QCOMPARE(model->data(model->index(1, 0), MarkdownTableModel::MarkdownRole).toString(), QString("one"));
+            QVERIFY(!model->setCell(1, 0, "rejected"));
+        }
+        for (auto *frame : view->rootFrame()->childFrames()) QVERIFY(!qobject_cast<QTextTable *>(frame));
+        QCOMPARE(source->toPlainText(), text);
+        viewItem->setProperty("width", 300); controller->refresh(); flush(); QCOMPARE(controller->tablePanels().size(), 2);
+        controller->setReadMode(false); flush();
+        oldModel->setProperty("drafts", QVariantMap{{"1:0", QVariantMap{{"text", "recover me"}, {"original", "one"}}}});
+        controller->resetTableSessions();
+        QVERIFY(!oldModel->setCell(1, 0, "must not edit a new document")); // Still alive until deleteLater, but session already revoked.
+        flush(); QCOMPARE(source->toPlainText(), text); QCOMPARE(controller->tablePanels().size(), 2);
+        QVERIFY(controller->tablePanels().first().toMap()["id"] != first["id"]);
+        QVERIFY(controller->tableDraftsPending()); QVERIFY(controller->copyTableDrafts(0));
+        QVERIFY(QGuiApplication::clipboard()->text().contains("recover me")); controller->discardTableDrafts();
+        QVERIFY(!controller->tableDraftsPending());
+    }
+    void codeOverflowKeepsNativeSelectionAndRestoresProseWrap() {
+        const QString longLine = QString("long_identifier ").repeated(100);
+        const QString text = "before\n\n```cpp\n" + longLine + "\n```\n\nafter";
+        source->setPlainText(text); select(sourceItem, 0, 0);
+        auto panel = controller->codeBlockPanels().first().toMap();
+        QVERIFY(panel["contentWidth"].toReal() > panel["viewportWidth"].toReal());
+        auto first = view->findBlockByNumber(panel["firstBlock"].toInt());
+        auto body = first.next(); QCOMPARE(body.layout()->lineCount(), 1);
+        controller->scrollBlock(panel["id"].toInt(), 150); flush();
+        QCOMPARE(controller->blockOffsets().value(QString::number(panel["id"].toInt())).toReal(), qreal(150));
+        QVERIFY(body.blockFormat().textIndent() < 0); QCOMPARE(source->toPlainText(), text);
+        select(viewItem, body.position(), body.position());
+        const auto native = viewItem->property("cursorRectangle").toRectF();
+        QVERIFY(controller->visualCursorRectangle(native).x() < -100); // Not clamped to the left edge.
+        QInputMethodEvent preedit(QString::fromUtf8("かな"), {}); QCoreApplication::sendEvent(viewItem, &preedit); flush();
+        QVERIFY(controller->m_composing);
+        const auto composingRect = viewItem->property("cursorRectangle").toRectF();
+        QCOMPARE(controller->visualCursorRectangle(composingRect), composingRect); // Includes native IME cursor/preedit.
+        QInputMethodEvent cancel; QCoreApplication::sendEvent(viewItem, &cancel); flush();
+        QSignalSpy redraw(view->documentLayout(), &QAbstractTextDocumentLayout::update);
+        controller->scrollBlock(panel["id"].toInt(), 100); flush(); QVERIFY(redraw.size() > 0);
+        select(viewItem, body.position() + 5, body.position() + 15);
+        QCOMPARE(viewItem->property("selectedText").toString(), longLine.mid(5, 10));
+        for (bool read : {true, false}) {
+            controller->setReadMode(read); flush(); panel = controller->codeBlockPanels().first().toMap();
+            controller->scrollBlock(panel["id"].toInt(), 150); flush();
+            viewItem->setProperty("width", 30000); controller->refresh(); flush();
+            QCOMPARE(controller->blockOffsets().value(QString::number(panel["id"].toInt())).toReal(), qreal(0));
+            viewItem->setProperty("width", 550); controller->refresh(); flush();
+        }
+        source->setPlainText("ordinary " + longLine); flush();
+        QVERIFY(!view->begin().blockFormat().nonBreakableLines());
+        QVERIFY(!view->begin().blockFormat().hasProperty(QTextFormat::UserProperty + 120));
+    }
     void modeSwitchesRetainEditBlocksHighlighterAndCachedRead() {
         const QString text = QString("Ordinary paragraph with **strong** text.\n\n").repeated(800)
             + "```cpp\nint answer = 42;\n```\n\nlast";
@@ -185,6 +405,50 @@ private slots:
         source->setPlainText("small again"); flush();
         QVERIFY(!item->flags().testFlag(QQuickItem::ItemObservesViewport));
     }
+    void tableBoundaryTypingConvergesAndRawWidthsStayExact() {
+        QString text = "distant prose\n\nadjacent prose\n\n| A | B |\n| --- | --- |\n";
+        for (int r = 0; r < 1200; ++r) text += QString("| row%1 | value |\n").arg(r);
+        text += "| widest | " + QString(300, 'W') + " |\n\nafter";
+        source->setPlainText(text); select(sourceItem, text.indexOf("| A") - 1, text.indexOf("| A") - 1); flush();
+        const auto patches = controller->m_projectionPatches, resets = controller->m_fullResets;
+        auto *model = controller->m_tables.first().model.data(); QVERIFY(model);
+        const auto parses = model->m_parseCount;
+        type("abc");
+        QCOMPARE(controller->m_projectionPatches, patches); QCOMPARE(controller->m_fullResets, resets);
+        QVERIFY(controller->m_blockParser.parsedLines() < 10); QCOMPARE(model->m_parseCount, parses);
+        QVERIFY(!controller->m_tables.first().source);
+        const int id = controller->m_tables.first().id; controller->setTableSource(id, true); flush();
+        QVERIFY(controller->m_tables.first().source); QVERIFY(!controller->codeBlockPanels().isEmpty());
+        auto panelWidth = [&] { return controller->codeBlockPanels().first().toMap()["contentWidth"].toReal(); };
+        auto exhaustive = [&] {
+            qreal maximum = viewItem->property("width").toReal() - 8;
+            const auto group = controller->m_editCodeGroups.first();
+            for (auto b = view->findBlockByNumber(group.first); b.isValid() && b.blockNumber() <= group.second; b = b.next()) {
+                view->documentLayout()->blockBoundingRect(b);
+                if (b.layout()) for (int i = 0; i < b.layout()->lineCount(); ++i) maximum = qMax(maximum, b.layout()->lineAt(i).naturalTextWidth() + 8);
+            }
+            return maximum;
+        };
+        QCOMPARE(panelWidth(), exhaustive());
+        const auto visits = controller->m_overflowStyleVisits, measurements = controller->m_overflowMeasurements;
+        const int row = source->toPlainText().indexOf("row10"); select(sourceItem, row, row); type("x");
+        QCOMPARE(controller->m_overflowStyleVisits, visits);
+        QVERIFY(controller->m_overflowMeasurements - measurements <= 3); QCOMPARE(panelWidth(), exhaustive());
+        const qreal wide = panelWidth();
+        const int widest = source->toPlainText().indexOf(QString(300, 'W'));
+        select(sourceItem, widest, widest + 300); type("narrow");
+        QVERIFY(panelWidth() < wide); QCOMPARE(panelWidth(), exhaustive());
+        source->undo(); flush(); QCOMPARE(panelWidth(), exhaustive());
+        // Newline joins/splits must normalize inherited no-wrap properties and
+        // rebuild row identities, not reuse stale rows after an interior splice.
+        const int split = source->toPlainText().indexOf("row100"); select(sourceItem, split, split); type("\n");
+        PreviewBlocks::Parser fresh; fresh.reset(source->toPlainText());
+        QCOMPARE(controller->m_blockParser.blocks().size(), fresh.blocks().size());
+        source->undo(); flush();
+        controller->setReadMode(true); flush(); controller->setReadMode(false); flush();
+        QVERIFY(!controller->m_tables.isEmpty()); controller->setTableSource(controller->m_tables.first().id, true); flush();
+        QCOMPARE(panelWidth(), exhaustive());
+    }
     void incrementalEditsKeepNativeBlocksAndConverge() {
         QString text;
         for (int n = 0; n < 2000; ++n) text += QString("Paragraph %1 with words.\n\n").arg(n);
@@ -233,6 +497,121 @@ private slots:
         QVERIFY(controller->listMarkers().size() < 30);
         QVERIFY(!controller->listMarkers().isEmpty());
         QVERIFY(controller->listMarkers().first().toMap().value("start").toInt() > first);
+    }
+    void quotePreviewRevealsWholeParagraphWithoutChangingGeometryOrUndo() {
+        viewItem->setProperty("width", 270);
+        const QString text = "😀 before\n\n| A | B |\n| --- | --- |\n| one | two |\n\n> quote "
+            + QString("words ").repeated(25) + "\n> > nested body\n\nafter\n";
+        source->setPlainText(text); source->clearUndoRedoStacks();
+        select(sourceItem, text.size(), text.size());
+        const int at = text.indexOf("> quote");
+        auto block = view->findBlock(controller->viewPosition(at));
+        QVERIFY(block.text().startsWith("> quote"));
+        QCOMPARE(block.blockFormat().intProperty(MarkdownHighlighter::QuotePrefixProperty), 2);
+        QCOMPARE(block.blockFormat().alignment(), Qt::Alignment(Qt::AlignJustify));
+        QCOMPARE(controller->listMarkers().size(), 0); // No border/replacement marker.
+        view->documentLayout()->documentSize();
+        QVERIFY(block.layout()->lineCount() > 1);
+        const auto bodyX = [&] { return block.layout()->position().x() + block.layout()->lineAt(0).cursorToX(2); };
+        const auto prefixColor = [&] {
+            for (const auto &range : block.layout()->formats()) if (range.start == 0) return range.format.foreground().color();
+            return QColor();
+        };
+        const qreal x = bodyX();
+        QVERIFY(qAbs(x - block.layout()->position().x() - block.layout()->lineAt(1).x()) < 1);
+        QCOMPARE(prefixColor().alpha(), 0);
+        const auto resets = controller->m_fullResets, patches = controller->m_projectionPatches;
+        select(sourceItem, at + 8, at + 8); // Anywhere in the body reveals >.
+        QVERIFY(prefixColor().alpha() > 0); QCOMPARE(bodyX(), x);
+        select(sourceItem, text.size(), text.size()); QCOMPARE(prefixColor().alpha(), 0);
+        select(sourceItem, at + 9, at + 4); QVERIFY(prefixColor().alpha() > 0);
+        select(sourceItem, text.size(), text.size());
+        controller->setSearchHighlight("> q", at); flush(); QVERIFY(prefixColor().alpha() > 0);
+        controller->setSearchHighlight("", -1); flush(); QCOMPARE(prefixColor().alpha(), 0);
+        QCOMPARE(controller->m_fullResets, resets); QCOMPARE(controller->m_projectionPatches, patches);
+        QCOMPARE(source->toPlainText(), text); QVERIFY(!source->isUndoAvailable());
+        select(sourceItem, at + 8, at + 8); type("x");
+        QString edited = text; edited.insert(at + 8, 'x'); QCOMPARE(source->toPlainText(), edited);
+        source->undo(); flush(); QCOMPARE(source->toPlainText(), text);
+        // Removing the revealed > restores ordinary alignment; one source undo restores quote styling.
+        QTextCursor remove(view); remove.setPosition(controller->viewPosition(at));
+        remove.setPosition(controller->viewPosition(at + 1), QTextCursor::KeepAnchor); remove.removeSelectedText(); flush();
+        QCOMPARE(source->toPlainText(), QString(text).remove(at, 1));
+        QCOMPARE(view->findBlock(controller->viewPosition(at)).blockFormat().alignment(), Qt::Alignment(Qt::AlignLeft));
+        source->undo(); flush(); QCOMPARE(source->toPlainText(), text);
+        QCOMPARE(view->findBlock(controller->viewPosition(at)).blockFormat().alignment(), Qt::Alignment(Qt::AlignJustify));
+        const auto nested = view->findBlock(controller->viewPosition(text.indexOf("> > nested")));
+        QCOMPARE(nested.blockFormat().intProperty(MarkdownHighlighter::QuotePrefixProperty), 4);
+        QVERIFY(nested.blockFormat().leftMargin() > block.blockFormat().leftMargin());
+    }
+    void readQuoteBreaksAndJustificationSurviveHtmlRoundTrip() {
+        const QString text = "ordinary first\nordinary second\n\n> quote first\n> quote second\n>\n> next paragraph\n> last line  \n> existing break\n\nafter\n";
+        source->setPlainText(text); source->clearUndoRedoStacks(); select(sourceItem, text.size(), text.size());
+        controller->setReadMode(true); flush();
+        const QString raw = view->toRawText();
+        QVERIFY2(raw.contains(QString("quote first") + QChar::LineSeparator + "quote second"), qPrintable(raw));
+        QVERIFY(raw.contains("ordinary first ordinary second"));
+        QVERIFY(raw.contains(QString("next paragraph") + QChar::LineSeparator + "last line" + QChar::LineSeparator + "existing break"));
+        int quotes = 0;
+        for (auto block = view->begin(); block.isValid(); block = block.next()) {
+            if (block.text().startsWith("quote first") || block.text().startsWith("next paragraph")) {
+                ++quotes; QCOMPARE(block.blockFormat().alignment(), Qt::Alignment(Qt::AlignJustify));
+            } else QVERIFY(block.blockFormat().alignment() != Qt::AlignJustify);
+        }
+        QCOMPARE(quotes, 2); QCOMPARE(source->toPlainText(), text); QVERIFY(!source->isUndoAvailable());
+        controller->setReadMode(false); flush(); QCOMPARE(view->toPlainText(), text);
+        // Angle autolinks and literal comparisons are prose, not HTML blocks.
+        source->setPlainText("> first\n> one < two\n> visit <https://example.invalid>\n> last\n"); flush();
+        controller->setReadMode(true); flush();
+        QVERIFY(view->toRawText().contains(QString("first") + QChar::LineSeparator + "one < two" + QChar::LineSeparator + "visit https://example.invalid" + QChar::LineSeparator + "last"));
+        bool anchor = false;
+        for (auto block = view->begin(); block.isValid(); block = block.next())
+            for (auto it = block.begin(); !it.atEnd(); ++it) anchor |= it.fragment().charFormat().anchorHref() == "https://example.invalid";
+        QVERIFY(anchor); QVERIFY(!view->toPlainText().contains("PWQUOTE"));
+    }
+    void quoteClassificationAndReadPreparationStayConservative() {
+        const QString prose = "> first\n> second\n> > nested first\n> > nested second\n";
+        QCOMPARE(ListPreview::readQuoteBreaks(prose), QString("> first  \n> second\n> > nested first  \n> > nested second\n"));
+        const QStringList untouched = {
+            "```text\n> literal\n> also literal\n```\n",
+            "    > indented\n    > literal\n",
+            "<!--\n> literal\n> also literal\n-->\n",
+            "<div>\n> literal\n> also literal\n</div>\n",
+            "> ```text\n> > literal\n> still code\n> ```\n",
+            "> <pre>\n> > literal\n> still literal\n> </pre>\n",
+            "> <!--\n> > literal\n> still hidden\n> -->\n",
+            "> a | b\n> --- | ---\n> x | y\n> z | q\n",
+            "> - item\n> continuation\n> still item\n",
+            "> heading\n> ===\n",
+            "> heading\n> ---\n",
+            "> inline `first\n> second` last\n> after\n",
+            "> [ref]: https://example.invalid\n> continuation\n",
+            "> [label](\n> https://example.invalid)\n",
+            "> ![image](\n> image.png)\n",
+            "> [label](https://example.invalid\n> \"title )\n> still title\")\n",
+            "> [multi\n> line](https://example.invalid)\n",
+            "\\> escaped\n\\> literal\n"
+        };
+        for (const auto &text : untouched) {
+            QCOMPARE(ListPreview::readQuoteBreaks(text), text);
+            QStringList markers;
+            const auto prepared = ListPreview::readQuoteBreaks(text, &markers);
+            QTextDocument original, restored; original.setMarkdown(text); restored.setMarkdown(prepared);
+            QVERIFY(ListPreview::restoreReadQuoteBreaks(restored, markers));
+            QCOMPARE(restored.toHtml(), original.toHtml()); // Includes multiline link/image identity.
+        }
+        source->setPlainText(prose + "\nafter\n"); flush();
+        const QStringList edits = {"x", "\n> next\n", "\n", "```\n", "> > "};
+        for (const auto &edit : edits) {
+            select(sourceItem, 3, 3); type(edit);
+            const auto fresh = ListPreview::parse(view->toPlainText());
+            QCOMPARE(controller->m_listParser.items.size(), fresh.size());
+            for (int i = 0; i < fresh.size(); ++i) {
+                const auto a = controller->m_listParser.items[i], b = fresh[i];
+                QCOMPARE(a.block, b.block); QCOMPARE(a.prefix, b.prefix); QCOMPARE(a.depth, b.depth);
+                QCOMPARE(a.quote, b.quote); QCOMPARE(a.soft, b.soft);
+            }
+        }
     }
     void listMarkersKeepHangingAlignmentAndSource() {
         viewItem->setProperty("width", 260);
@@ -554,8 +933,8 @@ private slots:
                     >= blankY + blank.layout()->lineAt(0).height());
             QVERIFY(first.value("height").toReal() > 4 * 20); // Includes blank + wrapped lines.
             viewItem->setProperty("width", 220); controller->refresh(); flush();
-            QVERIFY(controller->codeBlockPanels().first().toMap().value("height").toReal()
-                    > first.value("height").toReal());
+            QCOMPARE(controller->codeBlockPanels().first().toMap().value("height").toReal(), first.value("height").toReal());
+            QVERIFY(controller->codeBlockPanels().first().toMap().value("contentWidth").toReal() > 220);
             viewItem->setProperty("width", 550); controller->refresh(); flush();
             QCOMPARE(source->toPlainText(), text);
             QVERIFY(!source->isUndoAvailable());
@@ -599,10 +978,10 @@ private slots:
         QSignalSpy rebuilds(controller.get(), &LivePreview::projectionChanged);
         QInputMethodEvent preedit(QString(200, 'a'), {});
         QCoreApplication::sendEvent(viewItem, &preedit); flush();
-        QTRY_VERIFY(controller->codeBlockPanels().first().toMap().value("height").toReal()
-                    > before.first().toMap().value("height").toReal());
-        QVERIFY(controller->codeBlockPanels().last().toMap().value("y").toReal()
-                > before.last().toMap().value("y").toReal());
+        QTRY_VERIFY(controller->codeBlockPanels().first().toMap().value("contentWidth").toReal()
+                    > before.first().toMap().value("contentWidth").toReal());
+        QCOMPARE(controller->codeBlockPanels().first().toMap().value("height").toReal(), before.first().toMap().value("height").toReal());
+        QCOMPARE(controller->codeBlockPanels().last().toMap().value("y").toReal(), before.last().toMap().value("y").toReal());
         QCOMPARE(rebuilds.count(), 0);
         QCOMPARE(source->toPlainText(), text);
         QInputMethodEvent cancel(QString(), {});
@@ -679,7 +1058,7 @@ private slots:
                     ++imageCount;
                 }
             }
-            QCOMPARE(imageCount, controller->readMode() ? 1 : 2);
+            QCOMPARE(imageCount, 2); // User image plus the shared grid's native image slot, in both modes.
         });
         const auto disconnect = qScopeGuard([connection] { QObject::disconnect(connection); });
         for (int i = 0; i < 12; ++i) {
@@ -922,10 +1301,14 @@ private slots:
                 QCOMPARE(first.blockFormat().bottomMargin(), 0.0);
                 QCOMPARE(second.blockFormat().topMargin(), 0.0);
                 QCOMPARE(find("one").blockFormat().bottomMargin(), 0.0);
-                QTextTable *table = QTextCursor(find("cell")).currentTable();
-                QVERIFY(table);
-                QCOMPARE(find("cell").blockFormat().bottomMargin(), 0.0);
-                QVERIFY(table->format().bottomMargin() > 0);
+                QCOMPARE(controller->tablePanels().size(), 1);
+                const auto tablePanel = controller->tablePanels().first().toMap();
+                auto *model = qobject_cast<MarkdownTableModel *>(qvariant_cast<QObject *>(tablePanel["model"]));
+                QVERIFY(model);
+                QCOMPARE(model->data(model->index(1, 0), MarkdownTableModel::MarkdownRole).toString(), QString("cell"));
+                const int position = controller->m_readTablePositions.value(tablePanel["id"].toInt(), -1);
+                QVERIFY(position >= 0);
+                QVERIFY(view->documentLayout()->blockBoundingRect(view->findBlock(position)).height() >= tablePanel["height"].toReal());
                 QCOMPARE(source->toPlainText(), text);
                 controller->setReadMode(false);
             }
@@ -1050,6 +1433,7 @@ private slots:
     void activeBlockAndBackwardsSelection() {
         const int tableStart = markdown.indexOf('|');
         select(sourceItem, tableStart + 4, tableStart + 4);
+        controller->setTableSource(controller->m_tables.first().id, true); flush();
         QVERIFY(!view->toPlainText().contains(QChar::ObjectReplacementCharacter));
         QCOMPARE(view->toPlainText(), markdown);
         select(sourceItem, markdown.size() - 1, 2);

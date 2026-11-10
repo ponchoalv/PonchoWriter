@@ -32,6 +32,7 @@ HEADERS += \
     src/spellingcontroller.h \
     src/spellingprose.h \
     src/cli.h \
+    src/markdowntablemodel.h \
     src/livepreview.h \
     src/listpreview.h \
     src/mermaidrenderer.h \
@@ -48,6 +49,8 @@ SOURCES += \
     src/spellingcontroller.cpp \
     src/spellingprose.cpp \
     src/cli.cpp \
+    src/markdowntablemodel.cpp \
+    src/livepreviewtables.cpp \
     src/livepreview.cpp \
     src/mermaidrenderer.cpp \
     src/previewblocks.cpp \

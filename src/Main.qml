@@ -15,6 +15,116 @@ ApplicationWindow {
     minimumHeight: 520
     visible: !backend.routesFileOpen
     signal windowCloseAccepted()
+    readonly property var visibleEditor: presentation
+    property var activeTablePanel: null
+    readonly property var activeTableCell: activeTablePanel ? activeTablePanel.activeEditor : null
+    readonly property bool tableExpanded: tableDialog.visible
+    readonly property int expandedTableId: tableDialog.tableData ? tableDialog.tableData.id : 0
+    function commitTableCell() {
+        if (tableDialog.visible && expandedTableLoader.item && !expandedTableLoader.item.commitCell()) return false;
+        return foregroundDecorations.commitTables() && !livePreview.tableDraftsPending;
+    }
+    function expandTable(panel) {
+        if (!commitTableCell()) return;
+        tableDialog.tableData = panel.modelData;
+        tableDialog.open();
+    }
+    function updateExpandedTable() {
+        if (!tableDialog.visible) return;
+        var panels = livePreview.tablePanels;
+        for (var n = 0; n < panels.length; ++n) {
+            if (panels[n].id === expandedTableId && panels[n].model === tableDialog.tableData.model) {
+                tableDialog.tableData = panels[n]; return;
+            }
+        }
+        // A removed/replaced session must never keep an editor on new source.
+        if (expandedTableLoader.item) expandedTableLoader.item.discardCell();
+        tableDialog.close();
+    }
+    Dialog {
+        id: tableDialog
+        objectName: "expandedTableDialog"
+        property var tableData: null
+        parent: Overlay.overlay
+        modal: true
+        focus: true
+        closePolicy: Popup.NoAutoClose
+        title: win.readMode ? "Table" : "Edit table"
+        width: Math.max(1, win.width - 48)
+        height: Math.max(1, win.height - 48)
+        x: (parent.width - width) / 2
+        y: (parent.height - height) / 2
+        function requestClose() {
+            if (expandedTableLoader.item && !expandedTableLoader.item.commitCell()) return;
+            close();
+        }
+        onClosed: {
+            foregroundDecorations.restorePositions();
+            presentation.forceActiveFocus();
+        }
+        contentItem: Item {
+            focus: true
+            Keys.onEscapePressed: function(event) { tableDialog.requestClose(); event.accepted = true; }
+            Loader {
+                id: expandedTableLoader
+                anchors.fill: parent
+                active: tableDialog.visible
+                sourceComponent: Component {
+                    TableGrid {
+                        id: expandedGrid
+                        objectName: "expandedTableGrid"
+                        modelData: tableDialog.tableData
+                        preview: livePreview
+                        readOnly: win.readMode
+                        expanded: true
+                        x: 0; y: 0
+                        width: expandedTableLoader.width
+                        height: expandedTableLoader.height
+                        foreground: win.textColor
+                        backgroundColor: win.darkMode ? "#252525" : "#eeeeee"
+                        borderColor: Qt.rgba(win.textColor.r, win.textColor.g, win.textColor.b, 0.2)
+                        editorFont: presentation.font
+                        onSourceRequested: tableDialog.close()
+                        onEditorChanged: function(editor) {
+                            if (editor) win.activeTablePanel = expandedGrid;
+                            else if (win.activeTablePanel === expandedGrid) win.activeTablePanel = null;
+                        }
+                    }
+                }
+            }
+        }
+        footer: DialogButtonBox {
+            Button {
+                objectName: "closeExpandedTableButton"
+                text: "Close"
+                DialogButtonBox.buttonRole: DialogButtonBox.ActionRole
+                onClicked: tableDialog.requestClose()
+            }
+        }
+    }
+    Connections { target: livePreview; function onTablePanelsChanged() { win.updateExpandedTable(); } }
+    ToolButton {
+        objectName: "pendingTableDraftsButton"
+        anchors.top: parent.top
+        anchors.right: parent.right
+        anchors.rightMargin: 64
+        z: 8
+        text: "Pending table edits"
+        visible: livePreview.tableDraftsPending
+        focusPolicy: Qt.NoFocus
+        onClicked: tableDraftMenu.popup()
+        Menu {
+            id: tableDraftMenu
+            MenuItem { text: "Copy pending cell drafts"; onTriggered: livePreview.copyTableDrafts(0) }
+            MenuItem {
+                text: "Discard pending cell drafts"
+                onTriggered: {
+                    if (win.activeTablePanel) win.activeTablePanel.discardCell();
+                    livePreview.discardTableDrafts();
+                }
+            }
+        }
+    }
     title: (backend.modified ? "* " : "") + backend.fileName + " - PonchoWriter"
 
     readonly property bool darkMode: backend.darkMode
@@ -289,6 +399,7 @@ ApplicationWindow {
     }
 
     function toggleReadMode() {
+        if (!commitTableCell()) return;
         if (livePreview.readMode) {
             // Restore the reading scroll first, then choose a NEW caret in
             // the visible text. Focusing the old off-screen caret must not
@@ -321,6 +432,9 @@ ApplicationWindow {
             }
         }
         function onDocumentAboutToReplace() {
+            if (expandedTableLoader.item) expandedTableLoader.item.discardCell();
+            foregroundDecorations.abandonEditors();
+            livePreview.resetTableSessions();
             win.rememberPosition();
             ++win.positionEpoch;
             win.documentReplacing = true;
@@ -338,6 +452,7 @@ ApplicationWindow {
     color: pageColor
 
     onClosing: function(close) {
+        if (!commitTableCell()) { close.accepted = false; return; }
         if (closeConfirmed || !backend.modified) {
             win.rememberPosition();
             backend.finishClosing();
@@ -352,6 +467,7 @@ ApplicationWindow {
     }
 
     function requestOpen(url) {
+        if (!commitTableCell()) return;
         if (backend.routesFileOpen || !backend.modified) {
             backend.open(url);
             return;
@@ -449,6 +565,7 @@ ApplicationWindow {
     // closed, and a search still waiting for a pause is dropped on closing,
     // so opening the bar searches again for what the field holds.
     function openSearch(withReplace) {
+        if (!commitTableCell()) return;
         searchOpen = true;
         if (withReplace)
             replaceOpen = true;
@@ -484,7 +601,7 @@ ApplicationWindow {
 
     Shortcut {
         sequence: "Ctrl+S"
-        onActivated: backend.save()
+        onActivated: if (win.commitTableCell()) backend.save()
     }
 
     Shortcut {
@@ -552,7 +669,7 @@ ApplicationWindow {
 
     Shortcut {
         sequence: "Ctrl+O"
-        onActivated: backend.openDialog()
+        onActivated: if (win.commitTableCell()) backend.openDialog()
     }
 
     Shortcut {
@@ -562,17 +679,20 @@ ApplicationWindow {
 
     Shortcut {
         sequence: "Ctrl+Shift+S"
-        onActivated: backend.saveAsDialog()
+        onActivated: if (win.commitTableCell()) backend.saveAsDialog()
     }
 
     Shortcut {
         sequence: "Ctrl+P"
-        onActivated: backend.printDocument()
+        onActivated: if (win.commitTableCell()) backend.printDocument()
     }
 
     function copyHtml() {
-        if (win.readMode && presentation.selectionStart !== presentation.selectionEnd)
-            backend.copyAsHtml(presentation.selectionStart, presentation.selectionEnd, presentation.textDocument);
+        if (!commitTableCell()) return;
+        if (win.readMode && presentation.selectionStart !== presentation.selectionEnd) {
+            if (!livePreview.copyReadSelection(true))
+                backend.copyAsHtml(presentation.selectionStart, presentation.selectionEnd, presentation.textDocument);
+        }
         else if (!win.readMode && editor.selectionStart !== editor.selectionEnd)
             backend.copyAsHtml(editor.selectionStart, editor.selectionEnd);
         else backend.copyAsHtml();
@@ -589,14 +709,14 @@ ApplicationWindow {
 
     Shortcut {
         sequence: "Ctrl+Z"
-        enabled: !win.readMode
+        enabled: !win.readMode && !win.activeTableCell
         context: Qt.WindowShortcut
         onActivated: editor.undo()
     }
 
     Shortcut {
         sequences: ["Ctrl+Shift+Z", "Ctrl+Y"]
-        enabled: !win.readMode
+        enabled: !win.readMode && !win.activeTableCell
         context: Qt.WindowShortcut
         onActivated: editor.redo()
     }
@@ -660,7 +780,7 @@ ApplicationWindow {
         title: "Save File"
         fileMode: Dialogs.FileDialog.SaveFile
         nameFilters: ["Markdown files (*.md *.markdown)", "All files (*)"]
-        onAccepted: backend.saveAs(selectedFile)
+        onAccepted: if (win.commitTableCell()) backend.saveAs(selectedFile)
         onRejected: {
             win.awaitingPendingSave = false;
             win.pendingAction = "";
@@ -707,7 +827,7 @@ ApplicationWindow {
         containerHeight: win.height
 
         onKeepRequested: backend.keepExternalVersion()
-        onReloadRequested: backend.reloadFromDisk()
+        onReloadRequested: if (win.commitTableCell()) backend.reloadFromDisk()
     }
 
     ShortcutsDialog {
@@ -1000,6 +1120,7 @@ ApplicationWindow {
                 }
 
                 function wrapSelection(marker) {
+                    if (win.activeTableCell) return;
                     if (win.readMode) return;
                     presentation.forceActiveFocus();
                     EditorMutations.toggleWrap(editor, marker,
@@ -1007,6 +1128,7 @@ ApplicationWindow {
                 }
 
                 function wrapCode(fenced) {
+                    if (win.activeTableCell) return;
                     if (win.readMode) return;
                     presentation.forceActiveFocus();
                     livePreview.prepareFormatting();
@@ -1015,6 +1137,7 @@ ApplicationWindow {
                 }
 
                 function insertLink() {
+                    if (win.activeTableCell) return;
                     if (win.readMode) return;
                     presentation.forceActiveFocus();
                     var start = selectionStart;
@@ -1377,7 +1500,12 @@ ApplicationWindow {
                 // invisible when scrolling away. A separate item is not
                 // hidden by that private control state on a distant click.
                 cursorDelegate: Item {}
+                clip: true
                 property bool caretOn: true
+                readonly property rect displayCursorRectangle: {
+                    var offsets = livePreview.blockOffsets; // Re-evaluate after native horizontal layout.
+                    return livePreview.visualCursorRectangle(cursorRectangle);
+                }
                 function restartCaret() {
                     caretOn = true;
                     if (activeFocus && !win.readMode && Qt.styleHints.cursorFlashTime > 0) caretBlink.restart();
@@ -1399,10 +1527,10 @@ ApplicationWindow {
                 Rectangle {
                     objectName: "visibleEditorCaret"
                     z: 3
-                    x: presentation.cursorRectangle.x
-                    y: presentation.cursorRectangle.y
+                    x: presentation.displayCursorRectangle.x
+                    y: presentation.displayCursorRectangle.y
                     width: 1
-                    height: presentation.cursorRectangle.height
+                    height: presentation.displayCursorRectangle.height
                     color: win.textColor
                     visible: presentation.activeFocus && !win.readMode && presentation.caretOn && livePreview.imeCursorVisible
                         && presentation.selectionStart === presentation.selectionEnd
@@ -1411,62 +1539,13 @@ ApplicationWindow {
                 }
                 onLinkActivated: function(link) { if (win.readMode) Qt.openUrlExternally(link); }
                 function updateViewport() {
-                    livePreview.setViewport(Math.max(0, editorFlick.contentY - y), editorFlick.height);
+                    livePreview.setViewport(editorFlick.contentY - y, editorFlick.height);
                 }
                 onYChanged: updateViewport()
                 Connections {
                     target: editorFlick
                     function onContentYChanged() { presentation.updateViewport(); }
                     function onHeightChanged() { presentation.updateViewport(); }
-                }
-
-                Repeater {
-                    model: livePreview.codeBlockPanels
-                    delegate: Rectangle {
-                        required property var modelData
-                        objectName: "codeBlockPanel"
-                        z: -1
-                        x: modelData.x
-                        y: modelData.y
-                        width: modelData.width
-                        height: modelData.height
-                        radius: 4
-                        color: win.darkMode ? "#252525" : "#eeeeee"
-                        border.width: 0.5
-                        border.color: Qt.rgba(win.textColor.r, win.textColor.g, win.textColor.b, 0.12)
-                        antialiasing: true
-                    }
-                }
-                Repeater {
-                    model: livePreview.listMarkers
-                    delegate: Text {
-                        required property var modelData
-                        objectName: "listPreviewMarker"
-                        text: modelData.text
-                        textFormat: Text.PlainText
-                        font: presentation.font
-                        renderType: presentation.renderType
-                        color: win.bodyTextColor
-                        x: modelData.right - width
-                        y: modelData.baseline - baselineOffset
-                        visible: !presentation.inputMethodComposing && !modelData.searchReveal
-                            && !(editor.cursorPosition >= modelData.start && editor.cursorPosition < modelData.end)
-                            && !(editor.selectionStart !== editor.selectionEnd
-                                 && editor.selectionStart < modelData.end && editor.selectionEnd > modelData.start)
-                        // Visibility is a binding, not a reset of the full list
-                        // model whenever the caret enters/leaves one prefix.
-                        // Passive decoration: native text retains all pointer,
-                        // selection, keyboard, accessibility and source offsets.
-                    }
-                }
-                Repeater {
-                    model: livePreview.codeBlockPanels
-                    delegate: CodeBlockControls {
-                        preview: livePreview
-                        readMode: win.readMode
-                        labelColor: win.mutedColor
-                        composing: presentation.inputMethodComposing
-                    }
                 }
 
                 Text {
@@ -1540,6 +1619,8 @@ ApplicationWindow {
                     presentation.forceActiveFocus();
                 })
             }
+            EditorDecorations { preview: livePreview; presentation: win.visibleEditor; sourceEditor: editor; host: win; foreground: false }
+            EditorDecorations { id: foregroundDecorations; preview: livePreview; presentation: win.visibleEditor; sourceEditor: editor; host: win; foreground: true }
         }
 
         PreviewToggle {
@@ -1567,7 +1648,7 @@ ApplicationWindow {
                 iconName: "save"
                 iconColor: win.mutedColor
                 tooltip: "Save"
-                onClicked: backend.save()
+                onClicked: if (win.commitTableCell()) backend.save()
             }
 
             FooterIconButton {
@@ -1575,7 +1656,7 @@ ApplicationWindow {
                 iconName: "open"
                 iconColor: win.mutedColor
                 tooltip: "Open"
-                onClicked: backend.openDialog()
+                onClicked: if (win.commitTableCell()) backend.openDialog()
             }
 
             FooterIconButton {

@@ -18,6 +18,8 @@ SOURCES += \
     ../src/spellingprose.cpp \
     ../src/cli.cpp \
     ../src/markdownhighlighter.cpp \
+    ../src/markdowntablemodel.cpp \
+    ../src/livepreviewtables.cpp \
     ../src/livepreview.cpp \
     ../src/previewblocks.cpp \
     ../src/mermaidrenderer.cpp
@@ -30,6 +32,7 @@ HEADERS += \
     ../src/spellingprose.h \
     ../src/cli.h \
     ../src/markdownhighlighter.h \
+    ../src/markdowntablemodel.h \
     ../src/livepreview.h \
     ../src/previewblocks.h \
     ../src/mermaidrenderer.h

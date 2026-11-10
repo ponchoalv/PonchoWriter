@@ -16,7 +16,8 @@ Created and maintained by **Alfonso Alvarez**: [ponchoalv/PonchoWriter](https://
 
 ## Features
 
-- Native Edit/Read toggle with inactive table/local-image previews and caret-aware heading markers. Markdown stays the source of truth with one undo history.
+- Native Edit/Read toggle, editable table grids with a Markdown escape hatch, local-image previews and caret-aware heading markers. Markdown stays the source of truth with one undo history.
+- [Local horizontal scrolling](docs/tables-and-horizontal-overflow.md) for code and tables, with virtualized Edit cells and native selectable Read tables.
 - Clipboard screenshot paste, durable recovery-safe staging, `img/` materialization and collision-safe attachment handling across Save As.
 - Theme-aware language-tagged code-fence highlighting in Edit and Read, using standalone KSyntaxHighlighting rather than Kate.
 - Optional constrained Mermaid rendering through an already-installed external `mmdc`; no embedded WebEngine or automatic runtime downloads.
@@ -26,6 +27,7 @@ Created and maintained by **Alfonso Alvarez**: [ponchoalv/PonchoWriter](https://
 - Single-process multiwindow routing: focus an already-open file, open other files separately, and protect owned Save As targets. Native macOS file-open events and cross-platform local IPC share the same router.
 - Persistent incremental native Edit projection, resumable metadata/object patches and viewport-aware decorations/glyph rendering; [10,000-line measurement and limits](docs/incremental-native-editing.md).
 - Retained Edit/Read documents for fast return to editing, a viewport-safe caret, conservative bracket/quote pairs and [inline/fenced code shortcuts](docs/mode-transitions-and-code-shortcuts.md).
+- [Blockquote live preview](docs/blockquotes.md): reveal `>` on click, justified quote prose and preserved quoted line breaks in Read.
 - Edit Cmd/Ctrl-click or context **Open Link**; Read retains single-click links.
 - Lightweight selection word counts, per-file position memory, cross-platform Reveal, and selection-aware HTML copying. See the [writing guide](docs/writing-and-shortcuts.md); code-block overflow remains a [future TODO](docs/TODO.md).
 

@@ -98,7 +98,7 @@ public:
     Q_INVOKABLE void resetTextSize();
     Q_INVOKABLE void holdAutoSave(bool held);
     Q_INVOKABLE void printDocument();
-    Q_INVOKABLE void copyAsHtml(int start = -1, int end = -1, QObject *renderedDocument = nullptr);
+    Q_INVOKABLE void copyAsHtml(int start = -1, int end = -1, QObject *renderedDocument = nullptr, bool plainMarkup = true);
     Q_INVOKABLE void newWindow();
     Q_INVOKABLE void finishClosing();
     bool hasRecoverySnapshot() const;

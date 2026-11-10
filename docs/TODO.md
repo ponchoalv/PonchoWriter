@@ -1,7 +1,7 @@
 # Small future improvements
 
-## Code-block overflow — deferred
+## Code/table overflow — implemented
 
-Evaluate a simple choice between wrapping long code lines and showing a horizontal scrollbar for the code block. Keep prose wrapping, keyboard navigation, selections, source offsets, font zoom, IME and the single Markdown undo stack intact. Avoid per-line widgets or a browser dependency; measure long-document performance first.
+`feature/table-grid-and-horizontal-overflow` adds unwrapped native code/raw-table paragraphs, per-block horizontal scrolling in both modes, and a virtualized Edit table grid with a Source escape hatch. Prose wrapping and the canonical undo stack remain intact. See [behavior, limits and verification](tables-and-horizontal-overflow.md).
 
-**Not implemented:** this entry records a future task only. The current code-block wrapping behavior is unchanged.
+An optional wrap preference is not implemented; Read's native table layout is not virtualized. Revisit those only with measured demand, without adding a browser or spreadsheet engine.

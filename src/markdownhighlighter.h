@@ -23,6 +23,7 @@ public:
     void setSelection(int start, int end);
     void refreshFont();
     static constexpr int ListPrefixProperty = QTextFormat::UserProperty + 101;
+    static constexpr int QuotePrefixProperty = QTextFormat::UserProperty + 102;
 
     struct Span {
         int start;

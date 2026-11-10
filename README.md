@@ -27,6 +27,7 @@ Created and maintained by **Alfonso Alvarez**: [ponchoalv/PonchoWriter](https://
 - Single-process multiwindow routing: focus an already-open file, open other files separately, and protect owned Save As targets. Native macOS file-open events and cross-platform local IPC share the same router.
 - Persistent incremental native Edit projection, resumable metadata/object patches and viewport-aware decorations/glyph rendering; [10,000-line measurement and limits](docs/incremental-native-editing.md).
 - Retained Edit/Read documents for fast return to editing, a viewport-safe caret, conservative bracket/quote pairs and [inline/fenced code shortcuts](docs/mode-transitions-and-code-shortcuts.md).
+- [Blockquote live preview](docs/blockquotes.md): reveal `>` on click, justified quote prose and preserved quoted line breaks in Read.
 - Edit Cmd/Ctrl-click or context **Open Link**; Read retains single-click links.
 - Lightweight selection word counts, per-file position memory, cross-platform Reveal, and selection-aware HTML copying. See the [writing guide](docs/writing-and-shortcuts.md); code-block overflow remains a [future TODO](docs/TODO.md).
 

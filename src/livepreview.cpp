@@ -132,8 +132,10 @@ void styleReadDocument(QTextDocument &document, const QString &source,
         format.setTopMargin(0);
         format.setBottomMargin(!next.isValid() || table || nextTable || tightList
                                || (code && nextCode) || block.text().isEmpty() ? 0 : gap);
-        cursor.setBlockFormat(format);
         const bool quote = format.intProperty(QTextFormat::BlockQuoteLevel) > 0;
+        if (quote && !code && !table && !block.textList() && !format.headingLevel())
+            format.setAlignment(Qt::AlignJustify);
+        cursor.setBlockFormat(format);
         for (auto it = block.begin(); !it.atEnd(); ++it) {
             const QTextFragment fragment = it.fragment();
             const QTextCharFormat existing = fragment.charFormat();
@@ -633,7 +635,13 @@ void LivePreview::buildReadDocument(const QString &source) {
         // One descending pass: neither table nor Mermaid source offsets drift.
         markdown.replace(it->start, it->end - it->start, QStringLiteral("![%1](%2)").arg(table ? "Table" : "Mermaid diagram", name));
     }
+    const QString originalReadMarkdown = markdown;
+    QStringList quoteBreaks;
+    markdown = ListPreview::readQuoteBreaks(markdown, &quoteBreaks);
     rendered.setMarkdown(markdown, QTextDocument::MarkdownDialectGitHub);
+    if (!ListPreview::restoreReadQuoteBreaks(rendered, quoteBreaks))
+        rendered.setMarkdown(originalReadMarkdown, QTextDocument::MarkdownDialectGitHub); // No sentinel may escape.
+    markdown = originalReadMarkdown;
     // Resolve every image ourselves, including inline images. Qt Quick must
     // never receive an http(s) image URL from untrusted Markdown.
     QList<QPair<int, QTextImageFormat>> images;
@@ -797,11 +805,17 @@ void LivePreview::styleEditLists() {
         const qreal margin = it == items.cend() ? 0 : m_view->indentWidth() * it->depth;
         const qreal indent = it == items.cend() ? 0 : -metrics.horizontalAdvance(block.text().left(it->prefix));
         auto format = block.blockFormat();
+        const bool quote = it != items.cend() && it->quote;
         const int prefix = it == items.cend() || it->marker.isEmpty() ? 0 : it->prefix;
+        const int quotePrefix = quote ? it->prefix : 0;
+        const auto alignment = quote ? Qt::AlignJustify : Qt::AlignLeft;
         if (format.leftMargin() == margin && format.textIndent() == indent
-            && format.intProperty(MarkdownHighlighter::ListPrefixProperty) == prefix) continue;
-        format.setLeftMargin(margin); format.setTextIndent(indent);
+            && format.intProperty(MarkdownHighlighter::ListPrefixProperty) == prefix
+            && format.intProperty(MarkdownHighlighter::QuotePrefixProperty) == quotePrefix
+            && format.alignment() == alignment) continue;
+        format.setLeftMargin(margin); format.setTextIndent(indent); format.setAlignment(alignment);
         format.setProperty(MarkdownHighlighter::ListPrefixProperty, prefix);
+        format.setProperty(MarkdownHighlighter::QuotePrefixProperty, quotePrefix);
         QTextCursor(block).setBlockFormat(format);
         changed.append(block);
     }

@@ -562,6 +562,54 @@ private slots:
         }
         QVERIFY(!source->property("canUndo").toBool());
     }
+    void quotePreviewPhysicalClickImeAndReadBreaks() {
+        QTemporaryDir directory; QVERIFY(directory.isValid());
+        Backend backend; backend.m_recoveryPath = directory.filePath("recovery.json");
+        const bool previousDark = backend.darkMode();
+        const auto restore = qScopeGuard([&] { backend.setDarkMode(previousDark); });
+        QQmlEngine engine; engine.rootContext()->setContextProperty("backend", &backend);
+        QQmlComponent component(&engine, QUrl::fromLocalFile(QFINDTESTDATA("../src/Main.qml")));
+        QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+        QScopedPointer<QObject> root(component.create());
+        auto *window = qobject_cast<QQuickWindow *>(root.data()); QVERIFY(window);
+        auto *source = root->findChild<QObject *>("sourceEditor");
+        auto *view = root->findChild<QQuickItem *>("previewEditor"); QVERIFY(source && view);
+        if (QGuiApplication::platformName() != "offscreen") QVERIFY(QTest::qWaitForWindowExposed(window));
+        const auto document = [view] { return view->property("textDocument").value<QQuickTextDocument *>()->textDocument(); };
+        const QString text = "Before.\n\n> quote body " + QString("words ").repeated(25) + "\n> second line\n\nAfter.\n";
+        const int at = text.indexOf("> quote");
+        for (bool dark : {false, true}) {
+            backend.setDarkMode(dark); source->setProperty("text", text);
+            source->setProperty("cursorPosition", text.size());
+            QTRY_COMPARE(document()->toPlainText(), text);
+            auto block = document()->findBlock(at);
+            const auto prefixAlpha = [&] {
+                for (const auto &range : block.layout()->formats()) if (range.start == 0) return range.format.foreground().color().alpha();
+                return -1;
+            };
+            QTRY_COMPARE(block.blockFormat().intProperty(MarkdownHighlighter::QuotePrefixProperty), 2);
+            QTRY_COMPARE(prefixAlpha(), 0);
+            QCOMPARE(block.blockFormat().alignment(), Qt::Alignment(Qt::AlignJustify));
+            QRectF rectangle;
+            QVERIFY(QMetaObject::invokeMethod(view, "positionToRectangle", Q_RETURN_ARG(QRectF, rectangle), Q_ARG(int, at + 8)));
+            QTest::mouseClick(window, Qt::LeftButton, Qt::NoModifier, view->mapToScene(rectangle.center()).toPoint());
+            QTRY_VERIFY(prefixAlpha() > 0);
+            QVERIFY(source->property("cursorPosition").toInt() > at);
+            QCOMPARE(source->property("text").toString(), text); QVERIFY(!source->property("canUndo").toBool());
+            QInputMethodEvent preedit(QString::fromUtf8("かな"), {}); QCoreApplication::sendEvent(view, &preedit);
+            QCOMPARE(source->property("text").toString(), text);
+            QInputMethodEvent commit; commit.setCommitString(QString::fromUtf8("かな")); QCoreApplication::sendEvent(view, &commit);
+            QTRY_VERIFY(source->property("text").toString().contains(QString::fromUtf8("かな")));
+            QVERIFY(QMetaObject::invokeMethod(source, "undo"));
+            QTRY_COMPARE(source->property("text").toString(), text);
+            QVERIFY(QMetaObject::invokeMethod(root.data(), "toggleReadMode")); QTRY_VERIFY(root->property("readMode").toBool());
+            QTRY_VERIFY(document()->toRawText().contains(QString(QChar::LineSeparator) + "second line"));
+            QVERIFY(!document()->toPlainText().contains("PWQUOTE"));
+            QCOMPARE(source->property("text").toString(), text);
+            QVERIFY(QMetaObject::invokeMethod(root.data(), "toggleReadMode")); QTRY_VERIFY(!root->property("readMode").toBool());
+            QTRY_COMPARE(document()->toPlainText(), text);
+        }
+    }
     void horizontalRulesRevealMarkdownOnPhysicalClick() {
         QTemporaryDir directory;
         QVERIFY(directory.isValid());

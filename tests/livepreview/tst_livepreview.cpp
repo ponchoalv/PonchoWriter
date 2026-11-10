@@ -404,6 +404,121 @@ private slots:
         QVERIFY(!controller->listMarkers().isEmpty());
         QVERIFY(controller->listMarkers().first().toMap().value("start").toInt() > first);
     }
+    void quotePreviewRevealsWholeParagraphWithoutChangingGeometryOrUndo() {
+        viewItem->setProperty("width", 270);
+        const QString text = "😀 before\n\n| A | B |\n| --- | --- |\n| one | two |\n\n> quote "
+            + QString("words ").repeated(25) + "\n> > nested body\n\nafter\n";
+        source->setPlainText(text); source->clearUndoRedoStacks();
+        select(sourceItem, text.size(), text.size());
+        const int at = text.indexOf("> quote");
+        auto block = view->findBlock(controller->viewPosition(at));
+        QVERIFY(block.text().startsWith("> quote"));
+        QCOMPARE(block.blockFormat().intProperty(MarkdownHighlighter::QuotePrefixProperty), 2);
+        QCOMPARE(block.blockFormat().alignment(), Qt::Alignment(Qt::AlignJustify));
+        QCOMPARE(controller->listMarkers().size(), 0); // No border/replacement marker.
+        view->documentLayout()->documentSize();
+        QVERIFY(block.layout()->lineCount() > 1);
+        const auto bodyX = [&] { return block.layout()->position().x() + block.layout()->lineAt(0).cursorToX(2); };
+        const auto prefixColor = [&] {
+            for (const auto &range : block.layout()->formats()) if (range.start == 0) return range.format.foreground().color();
+            return QColor();
+        };
+        const qreal x = bodyX();
+        QVERIFY(qAbs(x - block.layout()->position().x() - block.layout()->lineAt(1).x()) < 1);
+        QCOMPARE(prefixColor().alpha(), 0);
+        const auto resets = controller->m_fullResets, patches = controller->m_projectionPatches;
+        select(sourceItem, at + 8, at + 8); // Anywhere in the body reveals >.
+        QVERIFY(prefixColor().alpha() > 0); QCOMPARE(bodyX(), x);
+        select(sourceItem, text.size(), text.size()); QCOMPARE(prefixColor().alpha(), 0);
+        select(sourceItem, at + 9, at + 4); QVERIFY(prefixColor().alpha() > 0);
+        select(sourceItem, text.size(), text.size());
+        controller->setSearchHighlight("> q", at); flush(); QVERIFY(prefixColor().alpha() > 0);
+        controller->setSearchHighlight("", -1); flush(); QCOMPARE(prefixColor().alpha(), 0);
+        QCOMPARE(controller->m_fullResets, resets); QCOMPARE(controller->m_projectionPatches, patches);
+        QCOMPARE(source->toPlainText(), text); QVERIFY(!source->isUndoAvailable());
+        select(sourceItem, at + 8, at + 8); type("x");
+        QString edited = text; edited.insert(at + 8, 'x'); QCOMPARE(source->toPlainText(), edited);
+        source->undo(); flush(); QCOMPARE(source->toPlainText(), text);
+        // Removing the revealed > restores ordinary alignment; one source undo restores quote styling.
+        QTextCursor remove(view); remove.setPosition(controller->viewPosition(at));
+        remove.setPosition(controller->viewPosition(at + 1), QTextCursor::KeepAnchor); remove.removeSelectedText(); flush();
+        QCOMPARE(source->toPlainText(), QString(text).remove(at, 1));
+        QCOMPARE(view->findBlock(controller->viewPosition(at)).blockFormat().alignment(), Qt::Alignment(Qt::AlignLeft));
+        source->undo(); flush(); QCOMPARE(source->toPlainText(), text);
+        QCOMPARE(view->findBlock(controller->viewPosition(at)).blockFormat().alignment(), Qt::Alignment(Qt::AlignJustify));
+        const auto nested = view->findBlock(controller->viewPosition(text.indexOf("> > nested")));
+        QCOMPARE(nested.blockFormat().intProperty(MarkdownHighlighter::QuotePrefixProperty), 4);
+        QVERIFY(nested.blockFormat().leftMargin() > block.blockFormat().leftMargin());
+    }
+    void readQuoteBreaksAndJustificationSurviveHtmlRoundTrip() {
+        const QString text = "ordinary first\nordinary second\n\n> quote first\n> quote second\n>\n> next paragraph\n> last line  \n> existing break\n\nafter\n";
+        source->setPlainText(text); source->clearUndoRedoStacks(); select(sourceItem, text.size(), text.size());
+        controller->setReadMode(true); flush();
+        const QString raw = view->toRawText();
+        QVERIFY2(raw.contains(QString("quote first") + QChar::LineSeparator + "quote second"), qPrintable(raw));
+        QVERIFY(raw.contains("ordinary first ordinary second"));
+        QVERIFY(raw.contains(QString("next paragraph") + QChar::LineSeparator + "last line" + QChar::LineSeparator + "existing break"));
+        int quotes = 0;
+        for (auto block = view->begin(); block.isValid(); block = block.next()) {
+            if (block.text().startsWith("quote first") || block.text().startsWith("next paragraph")) {
+                ++quotes; QCOMPARE(block.blockFormat().alignment(), Qt::Alignment(Qt::AlignJustify));
+            } else QVERIFY(block.blockFormat().alignment() != Qt::AlignJustify);
+        }
+        QCOMPARE(quotes, 2); QCOMPARE(source->toPlainText(), text); QVERIFY(!source->isUndoAvailable());
+        controller->setReadMode(false); flush(); QCOMPARE(view->toPlainText(), text);
+        // Angle autolinks and literal comparisons are prose, not HTML blocks.
+        source->setPlainText("> first\n> one < two\n> visit <https://example.invalid>\n> last\n"); flush();
+        controller->setReadMode(true); flush();
+        QVERIFY(view->toRawText().contains(QString("first") + QChar::LineSeparator + "one < two" + QChar::LineSeparator + "visit https://example.invalid" + QChar::LineSeparator + "last"));
+        bool anchor = false;
+        for (auto block = view->begin(); block.isValid(); block = block.next())
+            for (auto it = block.begin(); !it.atEnd(); ++it) anchor |= it.fragment().charFormat().anchorHref() == "https://example.invalid";
+        QVERIFY(anchor); QVERIFY(!view->toPlainText().contains("PWQUOTE"));
+    }
+    void quoteClassificationAndReadPreparationStayConservative() {
+        const QString prose = "> first\n> second\n> > nested first\n> > nested second\n";
+        QCOMPARE(ListPreview::readQuoteBreaks(prose), QString("> first  \n> second\n> > nested first  \n> > nested second\n"));
+        const QStringList untouched = {
+            "```text\n> literal\n> also literal\n```\n",
+            "    > indented\n    > literal\n",
+            "<!--\n> literal\n> also literal\n-->\n",
+            "<div>\n> literal\n> also literal\n</div>\n",
+            "> ```text\n> > literal\n> still code\n> ```\n",
+            "> <pre>\n> > literal\n> still literal\n> </pre>\n",
+            "> <!--\n> > literal\n> still hidden\n> -->\n",
+            "> a | b\n> --- | ---\n> x | y\n> z | q\n",
+            "> - item\n> continuation\n> still item\n",
+            "> heading\n> ===\n",
+            "> heading\n> ---\n",
+            "> inline `first\n> second` last\n> after\n",
+            "> [ref]: https://example.invalid\n> continuation\n",
+            "> [label](\n> https://example.invalid)\n",
+            "> ![image](\n> image.png)\n",
+            "> [label](https://example.invalid\n> \"title )\n> still title\")\n",
+            "> [multi\n> line](https://example.invalid)\n",
+            "\\> escaped\n\\> literal\n"
+        };
+        for (const auto &text : untouched) {
+            QCOMPARE(ListPreview::readQuoteBreaks(text), text);
+            QStringList markers;
+            const auto prepared = ListPreview::readQuoteBreaks(text, &markers);
+            QTextDocument original, restored; original.setMarkdown(text); restored.setMarkdown(prepared);
+            QVERIFY(ListPreview::restoreReadQuoteBreaks(restored, markers));
+            QCOMPARE(restored.toHtml(), original.toHtml()); // Includes multiline link/image identity.
+        }
+        source->setPlainText(prose + "\nafter\n"); flush();
+        const QStringList edits = {"x", "\n> next\n", "\n", "```\n", "> > "};
+        for (const auto &edit : edits) {
+            select(sourceItem, 3, 3); type(edit);
+            const auto fresh = ListPreview::parse(view->toPlainText());
+            QCOMPARE(controller->m_listParser.items.size(), fresh.size());
+            for (int i = 0; i < fresh.size(); ++i) {
+                const auto a = controller->m_listParser.items[i], b = fresh[i];
+                QCOMPARE(a.block, b.block); QCOMPARE(a.prefix, b.prefix); QCOMPARE(a.depth, b.depth);
+                QCOMPARE(a.quote, b.quote); QCOMPARE(a.soft, b.soft);
+            }
+        }
+    }
     void listMarkersKeepHangingAlignmentAndSource() {
         viewItem->setProperty("width", 260);
         const QString text = "- alpha " + QString("words ").repeated(18)

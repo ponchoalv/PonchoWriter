@@ -133,6 +133,40 @@ private slots:
         QCOMPARE(clean.value("profileStorageRoot").toString(), fresh);
         QCOMPARE(Profile::ipcDirectoryName(), QStringLiteral("omawrite-instance")); // Stable cross-version lock namespace.
     }
+    void emptyDocumentHintSurvivesStartupFocusAndTracksIme() {
+        QTemporaryDir directory; QVERIFY(directory.isValid());
+        Backend backend; backend.m_recoveryPath = directory.filePath("recovery.json");
+        QQmlEngine engine; engine.rootContext()->setContextProperty("backend", &backend);
+        QQmlComponent component(&engine, QUrl::fromLocalFile(QFINDTESTDATA("../src/Main.qml")));
+        QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+        QScopedPointer<QObject> root(component.create());
+        auto *window = qobject_cast<QQuickWindow *>(root.data()); QVERIFY(window);
+        auto *source = root->findChild<QObject *>("sourceEditor");
+        auto *view = root->findChild<QQuickItem *>("previewEditor");
+        auto *hint = root->findChild<QQuickItem *>("emptyDocumentPlaceholder"); QVERIFY(source && view && hint);
+        if (QGuiApplication::platformName() != "offscreen") QVERIFY(QTest::qWaitForWindowExposed(window));
+        QTRY_VERIFY(view->hasActiveFocus()); QTRY_VERIFY(hint->isVisible());
+        auto *document = qvariant_cast<QQuickTextDocument *>(source->property("textDocument"))->textDocument();
+        QVERIFY(document->isEmpty()); QVERIFY(!document->isUndoAvailable());
+        QTest::keyClick(window, Qt::Key_X); QTRY_VERIFY(!hint->isVisible());
+        QTRY_COMPARE(document->toPlainText(), QString("x"));
+        QTest::keyClick(window, Qt::Key_Backspace); QTRY_VERIFY(hint->isVisible()); QVERIFY(document->isEmpty());
+        document->clearUndoRedoStacks();
+        view->setFocus(false); QTRY_VERIFY(hint->isVisible()); view->forceActiveFocus();
+        root->setProperty("readMode", true); QTRY_VERIFY(!hint->isVisible());
+        root->setProperty("readMode", false); QTRY_VERIFY(hint->isVisible()); view->forceActiveFocus();
+        QInputMethodEvent preedit(QString::fromUtf8("かな"), {}); QCoreApplication::sendEvent(view, &preedit);
+        QTRY_VERIFY(view->property("inputMethodComposing").toBool()); QTRY_VERIFY(!hint->isVisible()); QVERIFY(document->isEmpty());
+        QInputMethodEvent cancel; QCoreApplication::sendEvent(view, &cancel); QTRY_VERIFY(hint->isVisible());
+        QVERIFY(!document->isUndoAvailable());
+        QInputMethodEvent commit; commit.setCommitString(QString::fromUtf8("かな")); QCoreApplication::sendEvent(view, &commit);
+        QTRY_VERIFY(!hint->isVisible()); QTRY_COMPARE(document->toPlainText(), QString::fromUtf8("かな"));
+        QVERIFY(!document->toPlainText().contains("Start writing"));
+        QVERIFY(QMetaObject::invokeMethod(source, "undo")); QTRY_VERIFY(hint->isVisible());
+        QVERIFY(document->isEmpty()); QVERIFY(!document->isUndoAvailable());
+        QVERIFY(QMetaObject::invokeMethod(source, "redo")); QTRY_VERIFY(!hint->isVisible());
+        QTRY_COMPARE(document->toPlainText(), QString::fromUtf8("かな"));
+    }
     void tableGridEditsTabImeAndViewportKeepCanonicalUndo() {
         QTemporaryDir directory; QVERIFY(directory.isValid());
         Backend backend; backend.m_recoveryPath = directory.filePath("recovery.json");

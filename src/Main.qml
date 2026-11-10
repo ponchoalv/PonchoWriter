@@ -1551,8 +1551,9 @@ ApplicationWindow {
                 Text {
                     anchors.left: parent.left
                     anchors.top: parent.top
+                    objectName: "emptyDocumentPlaceholder"
                     text: "# Start writing"
-                    visible: editor.length === 0 && !presentation.activeFocus
+                    visible: editor.length === 0 && !win.readMode && !presentation.inputMethodComposing
                     color: win.mutedColor
                     font: presentation.font
                 }

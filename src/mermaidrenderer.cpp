@@ -4,6 +4,8 @@
 
 #include <QCryptographicHash>
 #include <QFile>
+#include <QDir>
+#include <QFileInfo>
 #include <QRegularExpression>
 #include <QStandardPaths>
 #ifdef Q_OS_UNIX
@@ -11,8 +13,31 @@
 #include <unistd.h>
 #endif
 
-MermaidRenderer::MermaidRenderer(QObject *parent) : QObject(parent),
-    m_executable(QStandardPaths::findExecutable(QStringLiteral("mmdc"))) {
+QStringList MermaidRenderer::defaultSearchDirectories() {
+#ifdef Q_OS_MACOS
+    return {QStringLiteral("/opt/homebrew/bin"), QStringLiteral("/usr/local/bin"), QStringLiteral("/opt/local/bin")};
+#else
+    return {};
+#endif
+}
+
+MermaidRenderer::MermaidRenderer(QObject *parent)
+    : MermaidRenderer(parent, QProcessEnvironment::systemEnvironment(), defaultSearchDirectories()) {}
+
+MermaidRenderer::MermaidRenderer(QObject *parent, const QProcessEnvironment &environment,
+                                 const QStringList &fallbackDirectories) : QObject(parent) {
+    const auto inherited = environment.value(QStringLiteral("PATH")).split(QDir::listSeparator(), Qt::SkipEmptyParts);
+    if (!inherited.isEmpty()) m_executable = QStandardPaths::findExecutable(QStringLiteral("mmdc"), inherited);
+    if (m_executable.isEmpty() && !fallbackDirectories.isEmpty())
+        m_executable = QStandardPaths::findExecutable(QStringLiteral("mmdc"), fallbackDirectories);
+    auto child = environment;
+    QStringList paths;
+    if (!m_executable.isEmpty()) paths.append(QFileInfo(m_executable).absolutePath());
+    paths.append(inherited);
+    paths.append(fallbackDirectories);
+    paths.removeDuplicates();
+    child.insert(QStringLiteral("PATH"), paths.join(QDir::listSeparator()));
+    m_process.setProcessEnvironment(child);
 #ifdef Q_OS_UNIX
     // mmdc launches Chromium children: killing only Node leaks browsers.
     m_process.setChildProcessModifier([] { ::setsid(); });

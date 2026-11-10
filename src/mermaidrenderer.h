@@ -4,6 +4,7 @@
 #include <QHash>
 #include <QImage>
 #include <QProcess>
+#include <QProcessEnvironment>
 #include <QQueue>
 #include <QSet>
 #include <QTemporaryDir>
@@ -23,6 +24,9 @@ public:
 signals:
     void ready();
 private:
+    friend class MermaidTests;
+    MermaidRenderer(QObject *parent, const QProcessEnvironment &environment, const QStringList &fallbackDirectories);
+    static QStringList defaultSearchDirectories();
     struct Job { QString key, diagram; bool dark; int width; quint64 generation; };
     void stopProcess();
     void startNext();

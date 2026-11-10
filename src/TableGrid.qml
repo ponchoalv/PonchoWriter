@@ -18,6 +18,8 @@ Rectangle {
     property bool expanded: false
     property bool suspended: false
     enabled: !suspended
+    onReadOnlyChanged: if (grid) preview.watchTableInput(grid, !readOnly && !suspended)
+    onSuspendedChanged: if (grid) preview.watchTableInput(grid, !readOnly && !suspended)
     property var activeEditor: null
     property string error: ""
     property bool restored: false
@@ -25,10 +27,38 @@ Rectangle {
     property int currentRow: 0
     property var editingWidths: ({})
     property bool layoutQueued: false
+    property bool submitting: false
+    property real exactContentWidth: 0
     function requestLayout() {
         if (layoutQueued) return;
         layoutQueued = true;
-        Qt.callLater(function() { layoutQueued = false; grid.forceLayout(); });
+        Qt.callLater(function() {
+            layoutQueued = false;
+            var width = 0;
+            for (var c = 0; c < grid.columns; ++c)
+                width += Math.max(tableModel.columnWidth(c), editingWidths[c] || 0);
+            exactContentWidth = width;
+            grid.forceLayout();
+            restorePosition();
+        });
+    }
+    function selectedRectangle() {
+        var indexes = grid.selectionModel.selectedIndexes;
+        if (!indexes.length) return null;
+        var top = grid.rows, left = grid.columns, bottom = -1, right = -1;
+        for (var i = 0; i < indexes.length; ++i) {
+            top = Math.min(top, indexes[i].row); bottom = Math.max(bottom, indexes[i].row);
+            left = Math.min(left, indexes[i].column); right = Math.max(right, indexes[i].column);
+        }
+        if ((bottom - top + 1) * (right - left + 1) !== indexes.length) return null;
+        return { top: top, left: left, bottom: bottom, right: right, revision: tableModel.sourceRevision };
+    }
+    function fillRectangle(range, text) {
+        if (readOnly || !range) return false;
+        submitting = true;
+        var accepted = tableModel.fillCells(range.top, range.left, range.bottom, range.right, text, range.revision);
+        submitting = false;
+        return accepted;
     }
     function expandColumn(column, text) {
         var width = Math.min(4096, Math.ceil(metrics.advanceWidth(text)) + 40);
@@ -60,10 +90,20 @@ Rectangle {
         if (Object.keys(tableModel.drafts).length) { error = "Correct or discard pending cell edits"; return false; }
         return true;
     }
+    // TableView can adjust its native end extent while virtualizing uneven
+    // columns. visibleArea includes that extent; contentWidth alone does not.
+    function maximumX() {
+        var ratio = grid.visibleArea.widthRatio;
+        return Math.max(0, (ratio > 0 ? grid.width / ratio : grid.contentWidth) - grid.width);
+    }
+    function maximumY() {
+        var ratio = grid.visibleArea.heightRatio;
+        return Math.max(0, (ratio > 0 ? grid.height / ratio : grid.contentHeight) - grid.height);
+    }
     function restorePosition() {
-        if (restored || grid.contentWidth <= 0) return;
-        grid.contentX = Math.min(tableModel.scrollX, Math.max(0, grid.contentWidth - grid.width));
-        grid.contentY = Math.min(tableModel.scrollY, Math.max(0, grid.contentHeight - grid.height));
+        if (restored || exactContentWidth <= 0) return;
+        grid.contentX = grid.originX + Math.min(tableModel.scrollX, maximumX());
+        grid.contentY = grid.originY + Math.min(tableModel.scrollY, maximumY());
         restored = true;
     }
     Row {
@@ -141,21 +181,80 @@ Rectangle {
         clip: true
         model: panel.tableModel
         reuseItems: true
+        contentWidth: panel.exactContentWidth
+        contentHeight: rows * (Math.ceil(metrics.height) + 16)
         boundsBehavior: Flickable.StopAtBounds
-        editTriggers: panel.readOnly ? TableView.NoEditTriggers : TableView.SingleTapped | TableView.EditKeyPressed
+        selectionBehavior: TableView.SelectCells
+        selectionMode: TableView.ContiguousSelection
+        editTriggers: panel.readOnly ? TableView.NoEditTriggers : TableView.SingleTapped | TableView.EditKeyPressed | TableView.AnyKeyPressed
         selectionModel: ItemSelectionModel { model: grid.model }
         columnWidthProvider: function(column) { return Math.max(panel.tableModel.columnWidth(column), panel.editingWidths[column] || 0); }
         rowHeightProvider: function(row) { return Math.ceil(metrics.height) + 16; }
         FontMetrics { id: metrics; font: panel.editorFont }
+        readonly property bool cellInputAllowed: !panel.readOnly && !panel.suspended
+        readonly property rect cellInputRectangle: {
+            var item = selectionModel.currentIndex.row >= 0 ? itemAtIndex(selectionModel.currentIndex) : null;
+            var p = item ? item.mapToItem(grid, 0, 0) : Qt.point(0, 0);
+            return Qt.rect(p.x, p.y, 1, metrics.height);
+        }
+        function inputMethodEditor() {
+            if (!cellInputAllowed || selectionModel.currentIndex.row < 0) return null;
+            if (!panel.activeEditor) edit(selectionModel.currentIndex);
+            return panel.activeEditor;
+        }
         onContentWidthChanged: Qt.callLater(panel.restorePosition)
-        onContentXChanged: if (panel.restored && !panel.suspended) panel.tableModel.scrollX = contentX
-        onContentYChanged: if (panel.restored && !panel.suspended) panel.tableModel.scrollY = contentY
-        Component.onCompleted: Qt.callLater(panel.restorePosition)
+        onContentXChanged: if (panel.restored && !panel.suspended) panel.tableModel.scrollX = Math.max(0, contentX - originX)
+        onContentYChanged: if (panel.restored && !panel.suspended) panel.tableModel.scrollY = Math.max(0, contentY - originY)
+        Component.onCompleted: {
+            // acceptedButtons was added after our Qt 6.7 baseline. On newer
+            // Qt, reserve mouse drags for selection, not content flicking.
+            if ("acceptedButtons" in grid) grid.acceptedButtons = Qt.NoButton;
+            panel.preview.watchTableInput(grid, !panel.readOnly && !panel.suspended);
+            panel.requestLayout();
+        }
+        WheelHandler {
+            target: null
+            orientation: Qt.Horizontal
+            acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
+            acceptedModifiers: Qt.NoModifier
+            onWheel: function(event) {
+                var dx = event.pixelDelta.x !== 0 ? event.pixelDelta.x : event.angleDelta.x / 2;
+                if (!dx || grid.contentWidth <= grid.width) { event.accepted = false; return; }
+                grid.contentX = Math.max(grid.originX, Math.min(grid.originX + panel.maximumX(), grid.contentX - dx));
+                event.accepted = true;
+            }
+        }
+        Keys.priority: Keys.BeforeItem
+        Keys.onPressed: function(event) {
+            if (!panel.readOnly && !panel.activeEditor && (event.key === Qt.Key_Delete || event.key === Qt.Key_Backspace)) {
+                var range = panel.selectedRectangle();
+                if (range && panel.commitCell()) {
+                    if (!panel.fillRectangle(range, "")) panel.error = "Cells not cleared: source changed or table limits exceeded";
+                    event.accepted = true;
+                }
+            }
+        }
+        Connections {
+            target: grid.selectionModel
+            function onCurrentChanged(current, previous) {
+                if (current.valid) { panel.currentRow = current.row; panel.currentColumn = current.column; }
+            }
+        }
         Connections {
             target: panel.tableModel
             function onColumnWidthsChanged() { panel.requestLayout(); }
+            function onModelReset() { panel.editingWidths = ({}); panel.requestLayout(); }
+            function onSourceRevisionChanged() { if (!panel.submitting) grid.selectionModel.clearSelection(); }
         }
-        ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded; focusPolicy: Qt.NoFocus }
+        ScrollBar.horizontal: ScrollBar {
+            objectName: "blockHorizontalScrollBar"
+            parent: panel
+            x: grid.x; y: grid.y + grid.height
+            width: grid.width; height: 12
+            policy: ScrollBar.AsNeeded
+            focusPolicy: Qt.NoFocus
+        }
+        ScrollBar.vertical: ScrollBar { objectName: "tableVerticalScrollBar"; policy: ScrollBar.AsNeeded; focusPolicy: Qt.NoFocus }
         delegate: Rectangle {
             id: cell
             objectName: "tableCellDelegate"
@@ -165,11 +264,13 @@ Rectangle {
             required property string html
             required property bool header
             required property bool current
+            required property bool selected
             required property bool editing
             required property int alignment
             implicitWidth: 100
             implicitHeight: Math.ceil(metrics.height) + 16
-            color: current ? Qt.rgba(panel.foreground.r, panel.foreground.g, panel.foreground.b, 0.08) : panel.backgroundColor
+            color: selected && !panel.readOnly ? Qt.rgba(panel.foreground.r, panel.foreground.g, panel.foreground.b, 0.18)
+                                              : current ? Qt.rgba(panel.foreground.r, panel.foreground.g, panel.foreground.b, 0.08) : panel.backgroundColor
             border.width: 0.5
             border.color: panel.borderColor
             clip: true
@@ -199,21 +300,22 @@ Rectangle {
                 horizontalAlignment: cell.alignment
                 background: Rectangle { color: panel.backgroundColor; border.color: field.activeFocus ? field.palette.highlight : panel.borderColor; border.width: 1 }
                 function revealCursor() {
-                    if (!activeFocus) return;
+                    if (!grid || !activeFocus) return;
                     var p = mapToItem(grid, cursorRectangle.x, 0);
                     var x = grid.contentX;
                     if (p.x < 8) x += p.x - 8;
                     else if (p.x + cursorRectangle.width > grid.width - 8) x += p.x + cursorRectangle.width - grid.width + 8;
-                    grid.contentX = Math.max(0, Math.min(x, grid.contentWidth - grid.width));
+                    grid.contentX = Math.max(grid.originX, Math.min(x, grid.originX + panel.maximumX()));
                 }
                 onCursorRectangleChanged: Qt.callLater(revealCursor)
                 onPreeditTextChanged: { panel.expandColumn(cell.column, text + preeditText); Qt.callLater(revealCursor); }
                 property string original: ""
                 property var revision: 0
+                property var rectangle: null
                 function storeDraft() {
                     var drafts = panel.tableModel.drafts;
                     var key = (revision === panel.tableModel.draftRevision ? "" : "recovered/" + revision + "/") + cell.row + ":" + cell.column;
-                    drafts[key] = { text: text, original: original };
+                    drafts[key] = { text: text, original: original, rectangle: rectangle };
                     panel.tableModel.drafts = drafts;
                 }
                 function clearDraft() {
@@ -226,7 +328,8 @@ Rectangle {
                     if (discarded || committed) return true;
                     if (inputMethodComposing) Qt.inputMethod.commit();
                     if (inputMethodComposing) return false;
-                    if (revision !== panel.tableModel.draftRevision || cell.markdown !== original || !panel.tableModel.setCell(cell.row, cell.column, text)) {
+                    if (revision !== panel.tableModel.draftRevision || cell.markdown !== original
+                        || !(rectangle ? panel.fillRectangle(rectangle, text) : panel.tableModel.setCell(cell.row, cell.column, text))) {
                         storeDraft();
                         panel.error = "Cell not saved: correct or discard its draft";
                         return false;
@@ -259,6 +362,9 @@ Rectangle {
                 Component.onCompleted: {
                     var draft = panel.tableModel.drafts[cell.row + ":" + cell.column];
                     revision = panel.tableModel.draftRevision;
+                    var range = panel.selectedRectangle();
+                    rectangle = draft && draft.rectangle ? draft.rectangle
+                              : range && (range.bottom > range.top || range.right > range.left) ? range : null;
                     original = draft ? draft.original : cell.markdown;
                     if (draft) text = draft.text;
                     panel.currentColumn = cell.column; panel.currentRow = cell.row;
@@ -272,13 +378,13 @@ Rectangle {
             }
         }
     }
-    BlockOverflow {
-        anchors.fill: parent
-        contentWidth: grid.contentWidth
-        viewportWidth: grid.width
-        offset: grid.contentX
-        wheelOrientation: panel.readOnly ? Qt.Horizontal : Qt.Vertical
-        wheelDevices: panel.readOnly ? PointerDevice.Mouse | PointerDevice.TouchPad : PointerDevice.Mouse
-        onScrollRequested: function(offset) { grid.contentX = offset; }
+    SelectionRectangle {
+        objectName: "tableCellSelectionRectangle"
+        target: grid
+        enabled: !panel.readOnly && !panel.activeEditor
+        selectionMode: SelectionRectangle.Drag
+        onDraggingChanged: if (dragging) grid.forceActiveFocus()
+        topLeftHandle: null
+        bottomRightHandle: null
     }
 }

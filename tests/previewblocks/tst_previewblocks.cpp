@@ -56,6 +56,19 @@ private slots:
         QVERIFY(image.pixelColor(399, image.height() / 2).alpha() > 0);
         QCOMPARE(image.pixelColor(0, 0).alpha(), 0);
     }
+    void immediateConvergenceKeepsPreviousLineSensitiveRulesFresh() {
+        for (const QString &rule : {QString("---"), QString("  - - - ")}) {
+            QString text = "before\n\n" + rule + "\nafter";
+            Parser parser; parser.reset(text); QCOMPARE(parser.blocks().size(), 1);
+            text.insert(7, 'x'); parser.edit(text, 7, 0, 1);
+            QCOMPARE(parser.blocks().size(), parse(text).size()); QVERIFY(parser.blocks().isEmpty());
+            text.remove(7, 1); parser.edit(text, 7, 1, 0);
+            QCOMPARE(parser.blocks().size(), parse(text).size()); QCOMPARE(parser.blocks().size(), 1);
+        }
+        QString text = "before\n| A | B |\n| --- | --- |\n" + QString("| a | b |\n").repeated(5000);
+        Parser parser; parser.reset(text); text.insert(6, 'x'); parser.edit(text, 6, 0, 1);
+        QVERIFY(parser.parsedLines() < 10); QCOMPARE(parser.blocks().size(), parse(text).size());
+    }
     void tables() {
         const QString source = QString::fromUtf8("😀 before\r\n")
             + QStringLiteral("| A \\| B | `x|y` |\r\n| :--- | ---: |\r\n| c | d |\r\nafter\n");

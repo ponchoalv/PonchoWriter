@@ -303,7 +303,9 @@ void MarkdownTableModel::setSource(const QString &markdown, const QFont &font)
         beginResetModel();
     }
     // Do not retain unbounded invalid input. All valid inputs fit this bound.
+    const bool sourceChanged = m_source != markdown;
     m_source = markdown.size() <= MaxSourceUnits ? markdown : QString();
+    if (sourceChanged) ++m_sourceRevision;
     m_font = font;
     m_initialized = true;
     m_lines = std::move(lines);
@@ -323,13 +325,23 @@ void MarkdownTableModel::setSource(const QString &markdown, const QFont &font)
     if (!sameShape) {
         endResetModel();
     } else {
-        for (const auto &cell : changed)
-            emit dataChanged(index(cell.first, cell.second), index(cell.first, cell.second),
-                             {Qt::DisplayRole, MarkdownRole, HtmlRole});
+        if (changed.size() > 64) {
+            int top = rowCount(), left = columnCount(), bottom = 0, right = 0;
+            for (const auto &cell : changed) {
+                top = qMin(top, cell.first); bottom = qMax(bottom, cell.first);
+                left = qMin(left, cell.second); right = qMax(right, cell.second);
+            }
+            emit dataChanged(index(top, left), index(bottom, right), {Qt::DisplayRole, MarkdownRole, HtmlRole});
+        } else {
+            for (const auto &cell : changed)
+                emit dataChanged(index(cell.first, cell.second), index(cell.first, cell.second),
+                                 {Qt::DisplayRole, MarkdownRole, HtmlRole});
+        }
         if (alignmentChanged && rowCount() && columnCount())
             emit dataChanged(index(0, 0), index(rowCount() - 1, columnCount() - 1), {AlignmentRole});
     }
     if (widthsChanged) emit columnWidthsChanged();
+    if (sourceChanged) emit sourceRevisionChanged();
 }
 
 void MarkdownTableModel::render(const Cell &cell) const
@@ -478,6 +490,69 @@ bool MarkdownTableModel::setCell(int row, int column, const QString &value)
     const int offset = cell.offset;
     const int length = cell.length;
     return requestReplacement(offset, length, replacement, std::move(lines), std::move(rows));
+}
+
+bool MarkdownTableModel::fillCells(int top, int left, int bottom, int right,
+                                   const QString &value, quint64 sourceRevision)
+{
+    if (sourceRevision != m_sourceRevision || top < 0 || left < 0 || bottom < top || right < left
+        || bottom >= rowCount() || right >= columnCount()) return false;
+    QString protectedValue;
+    if (!protectCell(value, protectedValue)) return false;
+    // Bound expansion before allocating a rectangle-sized candidate.
+    const bool clearing = protectedValue.trimmed().isEmpty();
+    qint64 units = m_source.size();
+    for (int r = top; r <= bottom; ++r) {
+        for (int c = left; c <= right; ++c)
+            units += protectedValue.size() - m_rows.at(r).at(c).length;
+        if (clearing) {
+            const Line &line = m_lines.at(r == 0 ? 0 : r + 1);
+            if (right == columnCount() - 1 && line.fields.last().offset + line.fields.last().length == line.offset + line.length) ++units;
+            if (left == 0 && line.fields.first().offset == line.offset) ++units;
+        }
+    }
+    if (units > MaxSourceUnits) return false;
+    const int first = m_lines.at(top == 0 ? 0 : top + 1).offset;
+    const Line &last = m_lines.at(bottom == 0 ? 0 : bottom + 1);
+    const int end = last.offset + last.length;
+    QString replacement;
+    replacement.reserve(qMin<qint64>(MaxSourceUnits, qMax<qint64>(0, units)));
+    int previous = first;
+    for (int r = top; r <= bottom; ++r) {
+        const Line &line = m_lines.at(r == 0 ? 0 : r + 1);
+        replacement += m_source.mid(previous, line.offset - previous);
+        QString row;
+        int position = line.offset;
+        for (int c = left; c <= right; ++c) {
+            const Cell &cell = m_rows.at(r).at(c);
+            row += m_source.mid(position, cell.offset - position);
+            row += protectedValue;
+            position = cell.offset + cell.length;
+        }
+        row += m_source.mid(position, line.offset + line.length - position);
+        // Empty unbordered edge cells would disappear in GFM. Add only the
+        // missing outer delimiters, retaining indentation and all padding.
+        if (clearing) {
+            if (right == columnCount() - 1 && line.fields.last().offset + line.fields.last().length == line.offset + line.length)
+                row += QLatin1Char('|');
+            if (left == 0 && line.fields.first().offset == line.offset) {
+                int indent = 0;
+                while (indent < row.size() && indent < 3 && row.at(indent) == QLatin1Char(' ')) ++indent;
+                row.insert(indent, QLatin1Char('|'));
+            }
+        }
+        replacement += row;
+        previous = line.offset + line.length;
+    }
+    if (replacement == m_source.mid(first, end - first)) return true;
+    QString proposed = m_source;
+    proposed.replace(first, end - first, replacement);
+    QVector<Line> lines;
+    QVector<QVector<Cell>> rows;
+    ++m_parseCount;
+    if (!parse(proposed, lines, rows) || rows.size() != m_rows.size()
+        || rows.first().size() != columnCount()) return false;
+    return requestReplacement(first, end - first, replacement, std::move(lines), std::move(rows));
 }
 
 bool MarkdownTableModel::requestReplacement(int offset, int length, const QString &replacement,

@@ -12,6 +12,7 @@ class MarkdownTableModel : public QAbstractTableModel
     Q_OBJECT
     Q_PROPERTY(QVariantMap drafts MEMBER m_drafts NOTIFY draftsChanged)
     Q_PROPERTY(quint64 draftRevision READ draftRevision NOTIFY draftsChanged)
+    Q_PROPERTY(quint64 sourceRevision READ sourceRevision NOTIFY sourceRevisionChanged)
     Q_PROPERTY(qreal scrollX MEMBER m_scrollX NOTIFY scrollPositionChanged)
     Q_PROPERTY(qreal scrollY MEMBER m_scrollY NOTIFY scrollPositionChanged)
 
@@ -34,9 +35,12 @@ public:
     Q_INVOKABLE bool setColumnAlignment(int column, const QString &alignment);
     void acknowledgeReplacement() { m_acknowledged = true; }
     quint64 draftRevision() const { return m_draftRevision; }
+    quint64 sourceRevision() const { return m_sourceRevision; }
     // value is raw inline Markdown. Existing escapes are retained; unescaped
     // pipes and an odd trailing backslash are protected against row syntax.
     Q_INVOKABLE bool setCell(int row, int column, const QString &value);
+    Q_INVOKABLE bool fillCells(int top, int left, int bottom, int right,
+                               const QString &value, quint64 sourceRevision);
     // Rows can only be inserted after the header or an existing body row.
     Q_INVOKABLE bool insertRow(int afterRow);
     Q_INVOKABLE bool removeRow(int row);
@@ -47,6 +51,7 @@ public:
 signals:
     void replaceRequested(int offset, int length, const QString &replacement);
     void columnWidthsChanged();
+    void sourceRevisionChanged();
     void scrollPositionChanged();
     void draftsChanged();
 
@@ -89,6 +94,6 @@ private:
     QVector<QVector<Cell>> m_validatedRows;
     quint64 m_parseCount = 0;
     mutable quint64 m_widthMeasurements = 0, m_richRenders = 0;
-    quint64 m_draftRevision = 0;
+    quint64 m_draftRevision = 0, m_sourceRevision = 0;
     qreal m_scrollX = 0, m_scrollY = 0;
 };

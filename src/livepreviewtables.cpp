@@ -130,12 +130,16 @@ void LivePreview::setTableSource(int id, bool source) {
 
 LivePreview::Overflow &LivePreview::overflowFor(const QTextBlock &first, const QTextBlock &last, QTextTable *table) {
     for (auto &item : m_overflows) if (item.first == first && item.table == table) { item.last = last; return item; }
-    m_overflows.append({m_nextPanelId++, first, last, table, 0, 0});
+    m_overflows.append({m_nextPanelId++, first, last, table, 0, 0, {}, {}});
     return m_overflows.last();
 }
 
 void LivePreview::styleOverflow() {
     if (!m_view || !m_viewItem || m_view->pageSize() == QSizeF(0, 0)) return;
+    // Native single-paragraph edits retain no-wrap membership. Revisit rows
+    // only after topology/list changes, a document switch, or horizontal scroll.
+    if (!m_readMode && !m_overflowStyleDirty && !m_overflowScrolling && m_overflowEndpoints == m_codeEndpoints) return;
+    m_overflowStyleDirty = false; m_overflowEndpoints = m_codeEndpoints;
     QScopedValueRollback<bool> guard(m_guard, true);
     QSignalBlocker layoutSignals(m_view->documentLayout());
     QTextCursor batch(m_view); batch.beginEditBlock();
@@ -148,6 +152,7 @@ void LivePreview::styleOverflow() {
         if (!first.isValid() || !last.isValid()) continue;
         auto &record = overflowFor(first, last);
         for (auto b = first; b.isValid() && b.blockNumber() <= group.second; b = b.next()) {
+            ++m_overflowStyleVisits;
             auto f = b.blockFormat(); wanted.append(b);
             if (!f.hasProperty(OverflowIndent)) f.setProperty(OverflowIndent, f.textIndent());
             const qreal indent = f.doubleProperty(OverflowIndent) - record.offset;

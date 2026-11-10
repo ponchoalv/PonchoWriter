@@ -3,6 +3,7 @@
 #include <QObject>
 #include <QPointer>
 #include <QTextDocument>
+#include <QTextLayout>
 #include <QVariant>
 #include "previewblocks.h"
 #include "listpreview.h"
@@ -48,7 +49,8 @@ public:
     Q_INVOKABLE void copySource();
     Q_INVOKABLE bool copyReadSelection(bool asHtml = false);
     Q_INVOKABLE bool copyCodeBlock(int panelIndex);
-    Q_INVOKABLE void prepareEdit();
+    Q_INVOKABLE void prepareEdit(bool revealBoundary = true);
+    Q_INVOKABLE void watchTableInput(QObject *table, bool enabled);
     Q_INVOKABLE void setTableSource(int id, bool source);
     Q_INVOKABLE void resetTableSessions();
     Q_INVOKABLE bool copyTableDrafts(int id = 0);
@@ -131,16 +133,30 @@ private:
         bool source = false;
         QPointer<MarkdownTableModel> model;
     };
+    struct RowWidth {
+        QTextBlock block;
+        int revision = -1;
+        QTextBlockFormat blockFormat;
+        QTextCharFormat charFormat;
+        QTextOption option;
+        QList<QTextLayout::FormatRange> formats;
+        qreal width = 0;
+    };
     struct Overflow {
         int id;
         QTextBlock first, last;
         QPointer<QTextTable> table;
         qreal offset = 0, width = 0;
+        QFont widthFont;
+        QList<RowWidth> rows;
     };
     QList<TableSession> m_tables;
     QVariantMap m_recoveredTableDrafts;
     QList<Overflow> m_overflows;
     QList<QTextBlock> m_unwrapped;
+    QList<QTextBlock> m_overflowEndpoints;
+    bool m_overflowStyleDirty = true;
+    quint64 m_overflowStyleVisits = 0, m_overflowMeasurements = 0; // Regression counters, not telemetry.
     QVariantList m_tablePanels, m_tableScrollPanels;
     QVariantMap m_blockOffsets;
     int m_nextPanelId = 1;

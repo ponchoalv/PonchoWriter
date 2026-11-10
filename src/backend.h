@@ -170,6 +170,7 @@ private:
     void setFileUrl(const QUrl &url);
     void setModified(bool modified);
     void setStatus(const QString &status);
+    void reportPrintFailure(const QString &message);
     void saveTo(const QUrl &url);
     QString attachmentStoragePath() const;
     bool materializeAttachments(const QUrl &destination, QString *error) const;

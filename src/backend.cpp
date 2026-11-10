@@ -518,8 +518,17 @@ Printing::Job Backend::printJob(const QPageLayout &layout, bool appendices) cons
     return Printing::build(currentDocumentText(), options, [this](const QString &path) { return resolveImageUrl(path); });
 }
 
+void Backend::reportPrintFailure(const QString &message) {
+    setStatus(message);
+    QMessageBox error(QMessageBox::Critical, QStringLiteral("Print failed"), message, QMessageBox::Ok);
+    error.setTextFormat(Qt::PlainText);
+    error.winId();
+    if (error.windowHandle() && m_parentWindow) error.windowHandle()->setTransientParent(m_parentWindow);
+    error.exec();
+}
+
 void Backend::printDocument() {
-    if (!m_document) { setStatus(QStringLiteral("There is no document to print.")); return; }
+    if (!m_document) { reportPrintFailure(QStringLiteral("There is no document to print.")); return; }
     QDialog settings;
     settings.setWindowTitle(QStringLiteral("Print layout"));
     QVBoxLayout layout(&settings);
@@ -547,13 +556,13 @@ void Backend::printDocument() {
     if (dialog.windowHandle() && m_parentWindow) dialog.windowHandle()->setTransientParent(m_parentWindow);
     if (dialog.exec() != QDialog::Accepted) return;
     auto job = printJob(printer.pageLayout(), appendices.isChecked());
-    if (!job.error.isEmpty()) { setStatus(job.error); return; }
+    if (!job.error.isEmpty()) { reportPrintFailure(job.error); return; }
     if (!job.warnings.isEmpty() && QMessageBox::warning(nullptr, QStringLiteral("Print images"),
         job.warnings.join(QLatin1Char('\n')) + QStringLiteral("\nPrint with explicit placeholders?"),
         QMessageBox::Ok | QMessageBox::Cancel, QMessageBox::Cancel) != QMessageBox::Ok) return;
     QSettings().setValue(QStringLiteral("print/wideTablesToAppendix"), appendices.isChecked());
     QString failure;
-    if (!job.print(printer, &failure)) setStatus(failure);
+    if (!job.print(printer, &failure)) reportPrintFailure(failure);
     else setStatus(QStringLiteral("Print job sent."));
 }
 

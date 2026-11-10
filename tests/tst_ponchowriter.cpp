@@ -323,8 +323,30 @@ private slots:
         LinkReceiver receiver; QDesktopServices::setUrlHandler("https", &receiver, "open");
         const auto cleanup = qScopeGuard([] { QDesktopServices::unsetUrlHandler("https"); });
         auto clickLink = [&](QQuickItem *panel, const QString &url) {
-            for (auto *item : visualDescendants(panel)) if (item->objectName() == "tableCellDisplay" && item->isVisible() && item->property("text").toString().contains(url)) {
-                QTest::mouseClick(window, Qt::LeftButton, Qt::NoModifier, item->mapToScene(QPointF(10, item->height()/2)).toPoint()); return true;
+            auto *grid = panel->findChild<QQuickItem *>("tableCellView");
+            if (!grid) return false;
+            for (int attempt = 0; attempt < 3; ++attempt) {
+                QPointer<QQuickItem> label; QPointF point;
+                for (auto *item : visualDescendants(panel)) if (!label && item->objectName() == "tableCellDisplay" && item->isVisible() && item->property("text").toString().contains(url)) {
+                    // Hit-test an actual rich-text anchor, not a wrapped label's
+                    // geometric center (which can fall between text lines).
+                    for (qreal y = 1; !label && y < item->height(); y += 2) for (qreal x = 1; x < item->width(); x += 2) {
+                        QString target;
+                        if (!QMetaObject::invokeMethod(item, "linkAt", Q_RETURN_ARG(QString, target), Q_ARG(qreal, x), Q_ARG(qreal, y))) return false;
+                        if (target == url) { label = item; point = QPointF(x,y); break; }
+                    }
+                }
+                if (!label) return false;
+                const auto inGrid = label->mapToItem(grid, point);
+                // A cell can be loaded yet clipped horizontally, especially
+                // with large fonts/raw-image destinations in another row.
+                if (inGrid.x() < 1 || inGrid.x() > grid->width()-2) {
+                    grid->setProperty("contentX", grid->property("contentX").toReal() + inGrid.x() - grid->width()/2);
+                    QTest::qWait(30); // Reacquire possibly recycled delegates.
+                    continue;
+                }
+                QTest::mouseClick(window, Qt::LeftButton, Qt::NoModifier, label->mapToScene(point).toPoint());
+                return true;
             }
             return false;
         };

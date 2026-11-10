@@ -8,6 +8,7 @@ PonchoWriter prints a dedicated native `QTextDocument` snapshot of the canonical
 2. In **Print layout**, leave **Move wide tables to appendix** enabled (the default), or disable it to keep tables in the body. Choose **Continue…**. Cancel leaves the document untouched.
 3. In the system print dialog, choose a printer or the desktop's PDF destination, paper, body orientation, margins, copies and page ranges. Default margins are 15 mm. PDF controls depend on the platform/printer; this is not a separate Export PDF command.
 4. Missing, unsupported, oversized or nonlocal images produce explicit placeholders and a confirmation before output. Cancel is the default; printing never silently substitutes a preview image.
+5. Preparation or output failures open a visible **Print failed** error dialog and also update the status footer. Choosing a PDF destination does not guarantee a file was written if preparation subsequently fails.
 
 The appendix preference is remembered locally as `print/wideTablesToAppendix`. Printing does not require saving the note first, materializing its staged images or switching modes. The current buffer is used, including unsaved changes. Source text, document modified state and undo history are not edited by preparation.
 
@@ -25,6 +26,8 @@ The appendix preference is remembered locally as `print/wideTablesToAppendix`. P
 **Too wide for the chosen body page:** replaced in the body by a reference such as **“See Appendix A — Table 2”**. The native table starts in a separate **landscape** section using the same paper size and margins. Appendices follow the body, in source order.
 
 **Too wide even in landscape:** divided into consecutive column groups. Every group repeats **column 1** and the header; all other columns appear in their original order. Column 1 is repeated for context—it need not be a unique identifier. Each group begins on its own section/page and can continue vertically.
+
+Sparse or ragged Markdown rows that Qt imports as merged native cells are eligible for appendices too. Column groups expand those cells into logical grid positions: rich text is retained once at the cell's anchor, with covered positions left empty. This avoids skipping the appendix or duplicating a merged value across columns; column 1 still repeats for context.
 
 Width classification uses content/font measurements and bounded readable column estimates, not an arbitrary 500-row cutoff. Body text uses the editor's font family at **11 pt**; table text uses **9.5 pt**. Editor zoom, dark theme, horizontal scroll offsets and virtualized grid state do not determine print geometry. Extremely long cell text wraps rather than causing a progressively tiny font.
 
@@ -59,10 +62,10 @@ These are not a whole-process memory cap. Native layout, source snapshots, trans
 
 On macOS arm64 / Qt 6.12.0, 2026-11-10:
 
-- **379 checks passed, zero failures, four normal-run skips**, across thirteen suites. Printing contributes nine checks, including setup/cleanup; the attachment suite exercises actual staged/recovered/saved/Save As resolution without source or recovery-file mutation.
-- Printing tests cover original pixels, blocked fallback resources, native table widths, rendered continuation headers, oversized rows, appendix images, all source cells across column bands, option-off behavior, preallocation rejection, PDF page sizes, disjoint/global ranges and software copies/collation.
+- **381 checks passed, zero failures, four normal-run skips**, across thirteen suites. Printing contributes ten checks, including setup/cleanup; the attachment suite exercises actual staged/recovered/saved/Save As resolution without source or recovery-file mutation, plus the visible failure dialog.
+- Printing tests cover original pixels, blocked fallback resources, native table widths, rendered continuation headers, oversized rows, appendix images, all source cells across column bands, sparse/merged native cells without duplicate values, option-off behavior, preallocation rejection, PDF page sizes, disjoint/global ranges and software copies/collation.
 - Independent Apple PDFKit reading/rasterization verified a generated synthetic PDF: **three pages (one portrait/two landscape), a visible red image and all 112 synthetic table cells extractable**.
-- Existing native UI regressions passed **eleven checks** (nine bodies), and threaded rendering passed **six checks / 100 mode switches**. The macOS application rebuilt as 0.7.2.
+- Existing native UI regressions passed **eleven checks** (nine bodies), and threaded rendering passed **six checks / 100 mode switches**. The ten-check print suite and three-check visible-error fixture also passed under Cocoa. The macOS application rebuilt as 0.7.2.
 - An opt-in native-print-to-file attempt found **no native printer engine**: Qt fell back to PDF and that native-driver check explicitly skipped. Physical printers, duplex and actual native-driver mixed-orientation behavior remain **unverified**. Windows/Linux have not been compiled or runtime-tested here.
 
 To rerun the print suite after `bin/test`, use the executable generated in `build-tests/printing` (`tst_printing.app/Contents/MacOS/tst_printing` on macOS). `PONCHOWRITER_PRINT_TEST_PDF=/absolute/new/path.pdf` optionally retains its generated synthetic PDF; the path must not already exist. On Cocoa, `PONCHOWRITER_NATIVE_PRINT_TEST=1` additionally attempts native print-to-file, explicitly skipping if Qt cannot supply that engine. It never addresses a physical printer or opens a system print dialog.

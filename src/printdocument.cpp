@@ -86,7 +86,6 @@ struct Table {
     int number = 0;
     QString appendix;
     int rows = 0, columns = 0;
-    bool simple = true;
     QVector<qreal> minimum, preferred;
     QVector<QTextDocumentFragment> cells;
     QVector<QTextBlockFormat> firstBlock;
@@ -271,7 +270,16 @@ Job build(const QString &markdown, const Options &options, const ImageResolver &
         table.minimum.fill(48, table.columns); table.preferred.fill(48, table.columns);
         for (int r = 0; r < table.rows; ++r) for (int c = 0; c < table.columns; ++c) {
             const auto cell = native->cellAt(r, c);
-            table.simple &= cell.rowSpan() == 1 && cell.columnSpan() == 1;
+            // Qt may merge missing/empty Markdown fields into a preceding
+            // native cell. Expand that geometry back to logical grid positions
+            // for column bands: retain the text once, at its anchor, and leave
+            // covered positions empty instead of duplicating a merged value.
+            if (cell.row() != r || cell.column() != c) {
+                table.cells.append(QTextDocumentFragment());
+                table.firstBlock.append(QTextBlockFormat());
+                table.units.append(0);
+                continue;
+            }
             auto cursor = cell.firstCursorPosition();
             cursor.setPosition(cell.lastCursorPosition().position(), QTextCursor::KeepAnchor);
             table.cells.append(QTextDocumentFragment(cursor));
@@ -284,7 +292,7 @@ Job build(const QString &markdown, const Options &options, const ImageResolver &
             table.minimum[c] = qMax(table.minimum[c], qMin(qreal(104), minimum + 2 * Padding + 2));
             table.preferred[c] = qMax(table.minimum[c], qMax(table.preferred[c], qMin(qreal(200), metrics.horizontalAdvance(text.left(256)) + 2 * Padding + 2)));
         }
-        if (options.wideTablesToAppendix && table.simple
+        if (options.wideTablesToAppendix
             && std::accumulate(table.minimum.begin(), table.minimum.end(), qreal(0)) > contentSize(options.pageLayout).width())
             table.appendix = letters(int(std::count_if(tables.begin(), tables.end(), [](const Table &t) { return !t.appendix.isEmpty(); })));
         tables.push_back(std::move(table));

@@ -1,5 +1,7 @@
 #include <QtTest>
 #include <QApplication>
+#include <QMessageBox>
+#include <QTimer>
 #include <QClipboard>
 #include <QImage>
 #include <QUuid>
@@ -116,6 +118,22 @@ private slots:
         QCOMPARE(refs[3].path, QString("img/ref.png"));
         QCOMPARE(Attachments::references("![x](img/photo(1).png)")[0].path, QString("img/photo(1).png"));
         QCOMPARE(Attachments::decodedPath("img/a\\(1\\)%20b.png"), QString("img/a(1) b.png"));
+    }
+    void printingFailuresAreVisibleWithoutChangingTheDocument() {
+        Backend backend; QTextDocument document; bind(backend, document);
+        document.setPlainText(QStringLiteral("untouched"));
+        bool found = false;
+        QTimer::singleShot(0, [&] {
+            for (auto *widget : QApplication::topLevelWidgets()) if (auto *box = qobject_cast<QMessageBox *>(widget)) {
+                // macOS intentionally ignores QMessageBox window titles.
+                found = box->isVisible() && box->icon() == QMessageBox::Critical
+                    && box->text() == QStringLiteral("Synthetic failure") && box->textFormat() == Qt::PlainText;
+                box->accept();
+            }
+        });
+        backend.reportPrintFailure(QStringLiteral("Synthetic failure"));
+        QVERIFY(found); QCOMPARE(document.toPlainText(), QStringLiteral("untouched"));
+        QCOMPARE(backend.status(), QStringLiteral("Synthetic failure"));
     }
     void printingResolvesStagedRecoveredSavedAndSaveAsImagesWithoutMutation() {
         QTemporaryDir dir, destination;

@@ -120,6 +120,41 @@ private slots:
         QCOMPARE(inlineJob.sections.size(), size_t(1)); QCOMPARE(tables(*inlineJob.sections.front().document).size(), 2);
     }
 
+    void sparseNativeMergedCellsStillMoveToAppendicesWithoutDuplicatingText() {
+        QString source;
+        for (int c = 0; c < 29; ++c) source += QStringLiteral("| Header%1 ").arg(c);
+        source += "|\n";
+        for (int c = 0; c < 29; ++c) source += "| --- ";
+        source += "|\n";
+        for (int r = 0; r < 8; ++r) source += QStringLiteral("| CONTEXT_%1 | UNIQUE_VALUE_%1 |\n").arg(r);
+        QTextDocument imported; imported.setMarkdown(source, QTextDocument::MarkdownDialectGitHub);
+        const auto original = tables(imported); QCOMPARE(original.size(), 1);
+        bool merged = false;
+        for (int r=0; r<original[0]->rows(); ++r) for (int c=0; c<original[0]->columns(); ++c)
+            merged |= original[0]->cellAt(r,c).columnSpan() > 1;
+        QVERIFY2(merged, "Fixture must exercise Qt's ragged-row native merged cells");
+        auto job = Printing::build(source, options(), {});
+        QVERIFY2(job.error.isEmpty(), qPrintable(job.error)); QVERIFY(job.sections.size() > 1);
+        QVERIFY(tables(*job.sections.front().document).isEmpty());
+        QString joined;
+        for (size_t i=1; i<job.sections.size(); ++i) {
+            joined += job.sections[i].document->toPlainText();
+            for (auto *native : tables(*job.sections[i].document)) {
+                QCOMPARE(native->rows(), 9);
+                QVERIFY(native->columns() < 29);
+            }
+        }
+        for (int r=0; r<8; ++r) {
+            QCOMPARE(joined.count(QStringLiteral("UNIQUE_VALUE_%1").arg(r)), 1);
+            QCOMPARE(joined.count(QStringLiteral("CONTEXT_%1").arg(r)), int(job.sections.size()-1));
+        }
+        for (int c=1; c<29; ++c) {
+            QRegularExpression exact(QStringLiteral("\\bHeader%1\\b").arg(c));
+            auto matches = exact.globalMatch(joined); int count=0; while(matches.hasNext()) {matches.next(); ++count;}
+            QCOMPARE(count, 1);
+        }
+    }
+
     void pdfUsesMixedPagesOriginalImagesAndGlobalRanges() {
         QTemporaryDir dir; QVERIFY(dir.isValid());
         QImage image(100, 50, QImage::Format_RGB32); image.fill(Qt::red);

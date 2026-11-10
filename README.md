@@ -11,13 +11,15 @@ Created and maintained by **Alfonso Alvarez**: [ponchoalv/PonchoWriter](https://
 [test guide](docs/testing.md),
 [language highlighting guide](docs/syntax-highlighting.md),
 [desktop spelling guide](docs/spellchecking.md),
+[printing and PDF layout guide](docs/printing.md),
 [file/window routing guide](docs/opening-files-and-windows.md), and
 [Windows, macOS and Linux installation guide](docs/install.md).
 
 ## Features
 
 - Native Edit/Read toggle, editable table grids with a Markdown escape hatch, local-image previews and caret-aware heading markers. Markdown stays the source of truth with one undo history.
-- [Local horizontal scrolling](docs/tables-and-horizontal-overflow.md) for code and tables, with virtualized Edit cells and native selectable Read tables.
+- [Local horizontal scrolling](docs/tables-and-horizontal-overflow.md) for code and tables, with a shared virtualized Edit/Read grid, rectangular editing and larger same-component table views.
+- [Native print/PDF snapshots](docs/printing.md) with original staged/local images, repeated table headers and landscape appendices/column groups for wide tables.
 - Clipboard screenshot paste, durable recovery-safe staging, `img/` materialization and collision-safe attachment handling across Save As.
 - Theme-aware language-tagged code-fence highlighting in Edit and Read, using standalone KSyntaxHighlighting rather than Kate.
 - Optional constrained Mermaid rendering through an already-installed external `mmdc`; no embedded WebEngine or automatic runtime downloads.
@@ -29,7 +31,7 @@ Created and maintained by **Alfonso Alvarez**: [ponchoalv/PonchoWriter](https://
 - Retained Edit/Read documents for fast return to editing, a viewport-safe caret, conservative bracket/quote pairs and [inline/fenced code shortcuts](docs/mode-transitions-and-code-shortcuts.md).
 - [Blockquote live preview](docs/blockquotes.md): reveal `>` on click, justified quote prose and preserved quoted line breaks in Read.
 - Edit Cmd/Ctrl-click or context **Open Link**; Read retains single-click links.
-- Lightweight selection word counts, per-file position memory, cross-platform Reveal, and selection-aware HTML copying. See the [writing guide](docs/writing-and-shortcuts.md); code-block overflow remains a [future TODO](docs/TODO.md).
+- Lightweight selection word counts, per-file position memory, cross-platform Reveal, and selection-aware HTML copying. See the [writing guide](docs/writing-and-shortcuts.md) and [remaining TODOs](docs/TODO.md).
 
 <img width="128" height="128" alt="PonchoWriter journal icon" src="pkgbuild/ponchowriter.svg" />
 
@@ -50,7 +52,7 @@ The `F1` reference displays platform-specific key names, including Option on Mac
 - `Ctrl+S` saves. Unsaved documents use a native macOS dialog or the Linux XDG desktop portal picker.
 - `Ctrl+Shift+S` saves as.
 - `Ctrl+O` opens a Markdown file through the platform file picker.
-- `Ctrl+P` opens the system print dialog.
+- `Ctrl+P` opens print-layout options, then the system print/PDF dialog. Wide-table appendices are enabled by default; see [printing](docs/printing.md).
 - `Ctrl+N` opens a new PonchoWriter window.
 - `Ctrl+Z`, `Ctrl+Shift+Z`, and `Ctrl+Y` handle undo and redo.
 - `Super+F` toggles fullscreen on Linux; `Cmd+Ctrl+F` on macOS. `F11` is also available.

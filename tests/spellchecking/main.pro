@@ -11,6 +11,7 @@ INCLUDEPATH += ../../src
 SOURCES += \
     tst_main.cpp \
     ../../src/backend.cpp \
+    ../../src/printdocument.cpp \
     ../../src/spellingcontroller.cpp \
     ../../src/spellingprose.cpp \
     ../../src/cli.cpp \

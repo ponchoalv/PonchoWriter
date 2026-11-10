@@ -11,6 +11,7 @@ INCLUDEPATH += ../src
 SOURCES += \
     tst_ponchowriter.cpp \
     ../src/backend.cpp \
+    ../src/printdocument.cpp \
     ../src/windowmanager.cpp \
     ../src/fileopenrequests.cpp \
     ../src/systemtheme.cpp \
@@ -25,6 +26,7 @@ SOURCES += \
     ../src/mermaidrenderer.cpp
 HEADERS += \
     ../src/backend.h \
+    ../src/printdocument.h \
     ../src/windowmanager.h \
     ../src/fileopenrequests.h \
     ../src/systemtheme.h \

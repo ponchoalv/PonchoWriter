@@ -71,3 +71,4 @@ run_suite tests/spellchecking/spellchecking.pro tst_spellchecking "$BUILD_DIR/sp
 run_suite tests/spellchecking/integration.pro tst_spellingintegration "$BUILD_DIR/spellchecking-integration"
 run_suite tests/spellchecking/main.pro tst_spelling_main "$BUILD_DIR/spellchecking-main"
 run_suite tests/instancebroker/instancebroker.pro tst_instancebroker "$BUILD_DIR/instancebroker"
+run_suite tests/printing/printing.pro tst_printing "$BUILD_DIR/printing"

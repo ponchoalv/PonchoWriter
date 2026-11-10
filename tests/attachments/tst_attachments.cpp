@@ -10,6 +10,9 @@
 #include <QTextDocument>
 #include "backend.h"
 #include "attachmenthelper.h"
+#include "printdocument.h"
+#include <QTextBlock>
+#include <QTextImageFormat>
 
 class PonchoWriterTest : public QObject {
     Q_OBJECT
@@ -113,6 +116,49 @@ private slots:
         QCOMPARE(refs[3].path, QString("img/ref.png"));
         QCOMPARE(Attachments::references("![x](img/photo(1).png)")[0].path, QString("img/photo(1).png"));
         QCOMPARE(Attachments::decodedPath("img/a\\(1\\)%20b.png"), QString("img/a(1) b.png"));
+    }
+    void printingResolvesStagedRecoveredSavedAndSaveAsImagesWithoutMutation() {
+        QTemporaryDir dir, destination;
+        Backend backend;
+        QTextDocument document;
+        bind(backend, document);
+        backend.m_recoveryPath = dir.filePath("recovery.json");
+        clipboardImage();
+        const auto pasted = backend.pasteClipboardImage("img/print.png");
+        const QString markdown = pasted + " " + pasted + "\n\n![ref][image]\n\n[image]: img/print.png\n";
+        document.setPlainText(markdown); backend.setModified(true); backend.writeRecovery();
+        const auto snapshot = bytes(backend.m_recoveryPath);
+        const auto staged = backend.m_stagedAttachments;
+        const bool undo = document.isUndoAvailable();
+        const QPageLayout layout(QPageSize(QPageSize::A4), QPageLayout::Portrait, QMarginsF(15,15,15,15), QPageLayout::Millimeter);
+        auto firstImage = [](Printing::Job &job) {
+            if (!job.error.isEmpty() || job.sections.empty()) return QImage();
+            auto &doc = *job.sections.front().document;
+            for (auto block = doc.begin(); block.isValid(); block = block.next()) for (auto it = block.begin(); !it.atEnd(); ++it) {
+                auto f = it.fragment().charFormat();
+                if (f.isImageFormat()) return qvariant_cast<QImage>(doc.resource(QTextDocument::ImageResource, QUrl(f.toImageFormat().name())));
+            }
+            return QImage();
+        };
+        auto job = backend.printJob(layout);
+        QVERIFY2(job.error.isEmpty(), qPrintable(job.error)); QCOMPARE(firstImage(job).pixelColor(0,0), QColor(Qt::red));
+        QCOMPARE(document.toPlainText(), markdown); QCOMPARE(document.isUndoAvailable(), undo);
+        QCOMPARE(backend.m_stagedAttachments, staged); QVERIFY(backend.m_materializedAttachments.isEmpty());
+        QCOMPARE(bytes(backend.m_recoveryPath), snapshot); QVERIFY(!QFileInfo::exists(dir.filePath("img/print.png")));
+        Backend restored; QTextDocument restoredDocument; bind(restored, restoredDocument);
+        restored.m_recoveryPath = backend.m_recoveryPath; restored.restoreRecovery();
+        auto recovered = restored.printJob(layout); QCOMPARE(firstImage(recovered).pixelColor(0,0), QColor(Qt::red));
+        QCOMPARE(restoredDocument.toPlainText(), markdown); QCOMPARE(bytes(restored.m_recoveryPath), snapshot);
+        backend.saveAs(QUrl::fromLocalFile(dir.filePath("note.md")));
+        QImage changed(8,8,QImage::Format_RGB32); changed.fill(Qt::green); QVERIFY(changed.save(dir.filePath("img/print.png")));
+        const auto savedBefore = bytes(dir.filePath("note.md"));
+        auto saved = backend.printJob(layout); QCOMPARE(firstImage(saved).pixelColor(0,0), QColor(Qt::green));
+        QCOMPARE(bytes(dir.filePath("note.md")), savedBefore); QCOMPARE(document.toPlainText(), markdown);
+        backend.saveAs(QUrl::fromLocalFile(destination.filePath("moved.md")));
+        Backend reopened; QTextDocument reopenedDocument; bind(reopened, reopenedDocument);
+        reopened.open(QUrl::fromLocalFile(destination.filePath("moved.md")));
+        auto moved = reopened.printJob(layout); QCOMPARE(firstImage(moved).pixelColor(0,0), QColor(Qt::green));
+        QCOMPARE(reopenedDocument.toPlainText(), markdown);
     }
     void copyImageKeepsOriginalPixelsAndNeverChangesTheDocument() {
         QTemporaryDir dir;

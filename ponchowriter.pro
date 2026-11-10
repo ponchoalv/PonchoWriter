@@ -26,6 +26,7 @@ macx {
 HEADERS += \
     src/profile.h \
     src/backend.h \
+    src/printdocument.h \
     src/windowmanager.h \
     src/instancebroker.h \
     src/fileopenrequests.h \
@@ -46,6 +47,7 @@ SOURCES += \
     src/instancebroker.cpp \
     src/fileopenrequests.cpp \
     src/backend.cpp \
+    src/printdocument.cpp \
     src/spellingcontroller.cpp \
     src/spellingprose.cpp \
     src/cli.cpp \

@@ -1,6 +1,13 @@
 #include "backend.h"
 #include "spellingcontroller.h"
 #include "attachmenthelper.h"
+#include "printdocument.h"
+#include <QCheckBox>
+#include <QPushButton>
+#include <QDialogButtonBox>
+#include <QLabel>
+#include <QVBoxLayout>
+#include <QMessageBox>
 
 #include <QClipboard>
 #include <QCryptographicHash>
@@ -502,28 +509,52 @@ QFont Backend::printFont(const QFont &editorFont, qreal screenDpi) {
     return font;
 }
 
+Printing::Job Backend::printJob(const QPageLayout &layout, bool appendices) const {
+    if (!m_document) { Printing::Job job; job.error = QStringLiteral("There is no document to print."); return job; }
+    Printing::Options options;
+    options.pageLayout = layout;
+    options.font = QFont(m_editorFont, 11); // Physical print size, independent of editor zoom/theme.
+    options.wideTablesToAppendix = appendices;
+    return Printing::build(currentDocumentText(), options, [this](const QString &path) { return resolveImageUrl(path); });
+}
+
 void Backend::printDocument() {
-    if (!m_document) {
-        setStatus(QStringLiteral("There is no document to print."));
-        return;
-    }
+    if (!m_document) { setStatus(QStringLiteral("There is no document to print.")); return; }
+    QDialog settings;
+    settings.setWindowTitle(QStringLiteral("Print layout"));
+    QVBoxLayout layout(&settings);
+    QCheckBox appendices(QStringLiteral("Move wide tables to appendix"));
+    appendices.setChecked(QSettings().value(QStringLiteral("print/wideTablesToAppendix"), true).toBool());
+    QLabel explanation(QStringLiteral("Long, narrow tables stay inline. Wide tables move to landscape\nappendices; extra-wide tables repeat column 1 across column groups."));
+    QDialogButtonBox buttons(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
+    buttons.button(QDialogButtonBox::Ok)->setText(QStringLiteral("Continue…"));
+    layout.addWidget(&appendices); layout.addWidget(&explanation); layout.addWidget(&buttons);
+    connect(&buttons, &QDialogButtonBox::accepted, &settings, &QDialog::accept);
+    connect(&buttons, &QDialogButtonBox::rejected, &settings, &QDialog::reject);
+    settings.winId();
+    if (settings.windowHandle() && m_parentWindow) settings.windowHandle()->setTransientParent(m_parentWindow);
+    if (settings.exec() != QDialog::Accepted) return;
 
     QPrinter printer(QPrinter::HighResolution);
+    printer.setDocName(fileName());
+    printer.setPageMargins(QMarginsF(15, 15, 15, 15), QPageLayout::Millimeter);
     QPrintDialog dialog(&printer);
     dialog.setWindowTitle(QStringLiteral("Print %1").arg(fileName()));
+    dialog.setMinMax(1, 2000);
+    dialog.setOption(QAbstractPrintDialog::PrintSelection, false);
+    dialog.setOption(QAbstractPrintDialog::PrintCurrentPage, false);
     dialog.winId();
-    if (dialog.windowHandle() && m_parentWindow)
-        dialog.windowHandle()->setTransientParent(m_parentWindow);
-
-    if (dialog.exec() == QDialog::Accepted) {
-        QTextDocument rendered;
-        const QScreen *screen = m_parentWindow ? m_parentWindow->screen()
-                                               : QGuiApplication::primaryScreen();
-        rendered.setDefaultFont(printFont(m_document->defaultFont(),
-                                          screen ? screen->logicalDotsPerInchY() : 0.0));
-        rendered.setMarkdown(currentDocumentText());
-        rendered.print(&printer);
-    }
+    if (dialog.windowHandle() && m_parentWindow) dialog.windowHandle()->setTransientParent(m_parentWindow);
+    if (dialog.exec() != QDialog::Accepted) return;
+    auto job = printJob(printer.pageLayout(), appendices.isChecked());
+    if (!job.error.isEmpty()) { setStatus(job.error); return; }
+    if (!job.warnings.isEmpty() && QMessageBox::warning(nullptr, QStringLiteral("Print images"),
+        job.warnings.join(QLatin1Char('\n')) + QStringLiteral("\nPrint with explicit placeholders?"),
+        QMessageBox::Ok | QMessageBox::Cancel, QMessageBox::Cancel) != QMessageBox::Ok) return;
+    QSettings().setValue(QStringLiteral("print/wideTablesToAppendix"), appendices.isChecked());
+    QString failure;
+    if (!job.print(printer, &failure)) setStatus(failure);
+    else setStatus(QStringLiteral("Print job sent."));
 }
 
 void Backend::newWindow() { emit newWindowRequested(); }

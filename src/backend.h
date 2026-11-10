@@ -22,6 +22,8 @@ class QFont;
 class QTextDocument;
 class QWindow;
 class QLockFile;
+class QPageLayout;
+namespace Printing { struct Job; }
 
 class Backend : public QObject {
     Q_OBJECT
@@ -98,6 +100,7 @@ public:
     Q_INVOKABLE void resetTextSize();
     Q_INVOKABLE void holdAutoSave(bool held);
     Q_INVOKABLE void printDocument();
+    Printing::Job printJob(const QPageLayout &layout, bool appendices = true) const;
     Q_INVOKABLE void copyAsHtml(int start = -1, int end = -1, QObject *renderedDocument = nullptr, bool plainMarkup = true);
     Q_INVOKABLE void newWindow();
     Q_INVOKABLE void finishClosing();

@@ -8,6 +8,10 @@ Opening a file already owned by this app activates its existing window without r
 
 On macOS, prefer `open -a "/path/to/ponchowriter.app" "/path/to/note.md"` rather than `-n` or `--args`. Windows/Linux executable launches forward file requests through the same local Qt broker. Quit older, un-routed copies before using this build. See the [cross-platform opening guide](opening-files-and-windows.md) for commands, failure/recovery behavior and test limits.
 
+## Printing and PDF
+
+**Cmd+P / Ctrl+P** opens **Print layout**, then the system print/PDF dialog. The default **Move wide tables to appendix** keeps long narrow tables inline with repeating headers, moves too-wide tables into landscape appendices and repeats column 1 across extra-wide column groups. Original staged/local images print without saving first. This uses a separate canonical Markdown snapshot, not the viewport or virtualized grid. Source/undo are unchanged; missing images require explicit placeholder confirmation. See [printing, limits and verification](printing.md). Native drivers/physical printers and Windows/Linux remain unverified; QtPDF output was checked independently.
+
 ## macOS key names
 
 Qt normally maps a source-code `Ctrl` modifier to **Command** on macOS and `Meta` to the physical **Control** key. The F1 reference now formats labels for the running platform. It also calls Alt **Option** on a Mac.
@@ -20,7 +24,7 @@ Qt normally maps a source-code `Ctrl` modifier to **Command** on macOS and `Meta
 | Save | Cmd+S | Ctrl+S |
 | Save As | Cmd+Shift+S | Ctrl+Shift+S |
 | New window | Cmd+N | Ctrl+N |
-| Print rendered document | Cmd+P | Ctrl+P |
+| Print/PDF snapshot (layout options, then system dialog) | Cmd+P | Ctrl+P |
 | Undo | Cmd+Z | Ctrl+Z |
 | Redo | Cmd+Shift+Z or Cmd+Y | Ctrl+Shift+Z or Ctrl+Y |
 | Fullscreen | Cmd+Ctrl+F or F11 | Super+F or F11 |

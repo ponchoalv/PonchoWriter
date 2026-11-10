@@ -8,6 +8,8 @@ Opening a file already owned by this app activates its existing window without r
 
 On macOS, prefer `open -a "/path/to/ponchowriter.app" "/path/to/note.md"` rather than `-n` or `--args`. Windows/Linux executable launches forward file requests through the same local Qt broker. Quit older, un-routed copies before using this build. See the [cross-platform opening guide](opening-files-and-windows.md) for commands, failure/recovery behavior and test limits.
 
+An empty Edit document shows the decorative **# Start writing** hint even with the caret focused. Typing or IME preedit hides it; clearing/cancelling restores it. Read mode hides it. It is never inserted into Markdown or undo history.
+
 ## Printing and PDF
 
 **Cmd+P / Ctrl+P** opens **Print layout**, then the system print/PDF dialog. The default **Move wide tables to appendix** keeps long narrow tables inline with repeating headers, moves too-wide tables into landscape appendices and repeats column 1 across extra-wide column groups. Original staged/local images print without saving first. This uses a separate canonical Markdown snapshot, not the viewport or virtualized grid. Source/undo are unchanged; missing images require explicit placeholder confirmation. See [printing, limits and verification](printing.md). Native drivers/physical printers and Windows/Linux remain unverified; QtPDF output was checked independently.

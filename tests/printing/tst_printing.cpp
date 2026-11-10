@@ -1,6 +1,7 @@
 #include <QtTest>
 #include "printdocument.h"
 #include <QAbstractTextDocumentLayout>
+#include <QApplication>
 #include <QPainter>
 #include <QPageRanges>
 #include <QPrinter>
@@ -48,6 +49,54 @@ int redPixels(const QImage &image) {
 class PrintingTest : public QObject {
     Q_OBJECT
 private slots:
+    void geometryUsesLayoutUnitsRatherThanPlatformFormatUnits_data() {
+        QTest::addColumn<QMarginsF>("margins");
+        QTest::newRow("default") << QMarginsF(15, 15, 15, 15);
+        QTest::newRow("zero") << QMarginsF(0, 0, 0, 0);
+        QTest::newRow("fractional-asymmetric") << QMarginsF(12.25, 16.5, 21.75, 11.25);
+    }
+    void geometryUsesLayoutUnitsRatherThanPlatformFormatUnits() {
+        QFETCH(QMarginsF, margins);
+        QTemporaryDir dir; QVERIFY(dir.isValid());
+        const QString path = dir.filePath(QStringLiteral("original.png"));
+        QImage original(1600, 800, QImage::Format_RGB32); original.fill(Qt::red); QVERIFY(original.save(path));
+        auto o = options(); o.pageLayout.setMargins(margins);
+        const QString source = QStringLiteral("![body](image.png)\n\n| Image | Text |\n| --- | --- |\n| ![cell](image.png) | **Bold** and `code` |\n\n") + table(10, 28);
+        auto job = Printing::build(source, o, [&](const QString &) { return QUrl::fromLocalFile(path); });
+        QVERIFY2(job.error.isEmpty(), qPrintable(job.error)); QVERIFY(job.sections.size() > 1);
+        const QImage baseline(1, 1, QImage::Format_ARGB32);
+        int imageCount = 0;
+        for (const auto &section : job.sections) {
+            auto &doc = *section.document;
+            const qreal scale = qreal(section.metrics->logicalDpiY()) / baseline.logicalDpiY();
+            for (auto *t : tables(doc)) {
+                const auto bounds = doc.documentLayout()->frameBoundingRect(t);
+                QVERIFY(bounds.left() >= -2); QVERIFY(bounds.right() <= doc.pageSize().width() + 2);
+                QVERIFY(qAbs(t->format().width().rawValue() * scale - (doc.pageSize().width() - 10)) < 1);
+            }
+            for (auto block = doc.begin(); block.isValid(); block = block.next()) for (auto it = block.begin(); !it.atEnd(); ++it) {
+                const auto fragment = it.fragment();
+                if (!fragment.charFormat().isImageFormat()) continue;
+                ++imageCount;
+                const auto format = fragment.charFormat().toImageFormat();
+                QCOMPARE(qvariant_cast<QImage>(doc.resource(QTextDocument::ImageResource, QUrl(format.name()))).size(), original.size());
+                QTextCursor cursor(&doc); cursor.setPosition(fragment.position());
+                qreal available = doc.pageSize().width();
+                if (auto *t = cursor.currentTable()) {
+                    const auto cell = t->cellAt(cursor);
+                    const auto columns = t->format().columnWidthConstraints(); available = 0;
+                    for (int c = cell.column(); c < cell.column() + cell.columnSpan(); ++c) available += columns[c].rawValue() * scale;
+                    available -= 10;
+                }
+                const int position = fragment.position() - block.position();
+                const auto line = block.layout()->lineForTextPosition(position); QVERIFY(line.isValid());
+                const qreal advance = qAbs(line.cursorToX(position + 1) - line.cursorToX(position));
+                QVERIFY(advance > 20); QVERIFY(advance <= available + 2);
+                QVERIFY(qAbs(advance - format.width() * scale) < 2);
+            }
+        }
+        QCOMPARE(imageCount, 2);
+    }
     void originalsResolveWithoutSavingAndMissingResourcesAreExplicit() {
         QTemporaryDir dir; QVERIFY(dir.isValid());
         const QString path = dir.filePath(QStringLiteral("staged.png"));
@@ -65,7 +114,9 @@ private slots:
             auto f = it.fragment().charFormat(); if (!f.isImageFormat()) continue;
             auto image = f.toImageFormat(); ++images;
             QCOMPARE(qvariant_cast<QImage>(doc.resource(QTextDocument::ImageResource, QUrl(image.name()))).size(), original.size());
-            QVERIFY(image.width() <= doc.pageSize().width());
+            const QImage baseline(1, 1, QImage::Format_ARGB32);
+            const qreal scale = qreal(doc.documentLayout()->paintDevice()->logicalDpiY()) / baseline.logicalDpiY();
+            QVERIFY(image.width() * scale <= doc.pageSize().width() + 1);
             QCOMPARE(image.width() / image.height(), 2.0);
         }
         QCOMPARE(images, 1); QVERIFY(redPixels(raster(job.sections.front())) > 1000);
@@ -261,5 +312,11 @@ private slots:
         QVERIFY(job.sections.front().document->toPlainText().contains(QStringLiteral("[image unavailable]")));
     }
 };
-QTEST_MAIN(PrintingTest)
+// QTEST_MAIN forces AA_Use96Dpi, masking the real Cocoa 72-vs-96 DPI bug.
+// Keep the platform's actual defaults, just like the production application.
+int main(int argc, char **argv) {
+    QApplication app(argc, argv);
+    PrintingTest test;
+    return QTest::qExec(&test, argc, argv);
+}
 #include "tst_printing.moc"

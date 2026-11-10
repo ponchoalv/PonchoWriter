@@ -19,6 +19,10 @@ The appendix preference is remembered locally as `print/wideTablesToAppendix`. P
 - Inline and reference Markdown images are supported. Original decoded pixels are registered in the print document; only their **physical display dimensions** are reduced to fit the page/cell. Aspect ratio is preserved and small images are not enlarged.
 - Local-only loading uses the existing decoder and file/path protections. No HTTP, data-URL or default/global Qt resource fallback is used. Images in table appendices are registered in each output section too.
 
+## Mermaid
+
+Mermaid fences currently print their **code-block source**, not rendered diagrams, even if Edit/Read shows a rendered image and `mmdc` is installed. Printing does not consult the preview renderer/cache or start a renderer. To print a diagram as artwork today, export it to a local image and reference that image with ordinary Markdown.
+
 ## Tables: width, not row count
 
 **Long but narrow:** remains inline and continues across pages, with the first row repeated as the header. Cells wrap, borders remain visible and headers have a light-gray background. Tall rows can span pages rather than discarding their remaining content.
@@ -30,6 +34,8 @@ The appendix preference is remembered locally as `print/wideTablesToAppendix`. P
 Sparse or ragged Markdown rows that Qt imports as merged native cells are eligible for appendices too. Column groups expand those cells into logical grid positions: rich text is retained once at the cell's anchor, with covered positions left empty. This avoids skipping the appendix or duplicating a merged value across columns; column 1 still repeats for context.
 
 Width classification uses content/font measurements and bounded readable column estimates, not an arbitrary 500-row cutoff. Body text uses the editor's font family at **11 pt**; table text uses **9.5 pt**. Editor zoom, dark theme, horizontal scroll offsets and virtualized grid state do not determine print geometry. Extremely long cell text wraps rather than causing a progressively tiny font.
+
+Fixed table/image format lengths are converted to Qt's platform units before layout. This avoids a Cocoa DPI mismatch that previously expanded table widths by about one third and incorrectly rejected appendix tables despite passing offscreen tests. Point font sizes and physical page coordinates are not scaled twice.
 
 Disabling appendices keeps ordinary wide tables inline with wrapping. It cannot make an arbitrarily dense table printable: if actual native table bounds exceed the selected page, preparation fails explicitly. Enable appendices or select a wider page instead of accepting clipped columns.
 
@@ -62,10 +68,11 @@ These are not a whole-process memory cap. Native layout, source snapshots, trans
 
 On macOS arm64 / Qt 6.12.0, 2026-11-10:
 
-- **381 checks passed, zero failures, four normal-run skips**, across thirteen suites. Printing contributes ten checks, including setup/cleanup; the attachment suite exercises actual staged/recovered/saved/Save As resolution without source or recovery-file mutation, plus the visible failure dialog.
+- **384 checks passed, zero failures, four normal-run skips**, across thirteen suites. Printing contributes thirteen checks, including setup/cleanup; the attachment suite exercises actual staged/recovered/saved/Save As resolution without source or recovery-file mutation, plus the visible failure dialog.
 - Printing tests cover original pixels, blocked fallback resources, native table widths, rendered continuation headers, oversized rows, appendix images, all source cells across column bands, sparse/merged native cells without duplicate values, option-off behavior, preallocation rejection, PDF page sizes, disjoint/global ranges and software copies/collation.
 - Independent Apple PDFKit reading/rasterization verified a generated synthetic PDF: **three pages (one portrait/two landscape), a visible red image and all 112 synthetic table cells extractable**.
-- Existing native UI regressions passed **eleven checks** (nine bodies), and threaded rendering passed **six checks / 100 mode switches**. The ten-check print suite and three-check visible-error fixture also passed under Cocoa. The macOS application rebuilt as 0.7.2.
+- Existing native UI regressions passed **eleven checks** (nine bodies), and threaded rendering passed **six checks / 100 mode switches**. The current thirteen-check print suite passed under Cocoa with actual platform DPI and offscreen with a 144-DPI baseline; targeted geometry checks also passed at 72 DPI. The three-check visible-error fixture passed under Cocoa at the earlier checkpoint. The macOS application rebuilt as 0.7.2.
+- The print test launcher deliberately does **not** use `QTEST_MAIN`: that macro forces `AA_Use96Dpi`, which masked the production Cocoa 72-vs-96 DPI mismatch in the earlier native test run. Three synthetic margin cases now check actual table bounds and native image advances. All three fail against the old product code under Cocoa and pass after the fix. Table fit tolerances were not relaxed.
 - An opt-in native-print-to-file attempt found **no native printer engine**: Qt fell back to PDF and that native-driver check explicitly skipped. Physical printers, duplex and actual native-driver mixed-orientation behavior remain **unverified**. Windows/Linux have not been compiled or runtime-tested here.
 
 To rerun the print suite after `bin/test`, use the executable generated in `build-tests/printing` (`tst_printing.app/Contents/MacOS/tst_printing` on macOS). `PONCHOWRITER_PRINT_TEST_PDF=/absolute/new/path.pdf` optionally retains its generated synthetic PDF; the path must not already exist. On Cocoa, `PONCHOWRITER_NATIVE_PRINT_TEST=1` additionally attempts native print-to-file, explicitly skipping if Qt cannot supply that engine. It never addresses a physical printer or opens a system print dialog.

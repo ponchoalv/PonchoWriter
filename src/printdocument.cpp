@@ -104,10 +104,22 @@ QFont tableFont(const QFont &body) {
     return font;
 }
 
+// QTextDocumentLayout scales format lengths by device DPI / Qt's default
+// DPI. A default image exposes that baseline through public API (including
+// AA_Use96Dpi). Convert only format geometry, not layout coordinates or points.
+qreal formatUnits(const QTextDocument &doc) {
+    const QImage baseline(1, 1, QImage::Format_ARGB32);
+    const auto *device = doc.documentLayout()->paintDevice();
+    return device ? qreal(baseline.logicalDpiY()) / device->logicalDpiY() : 1;
+}
+
+qreal tableContentWidth(qreal available) {
+    return qMax(qreal(1), available - 2 * (Padding + 1));
+}
+
 QVector<qreal> widths(const Table &table, const QVector<int> &columns, qreal available) {
-    // Qt's collapsed table frame includes the outside cell padding/borders in
-    // addition to its column constraints. Keep those edges inside the page.
-    available = qMax(qreal(1), available - 2 * (Padding + 1));
+    // Reserve collapsed outside padding/borders consistently with band packing.
+    available = tableContentWidth(available);
     QVector<qreal> result;
     qreal minimum = 0, preferred = 0;
     for (int c : columns) { result.append(table.minimum[c]); minimum += table.minimum[c]; preferred += table.preferred[c]; }
@@ -120,22 +132,23 @@ QVector<qreal> widths(const Table &table, const QVector<int> &columns, qreal ava
 }
 
 void formatTable(QTextTable *table, const QVector<qreal> &columnWidths, const QFont &body) {
+    const qreal units = formatUnits(*table->document());
     auto format = table->format();
     format.setWidth(QTextLength(QTextLength::FixedLength,
-                              std::accumulate(columnWidths.begin(), columnWidths.end(), qreal(0))));
+                              units * std::accumulate(columnWidths.begin(), columnWidths.end(), qreal(0))));
     QList<QTextLength> constraints;
-    for (qreal w : columnWidths) constraints.append(QTextLength(QTextLength::FixedLength, w));
+    for (qreal w : columnWidths) constraints.append(QTextLength(QTextLength::FixedLength, w * units));
     format.setColumnWidthConstraints(constraints);
     format.setHeaderRowCount(1);
     format.setPadding(0);
-    format.setCellPadding(Padding);
+    format.setCellPadding(Padding * units);
     format.setCellSpacing(0);
     format.setBorderCollapse(true);
-    format.setBorder(0.5);
+    format.setBorder(0.5 * units);
     format.setBorderBrush(QColor(120, 120, 120));
     format.setBorderStyle(QTextFrameFormat::BorderStyle_Solid);
     format.setLeftMargin(0); format.setRightMargin(0);
-    format.setTopMargin(8); format.setBottomMargin(8);
+    format.setTopMargin(8 * units); format.setBottomMargin(8 * units);
     table->setFormat(format);
     const QFont font = tableFont(body);
     for (int r = 0; r < table->rows(); ++r) for (int c = 0; c < table->columns(); ++c) {
@@ -143,7 +156,7 @@ void formatTable(QTextTable *table, const QVector<qreal> &columnWidths, const QF
         if (cell.row() != r || cell.column() != c) continue;
         auto cellFormat = cell.format().toTableCellFormat();
         cellFormat.setBackground(r == 0 ? QColor(235, 235, 235) : QColor(Qt::white));
-        cellFormat.setBorder(0.5); cellFormat.setBorderBrush(QColor(160, 160, 160));
+        cellFormat.setBorder(0.5 * units); cellFormat.setBorderBrush(QColor(160, 160, 160));
         cellFormat.setBorderStyle(QTextFrameFormat::BorderStyle_Solid);
         cell.setFormat(cellFormat);
         QTextCursor cursor = cell.firstCursorPosition();
@@ -164,6 +177,7 @@ void formatTable(QTextTable *table, const QVector<qreal> &columnWidths, const QF
 }
 
 void constrainImages(QTextDocument &doc, const QMap<QString, QImage> &resources, qreal width, qreal height) {
+    const qreal units = formatUnits(doc);
     struct Image { int start, length; QTextImageFormat format; };
     QList<Image> images;
     for (auto block = doc.begin(); block.isValid(); block = block.next()) for (auto it = block.begin(); !it.atEnd(); ++it) {
@@ -181,7 +195,7 @@ void constrainImages(QTextDocument &doc, const QMap<QString, QImage> &resources,
             const auto columns = table->format().columnWidthConstraints();
             available = 0;
             for (int c = cell.column(); c < cell.column() + cell.columnSpan() && c < columns.size(); ++c)
-                available += columns[c].rawValue();
+                available += columns[c].rawValue() / units;
             available = qMax(qreal(1), available - 2 * Padding - 2);
         }
         QSizeF size = source.size();
@@ -192,7 +206,7 @@ void constrainImages(QTextDocument &doc, const QMap<QString, QImage> &resources,
         qreal naturalWidth = format.width() > 0 ? format.width() : source.width();
         if (format.height() > 0 && format.width() <= 0) naturalWidth = format.height() * source.width() / source.height();
         if (size.width() > naturalWidth) size *= naturalWidth / size.width();
-        format.setWidth(size.width()); format.setHeight(size.height());
+        format.setWidth(size.width() * units); format.setHeight(size.height() * units);
         cursor.setPosition(image.start + image.length, QTextCursor::KeepAnchor);
         cursor.setCharFormat(format);
     }
@@ -293,7 +307,7 @@ Job build(const QString &markdown, const Options &options, const ImageResolver &
             table.preferred[c] = qMax(table.minimum[c], qMax(table.preferred[c], qMin(qreal(200), metrics.horizontalAdvance(text.left(256)) + 2 * Padding + 2)));
         }
         if (options.wideTablesToAppendix
-            && std::accumulate(table.minimum.begin(), table.minimum.end(), qreal(0)) > contentSize(options.pageLayout).width())
+            && std::accumulate(table.minimum.begin(), table.minimum.end(), qreal(0)) > tableContentWidth(contentSize(options.pageLayout).width()))
             table.appendix = letters(int(std::count_if(tables.begin(), tables.end(), [](const Table &t) { return !t.appendix.isEmpty(); })));
         tables.push_back(std::move(table));
     }
@@ -309,7 +323,7 @@ Job build(const QString &markdown, const Options &options, const ImageResolver &
             cursor.setPosition(it->original->firstPosition() - 1);
             cursor.setPosition(it->original->lastPosition() + 1, QTextCursor::KeepAnchor);
             cursor.removeSelectedText();
-            QTextBlockFormat reference; reference.setTopMargin(8); reference.setBottomMargin(8);
+            QTextBlockFormat reference; reference.setTopMargin(8 * formatUnits(doc)); reference.setBottomMargin(8 * formatUnits(doc));
             cursor.setBlockFormat(reference);
             QTextCharFormat text; text.setFont(font); text.setForeground(Qt::black);
             cursor.insertText(QStringLiteral("See Appendix %1 — Table %2.").arg(it->appendix).arg(it->number), text);
@@ -329,7 +343,7 @@ Job build(const QString &markdown, const Options &options, const ImageResolver &
         do {
             QVector<int> columns{0}; qreal used = table.minimum[0];
             const int first = next;
-            while (next < table.columns && (columns.size() == 1 || used + table.minimum[next] <= available)) {
+            while (next < table.columns && (columns.size() == 1 || used + table.minimum[next] <= tableContentWidth(available))) {
                 used += table.minimum[next]; columns.append(next++);
             }
             outputCells += qint64(table.rows) * columns.size();

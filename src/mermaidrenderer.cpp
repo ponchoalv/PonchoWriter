@@ -12,6 +12,55 @@
 #include <signal.h>
 #include <unistd.h>
 #endif
+#ifdef Q_OS_WIN
+#include <qt_windows.h>
+#include <QJsonDocument>
+#include <QJsonObject>
+
+// Assign atomically at CreateProcess time (Windows 10+): Node must not get
+// a chance to spawn Chromium before the whole tree belongs to the job.
+struct MermaidRenderer::WindowsJob {
+    HANDLE handle = nullptr;
+    STARTUPINFOEXW startup{};
+    std::unique_ptr<unsigned char[]> storage;
+    ~WindowsJob() { close(); }
+    void close() {
+        if (startup.lpAttributeList) DeleteProcThreadAttributeList(startup.lpAttributeList);
+        startup = {};
+        storage.reset();
+        if (handle) CloseHandle(handle); // KILL_ON_JOB_CLOSE includes descendants.
+        handle = nullptr;
+    }
+    bool create() {
+        close();
+#ifdef PROC_THREAD_ATTRIBUTE_JOB_LIST
+        handle = CreateJobObjectW(nullptr, nullptr);
+        if (!handle) return false;
+        JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits{};
+        limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        if (!SetInformationJobObject(handle, JobObjectExtendedLimitInformation, &limits, sizeof(limits))) {
+            close();
+            return false;
+        }
+        SIZE_T size = 0;
+        InitializeProcThreadAttributeList(nullptr, 1, 0, &size);
+        if (!size) { close(); return false; }
+        storage = std::make_unique<unsigned char[]>(size);
+        auto *attributes = reinterpret_cast<LPPROC_THREAD_ATTRIBUTE_LIST>(storage.get());
+        if (!InitializeProcThreadAttributeList(attributes, 1, 0, &size)) {
+            close();
+            return false;
+        }
+        startup.lpAttributeList = attributes;
+        if (UpdateProcThreadAttribute(attributes, 0, PROC_THREAD_ATTRIBUTE_JOB_LIST,
+                                      &handle, sizeof(handle), nullptr, nullptr))
+            return true;
+#endif
+        close();
+        return false; // Old SDK/OS or incompatible parent job: never run uncontained.
+    }
+};
+#endif
 
 QStringList MermaidRenderer::defaultSearchDirectories() {
 #ifdef Q_OS_MACOS
@@ -30,6 +79,39 @@ MermaidRenderer::MermaidRenderer(QObject *parent, const QProcessEnvironment &env
     if (!inherited.isEmpty()) m_executable = QStandardPaths::findExecutable(QStringLiteral("mmdc"), inherited);
     if (m_executable.isEmpty() && !fallbackDirectories.isEmpty())
         m_executable = QStandardPaths::findExecutable(QStringLiteral("mmdc"), fallbackDirectories);
+#ifdef Q_OS_WIN
+    // npm's .cmd shim is a shell script, not a native executable. Invoke its
+    // standard adjacent JS entry with Node directly, never through cmd.exe.
+    m_executable.clear();
+    const QStringList searchDirectories = inherited + fallbackDirectories;
+    for (const auto &directory : searchDirectories) {
+        if (directory.isEmpty()) continue;
+        m_executable = QStandardPaths::findExecutable(QStringLiteral("mmdc.exe"), {directory});
+        if (m_executable.isEmpty())
+            m_executable = QStandardPaths::findExecutable(QStringLiteral("mmdc.cmd"), {directory});
+        if (!m_executable.isEmpty()) break;
+    }
+    if (m_executable.endsWith(QStringLiteral(".cmd"), Qt::CaseInsensitive)) {
+        const QDir bin(QFileInfo(m_executable).absolutePath());
+        const QDir package(bin.filePath(QStringLiteral("node_modules/@mermaid-js/mermaid-cli")));
+        QFile metadata(package.filePath(QStringLiteral("package.json")));
+        QJsonObject info;
+        if (metadata.open(QIODevice::ReadOnly) && metadata.size() <= 65536)
+            info = QJsonDocument::fromJson(metadata.readAll()).object();
+        const QString entry = package.filePath(QStringLiteral("src/cli.js"));
+        const QString mapping = info.value(QStringLiteral("bin")).toObject().value(QStringLiteral("mmdc")).toString();
+        const QString node = QStandardPaths::findExecutable(QStringLiteral("node.exe"),
+                                                           QStringList{bin.absolutePath()} + searchDirectories);
+        if (info.value(QStringLiteral("name")).toString() == QStringLiteral("@mermaid-js/mermaid-cli")
+            && (mapping == QStringLiteral("./src/cli.js") || mapping == QStringLiteral("src/cli.js"))
+            && !node.isEmpty() && QFileInfo(entry).isFile()) {
+            m_executable = node;
+            m_argumentPrefix = {entry};
+        } else {
+            m_executable.clear(); // Unknown shim layout/missing Node: preserve source.
+        }
+    }
+#endif
     auto child = environment;
     QStringList paths;
     if (!m_executable.isEmpty()) paths.append(QFileInfo(m_executable).absolutePath());
@@ -41,8 +123,16 @@ MermaidRenderer::MermaidRenderer(QObject *parent, const QProcessEnvironment &env
 #ifdef Q_OS_UNIX
     // mmdc launches Chromium children: killing only Node leaks browsers.
     m_process.setChildProcessModifier([] { ::setsid(); });
+#elif defined(Q_OS_WIN)
+    m_windowsJob = std::make_unique<WindowsJob>();
+    m_process.setCreateProcessArgumentsModifier([this](QProcess::CreateProcessArguments *args) {
+        auto &startup = m_windowsJob->startup;
+        startup.StartupInfo = *args->startupInfo; // Preserve Qt's redirected handles.
+        startup.StartupInfo.cb = sizeof(STARTUPINFOEXW);
+        args->startupInfo = &startup.StartupInfo;
+        args->flags |= EXTENDED_STARTUPINFO_PRESENT | CREATE_NO_WINDOW;
+    });
 #else
-    // Keep source fallback until process-tree cancellation is implemented.
     m_executable.clear();
 #endif
     m_timeout.setSingleShot(true);
@@ -69,6 +159,9 @@ MermaidRenderer::~MermaidRenderer() {
     m_process.waitForFinished(1000);
 }
 void MermaidRenderer::stopProcess() {
+#ifdef Q_OS_WIN
+    m_windowsJob->close();
+#endif
 #ifdef Q_OS_UNIX
     const qint64 pid = m_process.processId();
     if (pid > 0)
@@ -150,22 +243,33 @@ void MermaidRenderer::startNext() {
     input.write(m_current.diagram.toUtf8()); input.close();
     config.write("{\"securityLevel\":\"strict\",\"htmlLabels\":false,\"maxTextSize\":32000,\"flowchart\":{\"htmlLabels\":false}}");
     config.close();
+#ifdef Q_OS_WIN
+    if (!m_windowsJob->create()) {
+        finish(false);
+        return;
+    }
+#endif
     m_process.setProgram(m_executable);
-    m_process.setArguments({QStringLiteral("-i"), input.fileName(),
+    m_process.setArguments(m_argumentPrefix + QStringList{QStringLiteral("-i"), input.fileName(),
         QStringLiteral("-o"), m_directory->filePath(QStringLiteral("output.png")),
         QStringLiteral("-c"), config.fileName(),
         QStringLiteral("-t"), m_current.dark ? QStringLiteral("dark") : QStringLiteral("default"),
         // Do not pass the legacy -w/--width option: Mermaid CLI 12 removed
         // it. Qt bounds/scales the decoded result to m_current.width below.
         QStringLiteral("-b"), QStringLiteral("transparent")});
-    m_process.start();
+    // Windows start/started (and failure) can run synchronously.
     m_timeout.start();
+    m_process.start();
 }
 void MermaidRenderer::finish(bool success) {
     if (!m_running)
         return;
     m_running = false;
     m_timeout.stop();
+#ifdef Q_OS_WIN
+    // Also reap browser descendants after success or a crashed Node parent.
+    m_windowsJob->close();
+#endif
     QImage image;
     if (success && m_directory)
         image = PreviewBlocks::loadImage(QUrl::fromLocalFile(m_directory->filePath(QStringLiteral("output.png"))), m_current.width);

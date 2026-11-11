@@ -32,6 +32,11 @@ private:
     void startNext();
     void finish(bool success);
     QString m_executable;
+    QStringList m_argumentPrefix;
+#ifdef Q_OS_WIN
+    struct WindowsJob;
+    std::unique_ptr<WindowsJob> m_windowsJob;
+#endif
     QProcess m_process;
     QTimer m_timeout;
     QQueue<Job> m_queue;

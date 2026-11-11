@@ -183,7 +183,7 @@ command -v mmdc
 
 Launching from Finder may give a different PATH than your shell. Restart the app after changing renderer availability. PonchoWriter does **not** install or download the renderer. Mermaid CLI normally needs its own Node/Puppeteer/Chromium setup: no embedded WebEngine does not mean no external browser runtime.
 
-Rendering is currently enabled only on macOS/Linux; Windows keeps Mermaid source. Document-provided configuration, HTML labels, click actions, styling directives, encoded escapes and remote-resource syntax are rejected by the constrained renderer. This conservative syntax filter is not an OS/browser sandbox; do not treat an external renderer as a general untrusted-code execution boundary. Missing CLI, invalid/incomplete/unsupported syntax and render failures leave source usable. There is no drag-node editor, whiteboard or arbitrary Mermaid graphical round-trip support.
+Rendering uses an external CLI on macOS/Linux and Windows. Windows resolves standard npm installs to direct Node invocation and contains the process tree in a kill-on-close Job Object; native Windows validation is pending (see [setup/checklist](windows-build.md)). Missing tools or failed containment keep Mermaid source. Document-provided configuration, HTML labels, click actions, styling directives, encoded escapes and remote-resource syntax are rejected by the constrained renderer. This conservative syntax filter is not an OS/browser sandbox; do not treat an external renderer as a general untrusted-code execution boundary. Missing CLI, invalid/incomplete/unsupported syntax and render failures leave source usable. There is no drag-node editor, whiteboard or arbitrary Mermaid graphical round-trip support.
 
 ## Build on macOS
 

@@ -30,7 +30,7 @@ The current name is **PonchoWriter**, maintained by Alfonso Alvarez. Use `poncho
 - Install **CMake 3.24+ before the first build** for the syntax-highlighting and spelling bootstrap, plus a matching compiler/build tool.
 - Requires **Qt 6.7 or newer**, a matching desktop C++17 compiler, and Qt Core, GUI, **Network**, QML/Quick, Quick Controls, Quick Dialogs, Widgets, PrintSupport and Concurrent. Tests require Qt Test. These normally come from Qt Base and Qt Declarative plus their development tools/runtime modules.
 - **QtDBus and XDG portal integration are Linux-only** in the portability changes accompanying this guide. Windows/macOS do not need QtDBus. If your checkout still unconditionally requests `dbus` or includes `QDBus` on those systems, obtain the updated feature branch before building; do not work around it by installing Linux integration on Windows/macOS.
-- **No Qt WebEngine dependency.** Mermaid rendering is optional, external and Unix-only; see below.
+- **No Qt WebEngine dependency.** Mermaid rendering is optional and external; Windows uses direct Node invocation with Job Object process-tree cleanup (native validation pending). See below.
 - Git, adequate free build space and an internet connection for installing dependencies are needed. Build as your normal user, not administrator/root.
 
 Keep personal notes outside the source/build tree. Back up existing `.md` files **and their `img/` folders** before trying a development fork. Standard Markdown and relative local image files remain the storage format.
@@ -56,9 +56,11 @@ Historical verification on macOS arm64 / Qt 6.12.0 on 2026-11-08: **321 checks p
 
 ## 1. Windows (first-time installation)
 
+**Recommended scripted route:** [Windows build guide](windows-build.md) includes all winget commands (including mandatory Perl), Qt installation, root `build.bat --test --deploy`, optional Mermaid setup and a manual acceptance checklist. The manual alternatives below remain available. Native Windows execution is still unverified.
+
 ### 1.1 Install Git and one matching Qt/compiler kit
 
-1. Install [Git for Windows](https://git-scm.com/downloads/win) and **CMake 3.24+**, available on PATH (`cmake --version`).
+1. Install [Git for Windows](https://git-scm.com/downloads/win), **CMake 3.24+** and **native Windows Perl** (e.g. Strawberry Perl), available on PATH (`cmake --version`, `perl -v`). Perl is required to generate KSyntaxHighlighting syntax definitions even with tests disabled. Keep the Qt-matched compiler ahead of Strawberry's bundled GCC.
 2. Download the official [Qt Online Installer](https://doc.qt.io/qt-6/qt-online-installation.html). Follow its account/license prompts and choose a Qt **6.7+** version that supports your Windows version and architecture. Consult [Qt's Windows support matrix](https://doc.qt.io/qt-6/windows.html).
 3. Recommended: select that release's **desktop MinGW kit**, its Qt libraries (including Qt Declarative/Quick Controls/Quick Dialogs), Qt Creator, and the **matching MinGW compiler supplied for that kit** under development tools. Do not combine an arbitrary newer MinGW with older prebuilt Qt libraries. Embedded, Android and WebAssembly kits are not substitutes.
 4. Record the actual kit and compiler directories. The examples use placeholders:
@@ -429,7 +431,7 @@ Quit older copies first; an earlier app in `/Applications` cannot participate in
 
 PonchoWriter is a native Markdown editor with Edit/Read views, not a browser, whiteboard or graphical diagram designer. Tables/images/diagrams reveal their Markdown source when edited; **there is no drag-node diagram editor or arbitrary graphical Mermaid round-trip editing**.
 
-- **Windows:** Mermaid deliberately remains **source fallback**, even if Node and `mmdc` are installed. Rendering is disabled until safe process-tree cancellation is implemented. This is not solved by changing PATH.
+- **Windows:** Rendering uses a native `mmdc.exe` or the standard global npm `mmdc.cmd` layout resolved to `node.exe` + Mermaid's JS entry point, without a command shell. Both npm's global bin directory (usually `%APPDATA%\\npm`) and Node's directory must be visible in the app's inherited PATH. A kill-on-close Windows Job Object contains Node/Chromium descendants atomically; failed containment or unknown wrappers keep source fallback. Native Windows validation is pending: see [setup and checks](windows-build.md).
 - **macOS/Linux (Unix):** rendering can use an independently installed Mermaid CLI (`mmdc`) on the application's PATH. That optional setup needs its own supported Node version and Puppeteer/Chromium/browser dependencies. Consult the [Mermaid CLI project](https://github.com/mermaid-js/mermaid-cli) before installing; Node alone is not the renderer. External tooling installation can have its own browser-download behavior.
 - PonchoWriter **does not automatically install or download** Node, Mermaid CLI or a browser. No embedded WebEngine does not mean that an external renderer needs no browser runtime.
 - **macOS launcher/Finder:** inherited PATH is checked first, then `/opt/homebrew/bin`, `/usr/local/bin` and `/opt/local/bin`. Only the renderer's child PATH is augmented: its selected executable directory goes first, followed by inherited entries and missing fallback directories, so `/usr/bin/env node` can find Node too. No global environment is changed and no shell startup scripts are run. Restart after installing the renderer. Linux still uses inherited PATH; nonstandard/version-manager installs may require launching from a configured terminal.

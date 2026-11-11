@@ -1,150 +1,17 @@
-# Testing the native-preview fork
+# Tests
 
-## Automated suites
-
-Run `./bin/test` with Qt 6.7+, a C++17 compiler and CMake 3.24+ for the first syntax/spelling-dependency bootstrap. The runner builds separate QtTest targets, uses the offscreen Qt platform, and recognizes macOS bundles and Unix binaries.
-
-| Suite | Purpose |
-| --- | --- |
-| `tests/tests.pro` | Existing backend/editor/QML regressions, platform-correct Replace dispatch, visible-editor typing, screenshot paste, image naming menu/left and right pointer hit-tests, source undo/redo, Read/Edit and attachment save integration |
-| `tests/shortcutlabels.pro` | Platform-formatted F1 key labels, including Cmd/Option versus physical Ctrl |
-| `tests/headings/headings.pro` | ATX heading markers, caret/selection activation, code fences, unchanged source, efficient large-selection updates |
-| `tests/attachments/attachments.pro` | Persistent staging/recovery, first save/auto-save/Save As, collision and path safety, current-document rename/locate and undo, encoded/exact references and absolute paths |
-| `tests/previewblocks/previewblocks.pro` | Conservative structural parsing and native rasterization/fallback |
-| `tests/livepreview/livepreview.pro` | UTF-16 mappings, source/view separation, native input/selection/IME, object boundaries, source preservation, local/remote resources, cumulative raster budgets/stale-resource release and read links |
-| `tests/mermaid/mermaid.pro` | Optional-renderer fallback, constrained syntax and asynchronous process/cache behavior using a fake local CLI |
-| `tests/codehighlighting/codehighlighting.pro` | Language/alias resolution, plain fallback, multiline state and per-fence reset, incremental versus full rehighlight, language-only edits, theme/font/search/source/undo preservation |
-| `tests/spellchecking/spellchecking.pro` | Spelling prose classification, cached diagnostics, stale-result/menu-token validation and dictionary/controller behavior |
-| `tests/spellchecking/integration.pro` | Spelling projection/object mapping, asynchronous styling, source/undo preservation and IME |
-| `tests/spellchecking/main.pro` | Backend and Main.qml spelling controls/actions using an isolated deterministic dictionary |
-| `tests/instancebroker/instancebroker.pro` | Real subprocess forwarding, framing/limits, concurrent startup, stale/unresponsive owners, private runtime/fallback directories, queued slow opening and callback lifetime |
-| `tests/printing/printing.pro` | Print-only canonical snapshots, original local images/blocked resource fallback, table/header pagination, landscape column bands, native geometry bounds, preallocation guards and PDF global/disjoint ranges/copies |
-
-The main QML suite registers the same `PonchoWriter.LivePreview` type as the application. It uses a unique application-data identity per run, so a failed test's recovery snapshot cannot be restored by the next run. Tests must send physical text input to **`previewEditor`**, not the hidden canonical **`sourceEditor`**. When a test changes source directly, allow the queued projection update before sending input.
-
-The relative-file-path regression canonicalizes an existing parent directory, not a nonexistent document. This accounts for macOS `/var` and `/private/var` aliases without weakening the requirement that the document URL be absolute.
-
-## Verified development run
-
-On 2026-11-10, macOS arm64 with Homebrew Qt 6.12.0 and Apple Clang: **390 passed, 0 failed, 4 tests skipped** in the offscreen run across thirteen suites (136 / 16 / 23 / 15 / 10 / 52 / 11 / 12 / 48 / 9 / 5 / 40 / 13, including per-suite setup/cleanup). Skips are two native-render bodies and the opt-in 10,000-line and table benchmarks. The two skipped tests were also run separately with real macOS windows and the threaded scene graph: both passed (100 rendered mode switches). The macOS app built successfully. Its bundled icon resource matches the committed ICNS; Windows/Linux compilation was not tested. The automated renderer process tests use a fake CLI that rejects obsolete `-w`/`--width` switches. Injected GUI-like environments exercise same/separate-bin Node lookup, npm-style symlinks, inherited CLI priority, exact child PATH ordering, missing/non-executable tools and unchanged parent PATH without depending on installed renderers. A fresh real-render smoke with PATH restricted to `/usr/bin:/bin:/usr/sbin:/sbin` produced a 360×59 PNG through macOS fallback discovery; no tools were installed. The focused empty-document placeholder fixture passed offscreen and under Cocoa, including startup focus, typing/deletion, mode switching, IME cancel/commit and canonical undo/redo. Separately, the installed real Mermaid CLI 12.2.0/Node/Chrome stack was exercised through `MermaidRenderer`: the example flowchart produced a 552×77 PNG in about 1.15 seconds after removing `-w`. These are limited local smoke checks, not exhaustive browser/platform validation.
-
-Print preparation has a dedicated thirteen-check suite (including setup/cleanup and three geometry data rows). Its custom application main preserves actual platform DPI: `QTEST_MAIN` forces 96 DPI and masked the Cocoa format-length scaling bug. The new synthetic geometry rows fail against the old product under Cocoa and pass with normalized format units; actual native image advances and table frame bounds are checked, without relaxing fit tolerances. Sparse/ragged native merged cells are moved into column-band appendices without duplicating covered values. The visible plain-text print-failure dialog has an attachment-suite regression too. Attachment integration checks actual unsaved staging, restored recovery, saved-file precedence and Save As/reopening without changing source, undo or recovery snapshots. Raster tests verify repeated continuation-page headers, tall rows and appendix images; PDF tests cover mixed geometry, exact global/disjoint ranges, reverse output and software copies. Preflight rejects ragged/quoted/consecutive-table expansions before native allocation, and actual frame bounds reject unprintable dense inline tables. Independent Apple PDFKit extraction/rasterization verified a synthetic three-page PDF (one portrait/two landscape), the red source image and all 112 synthetic cells. An opt-in Cocoa `PONCHOWRITER_NATIVE_PRINT_TEST=1` attempt explicitly skipped because Qt could not provide a native printer engine and fell back to PDF. The complete print suite (thirteen checks) passed under Cocoa with unforced DPI and offscreen at 144 DPI; targeted geometry also passed at 72 DPI. The visible-error fixture (three checks) and nine native UI bodies (eleven checks) passed under Cocoa at the preceding checkpoint; the six threaded-render checks passed again after the DPI fix. The Read link fixture hit-tests actual anchors and scrolls loaded-but-clipped cells into view before physical clicks, rather than assuming every cell is visible. Physical/native drivers, duplex and Windows/Linux remain unverified. See [printing usage, limits and reproduction](printing.md).
-
-Nine current table/code/quote UI bodies passed in real Cocoa windows (eleven checks including setup/cleanup): rectangular selection/fill/clear with IME-first input and one undo, both scrollbar endpoints and backtracking after overdrag in both modes, quote behavior, the shared Read grid and larger same-component modal, hidden Read mutation controls, Edit modal IME/resize/undo and rejected-close preservation, inline/modal links and autolinks, Read text/HTML copying across tables, adjacent-image export sanitization, live cell-width growth/alignment, continuous two-way scrollbar dragging, mouse/touchpad-source horizontal wheel events and independent table offsets, code Cmd+Left/Right, viewport-pinned bars, hover Copy, padding and large-code stability. A previous direct `scrollBlock()` test missed loss of a native Read scrollbar's mouse grab; the current regression still uses real input on the shared grid. Both threaded-render bodies passed (six checks, 100 mode toggles). When Cocoa refuses test-window activation, modal cell cancellation invokes the actual Escape shortcut handler; active native windows/offscreen retain physical Escape. The original one-off overlap screenshot was not independently reproduced. See [behavior, limits and benchmark reports](tables-and-horizontal-overflow.md).
-
-Window-routing regressions use isolated application-data profiles: same/relative/symlink targets focus without replacing drafts; file-picker routes preserve untitled text; Save As collisions fail before attachment copying; a cancelled close retains its Backend; accepted close deletes QML before Backend and permits reopening; duplicate recovered URLs keep both drafts; New Window leaves a later orphan snapshot untouched. Native Cocoa runs of these and delayed `QFileOpenEvent` delivery passed (three bodies plus setup/cleanup). An isolated-HOME smoke test also started the actual rebuilt app and accepted three subsequent executable launches for the same/different files, leaving both source files unchanged (offscreen; no Finder focus assertion). The broker's separate subprocess tests include a 3.3-second queued opening callback whose ACK still succeeds. A forwarding process drains native events through a 400 ms quiet interval; this tests events delivered after initial startup, not every possible LaunchServices timing or desktop focus policy. Windows/Linux compilation/runtime remain unverified.
-
-Raster caches/projections are byte- and count-bounded (32 MiB per cache/projection; up to 64 visual objects per projection). Additional blocks fall back rather than making source inaccessible. These are not a whole-process memory cap: source documents, transient rasterization and the external renderer have separate costs.
-
-Heading regressions compare actual glyph sizes for levels 1–6 against Qt Markdown across pixel/point fonts, light/dark themes and zoom sizes; they also check original muted active-marker colors and Edit/Read toggle parity, including Qt's smallest-heading HTML round-trip.
-
-Copy Image tests cover original decoded dimensions (including a 2,001-pixel-high image), exact pixels, staged versus saved/external disk resolution, unchanged source/undo, failed-copy clipboard preservation and shared decoder limits. Read inline/reference images retain their original destinations without exposing synthetic Mermaid resources. A wrapped inline-image regression checks both halves even when the trailing caret moves to another line, plus blank-space rejection. Native macOS image-menu tests copy pixels in Edit/Read from both halves, with Read mutation controls hidden/disabled (two data rows, four checks including setup/cleanup).
-
-Writing-feature tests cover stale asynchronous selection counts/CJK rules, the 100-file local position cache, platform-safe Explorer argument quoting, real footer selection display, per-file Edit/Read restoration/reload/failed-open/Save As, physical Markdown/HTML clipboard shortcuts, and embedded PNG resources in Read-selection HTML. A native macOS UI run of that combined fixture also passed. `open -R` accepted the guide path in a separate Finder command smoke check; Windows/Linux Reveal and compilation remain unverified.
-
-Retained-document regressions preserve Edit block/highlighter identity across repeated swaps, reuse unchanged Read content, reconcile source edits/undo made in Read and refresh Edit images after Read-side resize/resource changes. Fixtures follow `textDocumentChanged` instead of holding stale mode pointers. Pairing tests cover one canonical undo, selection wrapping, contractions/escapes, empty-pair deletion, closer skip and IME cursor hiding/reset. Physical Cmd/Ctrl+T and Shift+T tests cover delimiter padding, literal runs, separate spans/blocks, own-line fences, empty selections, Read suppression and composition flush before a following commit. Native macOS far-scroll/click and mode tests assert the independent caret, actual Read glyph pixels before another scroll, and no window visibility changes. These five native UI bodies (one with two image data rows) passed: eight checks including setup/cleanup. See [mode measurements and raw reports](mode-transitions-and-code-shortcuts.md).
-
-The long-document mode-switch regression starts with the caret at the end, scrolls Read to two different positions, then uses the actual shortcut to return to Edit. It checks that the viewport stays at the reading height, the new caret is near the visible center, and Markdown is unchanged.
-
-Body-style regressions check softer prose versus stronger headings in both themes, regular/nonitalic paragraph fonts through repeated mode toggles, unchanged Markdown and the full window's theme bindings.
-
-Read/Edit appearance regressions compare actual paragraph and heading gaps, nested tight/loose list spacing, bold/italic, link accent and code backgrounds across themes and zoom sizes. Edit list tests retain exact source, stable hanging/wrapped alignment while the prefix is raw/rendered, sequential numbering, nesting/dedented continuations, native Read body-column parity, prefix search/selection reveal and one-undo marker replacement. Exclusions cover code, comments/HTML and tables; regressions cover paragraph interruption, delimiter changes and outer/nested fences. A 1,000-item fixture moves the caret 32 times without resetting the marker model; cached parsing/formatting and passive bindings avoid recreating all decorations. Resize/zoom and selected-prefix IME cancellation are checked. Native Mac pointer/body typing/undo tests pass. Clipboard tests cover Read empty-selection keyboard/menu Copy returning canonical Markdown, selected Read native copy, selected/whole HTML markup in both MIME channels, the HTML context action and focused-editor shortcut fallback. Three dedicated native Mac bodies passed (five checks including setup/cleanup). Toggle tests check Mac/Linux/Windows shortcut labels and logical icon centering, including the Material control in the full window.
-
-Fenced-code panels cover empty/wrapped lines, separate adjacent and list-contained fences, resize and unfinished/unknown-language blocks without source/undo changes. Wrapping IME preedit updates panel geometry without rebuilding the projection. A separate native Mac GUI test checks the actual continuous fill in both modes/themes, plus the half-pixel border and rounded-corner properties. Panel coordinates also cover the native line box and actual glyph ink at 12/20/34 px with 0/4/9 px document margins. A single-line IBM Plex Mono JSON fixture exposed a 4 px upward offset in Read: layout positions already include the document margin, so it must not be subtracted again from the vertical origin. Native Mac captures check the enlarged padding below the final line at 100%/160% zoom in both modes/themes. Padding scales with the font; presentation-only margins keep backgrounds clear of prose, adjacent code panels and document edges. A 300-fence regression checks batched layout notifications and a subsequent caret move, without changing source or undo. Hover Copy uses Qt's clipboard in Edit/Read, with a Read language label (`text` fallback). Tests cover exact native bodies, Unicode/blank lines, unknown tags, containers, separate adjacent fences, unclosed/empty bodies, parser-mismatch fallback and stale/composing/suspended-layout rejection without overwriting the clipboard. Real QML pointer hover/click checks confirm hidden controls outside the panel, preserved selection/focus/source/undo, and native Mac operation. Inline-code backgrounds and token colors remain independent. Background ranges no longer depend on temporary syntax-highlighter states; incomplete layout retains the last valid model. A fault-injection regression clears those states and temporarily invalidates endpoint layout, and fails on the prior implementation. Native click transitions check both panel pixels and every model change, without forcing a refresh. The exact intermittent user click sequence was not reproduced by the simple fixture; the underlying state/lifecycle dependency is tested deterministically.
-
-A separate large-code regression checks the real document height, continuous panel extent, final-line reachability and scroll range through eight physical caret clicks. It uses generated long TOML by default; `PONCHOWRITER_LARGE_CODE_FIXTURE` optionally reads a note into an **untitled, isolated backend**, never opening that note for autosave. On native macOS, a real 244-line TOML note reproduced a 7,548→4,038 pixel content-height collapse before the fix and passed afterward, as did the generated fixture. `LivePreview` now avoids resetting an unchanged default font: Qt otherwise invalidates the entire document layout even for equal fonts. Genuine font/zoom changes still apply. This is a reproduced document/scroll-range bug, distinct from the intermittent background-only sequence above.
-
-Inactive standalone dashed horizontal rules render across the writing column in Edit; caret entry/selection reveals their original Markdown. Tests cover source/undo preservation, full-width raster endpoints, fence/Setext/HTML exclusions and literal HTML boundaries; a native Mac physical-click fixture passes in both themes. Read remains Qt's native Markdown rendering.
-
-Code-color regressions compare actual Read character formats with the shared tokenizer in both themes for Python, C++, JavaScript, JSON, YAML and shell aliases. They include quoted/list code, adjacent same-language fences, multiline comments, unclosed/empty fences and unknown/untagged plain fallback. An indented literal fence cannot claim the prefix of a later real fence. Read import validates the full sequence before applying source metadata; ambiguous syntax falls back to plain code. Source text and undo stay unchanged. The macOS app statically links the engine; upstream notices/inventory are included in its resources, but binary redistribution remains blocked pending the [resource-license/source audit](../third_party/ksyntaxhighlighting/README.md).
-
-The Windows kit-dispatch shell paths were checked with fake qmake/compiler/CMake tools (MinGW, MSVC and rejected unsupported kit). This is not a Windows compiler or runtime test.
-
-Spelling checks cover UTF-16 prose masks, container-relative indented code and
-paragraph continuations, malformed-bracket linearity, installed-language fallback,
-cache/generation safety, one publication per completed snapshot, missing dictionaries,
-IME deferral, session Ignore and fake Learn failures/success. Projection checks assert
-no async rebuild, preserved styling/undo, clean Read, and exact pointer glyph hits
-including wrapping and bidi text. Main/QML tests cover native suggestions, one-undo
-correction, stale actions, settings and attachment-menu priority. Clipboard image
-paste is tested through both keyboard and context menu. Native Learn is deliberately
-not exercised: no personal dictionary changes are needed. Native Mac spelling/UI
-checks passed separately. If Cocoa declines OS activation after synthetic attachment
-popups, that fixture invokes the actual mode-button handler; separate focused tests
-retain physical mode-shortcut coverage. This is not a claim of exhaustive native
-keyboard/clipboard/IME testing.
-
-## Incremental editing and native 10,000-line benchmark
-
-The Edit projection persists through ordinary native typing; range patches, resumable structural/list metadata, source undo, stable blocks, bounded viewport decorations and direct-document viewport-rendering threshold changes have regressions. A 600-edit UTF-16 differential parser fixture compares incremental results with a fresh parse. Selection/lexer propagation batches native layout changes without zero-page rich layout. Native code-scroll checks additionally inspect actual glyph pixels after distant scrolls.
-
-Seven native UI bodies (two image data rows included) passed separately: 9 checks including setup/cleanup. These cover Edit Cmd/Ctrl-click and context Open Link with ordinary caret clicks unchanged, Read single-click links, blank-space rejection, code hover/padding/scroll, reading positions and image/clipboard actions. No real browser was launched by the link test.
-
-The opt-in native benchmark uses an isolated untitled backend and reads, never saves, its large fixture. A matched 144 Hz / Metal run on the manually edited 10,011-line scratch note measured median typing-to-follow-up-frame submission **12,371.7 ms → 10.1 ms** (12 keys each), not display latency or a general FPS guarantee. Both benchmark bodies passed. See [methodology, reproduction and raw reports](incremental-native-editing.md). The earlier source-cache performance branch remains parked and is not merged here. Windows/Linux remain untested.
-
-## Product identity regression
-
-The renamed qmake/CLI/QML/test targets build and pass. A temporary-file profile fixture verifies missing-only preference import, idempotence, fresh-profile fallback and unchanged draft/attachment bytes while retaining the original store and shared locks. Native spelling passed without personal dictionary changes. App bundle/name/identifier and root/font/dependency notices were checked. See [identity, compatibility and startup-smoke details](ponchowriter-identity.md). Historical benchmark timing remains historical; it was not rerun for rebranding.
-
-## Blockquote preview, justification and Read breaks
-
-Three native-document tests cover whole-paragraph prefix activation, selection/search, stable hanging geometry, nesting/justification reset, source undo after a collapsed table and UTF-16 prefix, unchanged projection counters on caret movement, incremental parser equivalence and final visible Read line separators/paragraph gaps. Conservative fixtures preserve code/HTML/list/table/reference/multiline-inline semantics; full native HTML comparison catches changed multiline link/image identity. Angle autolinks and literal `<` comparisons retain both breaks and link targets. The physical body-click/native IME commit/one-undo/Read-break body passed in both themes, offscreen and Cocoa. Nine current table/code/quote UI bodies passed (eleven checks), plus six separate threaded-render checks. See [implementation and boundaries](blockquotes.md).
-
-## Tables and local overflow
-
-The table branch adds model/canonical ACK handshakes, one-undo cell and structural changes, conservative parsing/escaping/resource bounds, Source/Grid transitions, native unwrapped selection/IME, independent offsets and resize clamping. Supported Read tables now use the same virtualized grid, with a larger same-component modal in both modes. Exact tagged Read-slot resources survive HTML import without guessing source/native positions; fixtures cover identical tables, Mermaid, forged resources and document/session revocation. Rejected drafts survive invalid commits and cannot be bypassed by another active cell. A 1,500×8 inline fixture and 300×8 modal fixture check bounded delegate creation. Width caches and ACK-only validated parse reuse have deterministic regressions; foreign changes force fresh validation. The opt-in `tableGridNativeEditingBenchmark` generates 1,361×28 cells by default, reads optional private input only into an isolated untitled backend, logs no cell content/path and asserts each appended key is buffered until its canonical Tab commit. A matched synthetic native pair measured median Tab-to-follow-up-submission 24.87→18.13 ms (12 samples each), with buffered typing roughly unchanged; not display latency/FPS or a general guarantee. Only synthetic aggregate reports are committed. See [behavior, reproduction and reports](tables-and-horizontal-overflow.md). Windows/Linux remain uncompiled/runtime-untested.
-
-Additional table follow-up regressions cover atomic rectangle fill/clear, stale revisions, unbordered CRLF header/body clearing, exact 4 Mi-unit source-limit no-op and length-preserving fills, native IME-first editor activation, and endpoint overdrag/backtracking with asynchronous first/last visible-cell assertions. Read glyph captures scale their crop to the actual image dimensions on Retina displays. A generated 1,200-row raw-source fixture checks one-row measurement reuse, no repeated full overflow styling, exact exhaustive native maximum widths including an offscreen widest row, shrink/undo/topology/mode invalidation. Parser tests revisit immediate previous-line-sensitive rules while converging before unchanged 5,000-row tables. A matched 1,361×28 native synthetic pair against `88a74fc` measured adjacent-prose median submission 1,024.13→12.65 ms; raw/distant results do not establish a large consistent improvement. `PONCHOWRITER_TABLE_PERF_AREA=cells|before|raw|distant` selects the benchmark area; only synthetic metadata/timing reports are archived. Private read-only input was verified unchanged and its contents/copies/reports remain excluded.
-
-## Native scene-graph regression tests
-
-Offscreen text/document tests do **not** establish that Qt Quick can paint a projection safely. Run this separately on an interactive desktop:
+Build/dependency/kit requirements are in [install.md](install.md).
 
 ```sh
-JOBS=4 ./bin/test --rendered
-```
-
-This opens real windows and forces `QSG_RENDER_LOOP=threaded`. Both tests assert that `beforeRendering` actually runs off the GUI thread; software/basic rendering is not a substitute. They capture rendered frames while switching Edit/Read, with local image objects, tables and fenced code. The full-window test also scrolls, resizes and changes zoom. It invokes the same QML handler as the mode button, rather than depending on OS keyboard focus during resizing. Existing physical-shortcut tests remain separate.
-
-To inspect a particular note without attaching auto-save to it:
-
-```sh
-PONCHOWRITER_RENDER_FIXTURE="/absolute/path/to/note.md" JOBS=4 ./bin/test --rendered
-```
-
-The fixture is read only; its contents and sibling `img/` files are copied into a temporary profile. No original document, image or recovery file is written.
-
-The 2026-11-07 user crash was in `QTextLine::ascent()` while Qt Quick painted an image after Edit → Read → Edit. The hardening prevents zero-page-size highlighter batching on rich objects/frames, detaches the highlighter until the replacement Edit projection is complete, and completes/checks image-line layout before publication. An invalid object becomes a one-character placeholder instead of reaching the renderer. Valid-image counts are asserted so this fallback cannot silently hide valid fixtures. A zero-page invariant test fails on the previous code and passes with the fix. Layout notifications are coalesced without invalidating rich page geometry (1,000-heading/image restyle: one notification, about 155 ms in a focused local run).
-
-The exact original crash was not reproduced in the native stress tests, including before the fix. These checks validate the suspected layout-invalidation mechanism and exercise the real renderer; they are not proof that every Qt/rendering crash is eliminated. Native Windows/Linux rendering remains untested.
-
-## Optional macOS dictionary smoke check
-
-```sh
+./bin/test                 # normal offscreen suites on macOS/Linux
+./bin/test --rendered
 ./bin/test --native-spelling
 ```
 
-This uses the installed NSSpellChecker English dictionary, not a fake backend.
-It checks correct/misspelled words and suggestions without calling Learn or
-changing the personal dictionary. It is separate from the deterministic suites;
-it may skip if English is unavailable. The optional target currently supports
-macOS only. Windows/Linux still need real-desktop dictionary and UI verification.
+On Windows: `build.bat --test` runs the main editor and Mermaid suites, not the complete Unix suite set. Native tests need an interactive desktop; focus failures in a headless session are not necessarily editor regressions. Missing system spelling dictionaries can cause expected skips.
 
-## Manual release checks
+Packaging smoke checks: `powershell -NoProfile -File tests/windows-packaging.ps1` (also supports `pwsh` on macOS/Linux). These use fake executables/compiler, check paths/guards and parse scripts; they do not produce or run a real installer. Run the same checks with Windows PowerShell 5.1 before releasing.
 
-Use [preview-example.md](preview-example.md), plus a disposable document and image directory.
+For a manual pass, open [preview-example.md](preview-example.md), [code-highlighting-example.md](code-highlighting-example.md) and [spellchecking-example.md](spellchecking-example.md). Use disposable documents for save/reopen/undo, table cell drafts and Source/Grid, large table scrolling, screenshot attachments/Save As, external changes/recovery, Print/PDF, high-DPI shortcuts and IME. Do not Learn spelling words unless you intend to change the system dictionary.
 
-- Click the book/pencil toggle repeatedly near the bottom of a long document; verify scroll and caret do not jump unexpectedly.
-- Enter and leave a table from both sides; select across it forwards/backwards; type, delete, undo and redo. Saved text must remain pipe Markdown.
-- Test input-method composition, cancellation and replacement on your actual keyboard/input method, especially beside visual blocks. A synthetic IME test is not full OS/input-method coverage.
-- Copy a real screenshot, paste before the first save, name/save the note, quit/reopen, and verify its `img/` reference and PNG. Test recovery in a disposable profile, not against important drafts.
-- Save As into a different folder containing a conflicting image. Check the error and original bytes. Test a missing image and a renamed/located reference, then undo/redo.
-- Modify an image outside PonchoWriter and reopen to refresh its preview; filesystem image watching is not implemented.
-- Check F1 labels and physical Cmd+Option+F / Cmd+Ctrl+F on Mac. OS-reserved keys and Fn settings cannot be fully established by synthetic Qt events.
-- If you explicitly install/use Mermaid CLI, check a real successful diagram, an invalid diagram and renderer failure/timeout. Fake-CLI tests do not establish compatibility with a particular Node/Puppeteer/Chromium installation.
-- Check high-DPI and light/dark appearance, clickable Read links and local image scaling.
-- Use [code-highlighting-example.md](code-highlighting-example.md) to check real font/zoom/search/selection/undo behavior in tagged fences and across mode toggles. These are not autocomplete or LSP features.
-- Use [spellchecking-example.md](spellchecking-example.md) with an installed dictionary. Check Edit-only underlines, suggestions, undo, session Ignore, language/on-off changes, code/URL exclusion, emoji offsets and image-menu priority. Test Learn only with a word you actually want in that backend's personal dictionary; ordinary tests must not alter the user's dictionary.
-- On Windows/Linux, verify the native backend/dictionary enumeration and correction workflow on a real desktop before claiming platform support is runtime-tested. Linux needs system Hunspell dictionaries, not just its development library.
-
-No renderer or external runtime is installed by the test runner. Do not describe tests of the fake CLI as an end-to-end Mermaid/browser test.
+Performance benchmarks are opt-in; see the `tableGridNativeEditingBenchmark` and long-document cases in `tests/tst_ponchowriter.cpp` for environment controls. Use a copy of private files. Frame-submission timings are not display latency or FPS, and spelling/cold-open/scroll workloads need separate checks. Never describe fake Mermaid helpers as an end-to-end Node/browser test.

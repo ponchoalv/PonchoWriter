@@ -71,6 +71,20 @@ Zero means success. The script can initialize installed VS 2022 tools automatica
 - Qt/kit/architecture-specific build directories avoid reusing macOS/Linux caches. Changing compiler installation/version triggers a toolchain-stamp error: move/remove the reported **generated** directory and rebuild. Do not remove your source checkout or documents.
 - Sonnet uses Windows `ISpellChecker`: no Hunspell install needed. Install a supported Windows spelling language for interactive spellchecking tests.
 
+### Qt found but rejected as incompatible (MSVC)
+
+A `Qt6Config.cmake` rejection mentioning `64bit`, despite a matching Qt version, can mean your compiler targets **32-bit**. For example, `Hostx86\\x86\\cl.exe` targets x86, not x64. The script now checks the Qt kit architecture before configuring dependencies.
+
+For an x64 Qt kit, run in CMD:
+
+```bat
+call "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64
+where cl
+build.bat --test --deploy
+```
+
+Keep `QT_DIR` set to your installed kit (for example `C:\Qt\6.12.0\msvc2022_64`). There is no need to raise the source's minimum Qt version from 6.7 to your installed version. The corrected architecture uses a different generated build directory; you do not need to delete all of `.deps`.
+
 ### MinGW alternative
 
 In the official Qt installer select a **MinGW desktop kit and its matching Qt-supplied MinGW tools**. Do not use Strawberry's compiler or an arbitrary winget GCC. For example, after verifying the actual installed paths:

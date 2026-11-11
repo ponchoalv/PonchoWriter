@@ -56,6 +56,12 @@ call :require nmake.exe
 if errorlevel 1 goto missingCompiler
 if not defined VSCMD_ARG_TGT_ARCH goto missingCompiler
 set "ARCH=%VSCMD_ARG_TGT_ARCH%"
+rem Qt rejects a 32-bit compiler with a 64-bit kit as a version mismatch.
+rem Read the kit architecture instead of guessing from its directory name.
+set "QT_ARCHDATA="
+for /f "delims=" %%I in ('""%QMAKE%" -query QT_INSTALL_ARCHDATA"') do set "QT_ARCHDATA=%%I"
+powershell -NoProfile -Command "$ErrorActionPreference='Stop'; $p=Join-Path $env:QT_ARCHDATA 'mkspecs/qconfig.pri'; $m=[regex]::Match([IO.File]::ReadAllText($p),'(?m)^\s*QT_ARCH\s*=\s*(\S+)'); $targets=@{x86_64='x64'; i386='x86'; x86='x86'; arm64='arm64'; aarch64='arm64'}; $target=$targets[$m.Groups[1].Value]; if (!$target) { Write-Error ('Cannot determine Qt target architecture from '+$p); exit 1 }; if ($target -ne $env:ARCH) { Write-Host ('ERROR: Qt targets '+$target+' but this MSVC prompt targets '+$env:ARCH+'.'); Write-Host ('Run VsDevCmd.bat -arch='+$target+' -host_arch=x64, then retry.'); exit 1 }"
+if errorlevel 1 goto fail
 for /f "delims=" %%I in ('where cl.exe') do if not defined CXX set "CXX=%%I"
 set "MAKE=nmake.exe"
 goto tools

@@ -97,6 +97,14 @@ build.bat --test --deploy
 
 Those paths are examples, not a guarantee of your installer's current compiler version. `MINGW_DIR` excludes `\bin`; the script prepends it before Strawberry's tools. Dependencies use Ninja; the qmake app uses the same kit's `mingw32-make`. Use a fresh CMD rather than carrying an unrelated MSVC environment into MinGW.
 
+### Install the deployed folder and verify the icon
+
+After deployment succeeds, copy the **entire** `dist` folder to `%LOCALAPPDATA%\Programs\PonchoWriter` (or another writable location). Keep all DLLs, plugins and QML subfolders together. Install the supported VC++ Redistributable above on MSVC target machines. Launch `ponchowriter.exe`, then create a desktop/Start Menu shortcut pointing to that installed EXE. This is a portable-folder installation, not an installer or file-association registration.
+
+The Windows build embeds `assets/ponchowriter.ico` in the EXE (16, 24, 32, 48, 64, 128 and 256 pixels). A bundled PNG provides the Qt window/taskbar icon when no system theme supplies one. Both are derived from the existing macOS application artwork; no loose icon file is needed beside the deployed EXE.
+
+After updating the source, rerun `build.bat --test --deploy` (move/remove an old generated `dist` first). Verify the new EXE's icon in Explorer at small and large sizes, then launch it and check the taskbar/Alt+Tab icon. A shortcut should use the installed EXE as its icon source. If an old pinned shortcut keeps a generic icon, unpin it, close the old app, recreate the shortcut from the new EXE and pin it again; Explorer may retain cached icons. Native Windows icon checks remain manual—macOS tests do not verify the PE resource or Windows shell cache.
+
 ## 4. Optional Mermaid dependencies
 
 These are **runtime tools**, not prerequisites for compiling or for the synthetic Mermaid tests. Install Node LTS, then reopen CMD before running npm:
@@ -113,6 +121,8 @@ where node
 where mmdc
 mmdc --version
 ```
+
+**A failing automated Mermaid test is not necessarily a missing installation.** The renderer tests use a synthetic native helper, not the installed Node/Mermaid/browser stack. Report the exact failing test name and assertion/output; installing Mermaid does not fix synthetic process/discovery/cleanup failures.
 
 The CLI uses Puppeteer/Chrome; its installation may download a supported browser. Follow your proxy/security policy and the CLI's browser setup instructions if download/launch fails. Do not disable Chromium's sandbox or system security to make it work. npm/Node/browser downloads are external dependencies, not shipped in `dist`.
 

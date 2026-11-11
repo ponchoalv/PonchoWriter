@@ -1,5 +1,6 @@
 <RCC>
     <qresource prefix="/">
+        <file alias="icons/ponchowriter.png">../assets/ponchowriter.png</file>
         <file alias="Main.qml">Main.qml</file>
         <file alias="PreviewToggle.qml">PreviewToggle.qml</file>
         <file alias="CodeBlockControls.qml">CodeBlockControls.qml</file>

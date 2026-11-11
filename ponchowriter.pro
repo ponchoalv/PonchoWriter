@@ -9,6 +9,7 @@ include(syntax-highlighting.pri)
 include(spellchecking.pri)
 
 TEMPLATE = app
+win32: RC_ICONS = $$PWD/assets/ponchowriter.ico
 macx {
     ICON = assets/ponchowriter.icns
     QMAKE_INFO_PLIST = assets/Info.plist

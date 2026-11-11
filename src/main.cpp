@@ -28,7 +28,8 @@ int main(int argc, char *argv[]) {
     app.setApplicationDisplayName(QStringLiteral("PonchoWriter"));
     app.setApplicationVersion(QStringLiteral(PONCHOWRITER_VERSION));
     app.setDesktopFileName(QStringLiteral("ponchowriter"));
-    app.setWindowIcon(QIcon::fromTheme(QStringLiteral("ponchowriter")));
+    app.setWindowIcon(QIcon::fromTheme(QStringLiteral("ponchowriter"),
+                                      QIcon(QStringLiteral(":/icons/ponchowriter.png"))));
     app.setQuitOnLastWindowClosed(false);
 
     FileOpenRequests nativeFiles(&app);

@@ -3,6 +3,7 @@
 #include <QScreen>
 #include <QCryptographicHash>
 #include <atomic>
+#include <cstdlib>
 #include <QScopeGuard>
 #include <QThreadPool>
 #include <QSignalSpy>
@@ -1509,6 +1510,12 @@ private slots:
                            m_settingsDirectory.path());
     }
 
+    void init() {
+        // Native rendering tests persist zoom too. Isolate each test/data row,
+        // while preserving persistence between backends within a single test.
+        QSettings().remove(QStringLiteral("text/zoom"));
+    }
+
     void cleanupTestCase() {
         QDir(QStandardPaths::writableLocation(QStandardPaths::AppDataLocation)).removeRecursively();
     }
@@ -1793,22 +1800,36 @@ private slots:
         source->setProperty("text", text);
         QVERIFY(QMetaObject::invokeMethod(source, "select", Q_ARG(int, int(text.size())), Q_ARG(int, int(text.size()))));
         QTRY_COMPARE(preview->listMarkers().size(), 2);
-        QPointer<QQuickItem> marker;
-        for (auto *child : visualDescendants(view->parentItem()))
-            if (child->objectName() == "listPreviewMarker" && child->property("modelData").toMap().value("baseline") == preview->listMarkers().first().toMap().value("baseline")) { marker = child; break; }
-        QVERIFY(marker && marker->isVisible());
-        QCOMPARE(marker->property("text").toString(), QString(QChar(0x2022)));
+        const auto firstMarker = preview->listMarkers().first().toMap();
+        const int prefixStart = firstMarker.value("start").toInt();
+        const int prefixEnd = firstMarker.value("end").toInt();
+        const auto findMarker = [&]() -> QQuickItem * {
+            for (auto *child : visualDescendants(view->parentItem())) {
+                const auto data = child->property("modelData").toMap();
+                if (child->objectName() == "listPreviewMarker"
+                    && data.value("start").toInt() == prefixStart
+                    && data.value("end").toInt() == prefixEnd) return child;
+            }
+            return nullptr;
+        };
+        QTRY_VERIFY(findMarker() && findMarker()->isVisible());
+        QCOMPARE(findMarker()->property("text").toString(), QString(QChar(0x2022)));
+        window->requestActivate();
         QRectF before;
         QVERIFY(QMetaObject::invokeMethod(view, "positionToRectangle", Q_RETURN_ARG(QRectF, before), Q_ARG(int, 2)));
+        auto *marker = findMarker(); QVERIFY(marker);
         QTest::mouseClick(window, Qt::LeftButton, Qt::NoModifier, marker->mapToScene(QPointF(marker->width()/2, marker->height()/2)).toPoint());
-        QTRY_VERIFY(marker && !marker->isVisible());
+        QTRY_VERIFY(source->property("cursorPosition").toInt() >= prefixStart
+                    && source->property("cursorPosition").toInt() < prefixEnd);
+        // Repeater delegates may be replaced when native font/layout settles.
+        QTRY_VERIFY(findMarker() && !findMarker()->isVisible());
         QRectF active;
         QVERIFY(QMetaObject::invokeMethod(view, "positionToRectangle", Q_RETURN_ARG(QRectF, active), Q_ARG(int, 2)));
         QCOMPARE(active.x(), before.x());
         QRectF body;
         QVERIFY(QMetaObject::invokeMethod(view, "positionToRectangle", Q_RETURN_ARG(QRectF, body), Q_ARG(int, 6)));
         QTest::mouseClick(window, Qt::LeftButton, Qt::NoModifier, view->mapToScene(body.center()).toPoint());
-        QTRY_VERIFY(marker && marker->isVisible());
+        QTRY_VERIFY(findMarker() && findMarker()->isVisible());
         QTest::keyClick(window, Qt::Key_X); // Actual visible-editor route, one source undo.
         QTRY_VERIFY(source->property("text").toString().contains('x'));
         QTest::keyClick(window, Qt::Key_Z, Qt::ControlModifier);
@@ -3310,16 +3331,35 @@ private slots:
         QCOMPARE(document.firstBlock().layout()->formats().constFirst().format.fontPointSize(), 1.0);
     }
 
+    void themeHomeRedirectSupportsUnicodeAndRestoresEnvironment() {
+        QTemporaryDir directory; QVERIFY(directory.isValid());
+        const QString path = directory.filePath(QStringLiteral("home-\u00e9-\u6f22"));
+        QVERIFY(QDir().mkpath(path));
+        const QString previousHome = qEnvironmentVariable("HOME");
+        const bool hadHome = qEnvironmentVariableIsSet("HOME");
+#ifdef Q_OS_WIN
+        const QString previousProfile = qEnvironmentVariable("USERPROFILE");
+        const bool hadProfile = qEnvironmentVariableIsSet("USERPROFILE");
+#endif
+        {
+            ScopedHome redirect(path);
+            QVERIFY(redirect.ok);
+            QCOMPARE(QFileInfo(QDir::homePath()).canonicalFilePath(),
+                     QFileInfo(path).canonicalFilePath());
+        }
+        QCOMPARE(qEnvironmentVariable("HOME"), previousHome);
+        QCOMPARE(qEnvironmentVariableIsSet("HOME"), hadHome);
+#ifdef Q_OS_WIN
+        QCOMPARE(qEnvironmentVariable("USERPROFILE"), previousProfile);
+        QCOMPARE(qEnvironmentVariableIsSet("USERPROFILE"), hadProfile);
+#endif
+    }
+
     void takesTheCodePanelFromTheTheme() {
         QTemporaryDir homeDirectory;
         QVERIFY(homeDirectory.isValid());
-
-        const QByteArray originalHome = qgetenv("HOME");
-        struct HomeRestorer {
-            QByteArray value;
-            ~HomeRestorer() { qputenv("HOME", value); }
-        } restoreHome{originalHome};
-        QVERIFY(qputenv("HOME", homeDirectory.path().toUtf8()));
+        ScopedHome restoreHome(homeDirectory.path());
+        QVERIFY(restoreHome.ok);
 
         const QString themeDirectory = homeDirectory.path()
             + QStringLiteral("/.local/state/omarchy/current/theme");
@@ -3656,13 +3696,8 @@ private slots:
 
         QTemporaryDir homeDirectory;
         QVERIFY(homeDirectory.isValid());
-
-        const QByteArray originalHome = qgetenv("HOME");
-        struct HomeRestorer {
-            QByteArray value;
-            ~HomeRestorer() { qputenv("HOME", value); }
-        } restoreHome{originalHome};
-        QVERIFY(qputenv("HOME", homeDirectory.path().toUtf8()));
+        ScopedHome restoreHome(homeDirectory.path());
+        QVERIFY(restoreHome.ok);
 
         const QString themeDirectory = homeDirectory.path()
             + QStringLiteral("/.local/state/omarchy/current/theme");
@@ -4621,10 +4656,11 @@ private slots:
         QCOMPARE(window->property("width").toInt(), minimumWidth);
         QVERIFY(editor->property("x").toInt() > 0);
 
-        // A tiling compositor resizes below the minimum the window asks for.
+        // Exercise a tiling-sized viewport without asking the native Windows
+        // window manager to violate the application's production minimum.
+        window->setProperty("minimumWidth", 0);
         window->setProperty("width", 394);
-        QCoreApplication::processEvents();
-        QCOMPARE(window->property("width").toInt(), 394);
+        QTRY_COMPARE(window->property("width").toInt(), 394);
         QVERIFY(editor->property("width").toInt()
                 <= viewport->property("width").toInt());
         QVERIFY(editor->property("x").toInt() >= 0);
@@ -4883,9 +4919,14 @@ private slots:
         QScopedPointer<QObject> editor(makeEditor(backend));
         QVERIFY(editor);
         backend.saveAs(QUrl::fromLocalFile(path));
+        QVERIFY(backend.m_fileWatcher.files().contains(path));
         QSignalSpy externalChangeSpy(&backend, &Backend::externalChangeDetected);
 
         writeFile(path, "theirs");
+        QCOMPARE(readFile(path), QByteArray("theirs"));
+        // Test the reload/resume state machine independently of OS notification
+        // timing. Native delivery remains covered by the watcher tests below.
+        backend.checkWatchedFile();
         QTRY_VERIFY(externalChangeSpy.count() >= 1);
         backend.reloadFromDisk();
         QCOMPARE(editor->property("text").toString(), QStringLiteral("theirs"));
@@ -4893,6 +4934,26 @@ private slots:
         editor->setProperty("text", QStringLiteral("theirs, edited"));
         QVERIFY(backend.editorTextChanged());
         QTRY_COMPARE(readFile(path), QByteArray("theirs, edited"));
+    }
+
+    void savedLfUtf8RemainsEligibleForAutoSaveAfterReopening() {
+        QTemporaryDir directory; QVERIFY(directory.isValid());
+        const QString path = directory.filePath(QStringLiteral("utf8-lf.md"));
+        const QString text = QString::fromUtf8("caf\xc3\xa9\n\nlast line\n");
+        {
+            Backend backend;
+            QScopedPointer<QObject> editor(makeEditor(backend)); QVERIFY(editor);
+            editor->setProperty("text", text);
+            backend.saveAs(QUrl::fromLocalFile(path));
+            QCOMPARE(readFile(path), text.toUtf8());
+        }
+        Backend reopened;
+        QScopedPointer<QObject> editor(makeEditor(reopened)); QVERIFY(editor);
+        reopened.open(QUrl::fromLocalFile(path));
+        QVERIFY(!reopened.m_autoSaveSuspended);
+        editor->setProperty("text", text + QStringLiteral("next\n"));
+        QVERIFY(reopened.editorTextChanged());
+        QTRY_COMPARE(readFile(path), (text + QStringLiteral("next\n")).toUtf8());
     }
 
     // Saving writes UTF-8 with plain line endings, so a file holding anything
@@ -5438,21 +5499,60 @@ private:
         return formats;
     }
 
-    // Points HOME at a scratch tree holding one colors.toml, and puts it back on the way out.
+    // QDir::homePath uses USERPROFILE on Windows, not just HOME. Preserve
+    // unset variables as well as their values, including on assertion failure.
+    struct ScopedHome {
+        static bool setHomeVariable(const char *name, const QString &value) {
+#ifdef Q_OS_WIN
+            // Keep both the CRT and OS environment Unicode-safe on Windows.
+            return _wputenv_s(QString::fromLatin1(name).toStdWString().c_str(),
+                              value.toStdWString().c_str()) == 0;
+#else
+            return qputenv(name, value.toUtf8());
+#endif
+        }
+        explicit ScopedHome(const QString &path) {
+            ok = setHomeVariable("HOME", path);
+#ifdef Q_OS_WIN
+            ok = setHomeVariable("USERPROFILE", path) && ok;
+#endif
+            ok = ok && QFileInfo(QDir::homePath()).canonicalFilePath()
+                == QFileInfo(path).canonicalFilePath();
+        }
+        ~ScopedHome() {
+            if (hadHome) setHomeVariable("HOME", originalHome);
+            else {
+#ifdef Q_OS_WIN
+                setHomeVariable("HOME", QString());
+#else
+                qunsetenv("HOME");
+#endif
+            }
+#ifdef Q_OS_WIN
+            setHomeVariable("USERPROFILE", hadProfile ? originalProfile : QString());
+#endif
+        }
+        QString originalHome = qEnvironmentVariable("HOME");
+        bool hadHome = qEnvironmentVariableIsSet("HOME");
+#ifdef Q_OS_WIN
+        QString originalProfile = qEnvironmentVariable("USERPROFILE");
+        bool hadProfile = qEnvironmentVariableIsSet("USERPROFILE");
+#endif
+        bool ok = false;
+    };
+
+    // Points Qt's home at a scratch theme tree and restores it on the way out.
     struct ScopedTheme {
         explicit ScopedTheme(const QByteArray &palette) {
             const QString themeDirectory = home.path()
                 + QStringLiteral("/.local/state/omarchy/current/theme");
             QFile colorsFile(themeDirectory + QStringLiteral("/colors.toml"));
-            ok = home.isValid() && QDir().mkpath(themeDirectory)
-                && qputenv("HOME", home.path().toUtf8())
+            ok = home.isValid() && redirect.ok && QDir().mkpath(themeDirectory)
                 && colorsFile.open(QIODevice::WriteOnly | QIODevice::Text)
                 && colorsFile.write(palette) == qint64(palette.size());
         }
-        ~ScopedTheme() { qputenv("HOME", originalHome); }
-
         QTemporaryDir home;
-        QByteArray originalHome = qgetenv("HOME");
+        ScopedHome redirect{home.path()};
         bool ok = false;
     };
 

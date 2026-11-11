@@ -143,14 +143,21 @@ private slots:
         auto *window = qobject_cast<QQuickWindow *>(root.data()); QVERIFY(window);
         auto *source = root->findChild<QObject *>("sourceEditor");
         auto *view = root->findChild<QQuickItem *>("previewEditor");
-        auto *hint = root->findChild<QQuickItem *>("emptyDocumentPlaceholder"); QVERIFY(source && view && hint);
+        auto *hint = root->findChild<QQuickItem *>("emptyDocumentPlaceholder");
+        auto *caret = root->findChild<QQuickItem *>("visibleEditorCaret"); QVERIFY(source && view && hint && caret);
+        const auto hintClearsCaret = [hint, caret] {
+            return hint->mapToScene(QPointF()).x() > caret->mapToScene(QPointF(caret->width(), 0)).x();
+        };
         if (QGuiApplication::platformName() != "offscreen") QVERIFY(QTest::qWaitForWindowExposed(window));
-        QTRY_VERIFY(view->hasActiveFocus()); QTRY_VERIFY(hint->isVisible());
+        QTRY_VERIFY(view->hasActiveFocus()); QTRY_VERIFY(hint->isVisible()); QTRY_VERIFY(hintClearsCaret());
+        backend.setDesktopTextScale(1.7); QTRY_VERIFY(hintClearsCaret());
+        backend.setDesktopTextScale(1.0); QTRY_VERIFY(hintClearsCaret());
         auto *document = qvariant_cast<QQuickTextDocument *>(source->property("textDocument"))->textDocument();
         QVERIFY(document->isEmpty()); QVERIFY(!document->isUndoAvailable());
         QTest::keyClick(window, Qt::Key_X); QTRY_VERIFY(!hint->isVisible());
         QTRY_COMPARE(document->toPlainText(), QString("x"));
         QTest::keyClick(window, Qt::Key_Backspace); QTRY_VERIFY(hint->isVisible()); QVERIFY(document->isEmpty());
+        QTRY_VERIFY(hintClearsCaret());
         document->clearUndoRedoStacks();
         view->setFocus(false); QTRY_VERIFY(hint->isVisible()); view->forceActiveFocus();
         root->setProperty("readMode", true); QTRY_VERIFY(!hint->isVisible());
@@ -162,7 +169,7 @@ private slots:
         QInputMethodEvent commit; commit.setCommitString(QString::fromUtf8("かな")); QCoreApplication::sendEvent(view, &commit);
         QTRY_VERIFY(!hint->isVisible()); QTRY_COMPARE(document->toPlainText(), QString::fromUtf8("かな"));
         QVERIFY(!document->toPlainText().contains("Start writing"));
-        QVERIFY(QMetaObject::invokeMethod(source, "undo")); QTRY_VERIFY(hint->isVisible());
+        QVERIFY(QMetaObject::invokeMethod(source, "undo")); QTRY_VERIFY(hint->isVisible()); QTRY_VERIFY(hintClearsCaret());
         QVERIFY(document->isEmpty()); QVERIFY(!document->isUndoAvailable());
         QVERIFY(QMetaObject::invokeMethod(source, "redo")); QTRY_VERIFY(!hint->isVisible());
         QTRY_COMPARE(document->toPlainText(), QString::fromUtf8("かな"));

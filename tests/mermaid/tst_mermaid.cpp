@@ -4,6 +4,10 @@
 #include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QtTest>
+#include <QSaveFile>
+#ifdef Q_OS_WIN
+#include <qt_windows.h>
+#endif
 
 class MermaidTests : public QObject {
     Q_OBJECT
@@ -36,7 +40,7 @@ private slots:
     }
     void guiPathFindsCliAndItsInterpreter() {
 #ifndef Q_OS_UNIX
-        QSKIP("Rendering remains disabled on Windows.");
+        QSKIP("POSIX fixture; Windows uses native helper tests.");
 #else
         QFETCH(bool, separateNode);
         QFETCH(bool, symlinkCli);
@@ -81,7 +85,7 @@ private slots:
     }
     void missingNodeAndNonExecutableCliRemainSource() {
 #ifndef Q_OS_UNIX
-        QSKIP("Rendering remains disabled on Windows.");
+        QSKIP("POSIX fixture; Windows uses native helper tests.");
 #else
         QTemporaryDir directory; QVERIFY(directory.isValid());
         QFile cli(directory.filePath("mmdc")); QVERIFY(cli.open(QIODevice::WriteOnly));
@@ -97,6 +101,99 @@ private slots:
         QVERIFY(missingNode.request(code, false, 500).isNull()); QCOMPARE(ready.count(), 1);
 #endif
     }
+#ifdef Q_OS_WIN
+    void windowsNpmDiscovery() {
+        QTemporaryDir directory; QVERIFY(directory.isValid());
+        const auto write = [](const QString &path, const QByteArray &bytes) {
+            QFile file(path); return file.open(QIODevice::WriteOnly) && file.write(bytes) == bytes.size();
+        };
+        QVERIFY(write(directory.filePath("mmdc.cmd"), "@exit /b 99\r\n"));
+        QVERIFY(write(directory.filePath("node.exe"), "resolver-only fixture"));
+        QVERIFY(QDir().mkpath(directory.filePath("node_modules/@mermaid-js/mermaid-cli/src")));
+        const QString package = directory.filePath("node_modules/@mermaid-js/mermaid-cli/");
+        QVERIFY(write(package + "src/cli.js", "unused"));
+        auto environment = QProcessEnvironment::systemEnvironment(); environment.insert("PATH", directory.path());
+        const auto parentPath = qgetenv("PATH");
+        MermaidRenderer unknown(nullptr, environment, {}); QVERIFY(unknown.m_executable.isEmpty());
+        QVERIFY(write(package + "package.json", R"({"name":"@mermaid-js/mermaid-cli","bin":{"mmdc":"./src/cli.js"}})"));
+        MermaidRenderer found(nullptr, environment, {});
+        QCOMPARE(QFileInfo(found.m_executable).canonicalFilePath(), QFileInfo(directory.filePath("node.exe")).canonicalFilePath());
+        QCOMPARE(found.m_argumentPrefix, QStringList{package + "src/cli.js"});
+        QCOMPARE(qgetenv("PATH"), parentPath);
+        QVERIFY(QFile::remove(directory.filePath("node.exe")));
+        MermaidRenderer missingNode(nullptr, environment, {}); QVERIFY(missingNode.m_executable.isEmpty());
+        environment.remove("PATH");
+        MermaidRenderer noPath(nullptr, environment, {}); QVERIFY(noPath.m_executable.isEmpty());
+    }
+    void windowsFailedStartDrainsQueue() {
+        QTemporaryDir directory; QVERIFY(directory.isValid());
+        QFile invalid(directory.filePath("mmdc.exe"));
+        QVERIFY(invalid.open(QIODevice::WriteOnly)); invalid.write("not a PE executable"); invalid.close();
+        auto environment = QProcessEnvironment::systemEnvironment(); environment.insert("PATH", directory.path());
+        MermaidRenderer renderer(nullptr, environment, {});
+        QSignalSpy ready(&renderer, &MermaidRenderer::ready);
+        // Queue first, then deliberately exercise synchronous FailedToStart.
+        renderer.m_running = true;
+        renderer.request(fenced("flowchart LR\nA-->B"), false, 500);
+        renderer.request(fenced("flowchart LR\nC-->D"), false, 500);
+        renderer.m_running = false;
+        renderer.startNext();
+        QTRY_COMPARE_WITH_TIMEOUT(ready.count(), 2, 5000);
+        QVERIFY(renderer.m_queue.isEmpty()); QVERIFY(!renderer.m_running);
+        QVERIFY(!renderer.m_timeout.isActive());
+        QCOMPARE(renderer.m_process.state(), QProcess::NotRunning);
+        QVERIFY(renderer.m_cache.isEmpty());
+    }
+    void windowsJobCleansDescendants_data() {
+        QTest::addColumn<QString>("action");
+        QTest::newRow("normal-exit") << QString("finish");
+        QTest::newRow("crashed-parent") << QString("crash");
+        QTest::newRow("timeout") << QString("timeout");
+        QTest::newRow("destruction") << QString("destroy");
+    }
+    void windowsJobCleansDescendants() {
+        QFETCH(QString, action);
+        // Spaces, Unicode and cmd metacharacters must remain literal path data.
+        QTemporaryDir directory(QDir::tempPath() + QString::fromUtf8("/poncho ü & % ! (test)-XXXXXX"));
+        QVERIFY(directory.isValid());
+        QVERIFY(QFile::copy(QCoreApplication::applicationFilePath(), directory.filePath("node.exe")));
+        const QString package = directory.filePath("node_modules/@mermaid-js/mermaid-cli/");
+        QVERIFY(QDir().mkpath(package + "src"));
+        QFile shim(directory.filePath("mmdc.cmd")); QVERIFY(shim.open(QIODevice::WriteOnly));
+        shim.write("@exit /b 99\r\n"); shim.close(); // Never run this batch shim.
+        QFile metadata(package + "package.json"); QVERIFY(metadata.open(QIODevice::WriteOnly));
+        metadata.write(R"({"name":"@mermaid-js/mermaid-cli","bin":{"mmdc":"./src/cli.js"}})"); metadata.close();
+        QFile entry(package + "src/cli.js"); QVERIFY(entry.open(QIODevice::WriteOnly)); entry.close();
+        QImage fixture(40, 20, QImage::Format_ARGB32); fixture.fill(Qt::green);
+        QVERIFY(fixture.save(directory.filePath("fixture.png")));
+        auto environment = QProcessEnvironment::systemEnvironment();
+        environment.insert("PATH", directory.path() + ";" + QCoreApplication::applicationDirPath() + ";" + environment.value("PATH"));
+        environment.insert("PONCHOWRITER_TEST_PNG", directory.filePath("fixture.png"));
+        environment.insert("PONCHOWRITER_TEST_PID", directory.filePath("pid"));
+        environment.insert("PONCHOWRITER_TEST_HOLD", action == "finish" || action == "crash" ? "0" : "1");
+        environment.insert("PONCHOWRITER_TEST_CRASH", action == "crash" ? "1" : "0");
+        auto renderer = std::unique_ptr<MermaidRenderer>(new MermaidRenderer(nullptr, environment, {}));
+        QSignalSpy ready(renderer.get(), &MermaidRenderer::ready);
+        const auto code = fenced("flowchart LR\nA-->B");
+        QVERIFY(renderer->request(code, false, 500).isNull());
+        QTRY_VERIFY_WITH_TIMEOUT(QFileInfo::exists(directory.filePath("pid-leaf")), 10000);
+        if (action == "timeout") { renderer->m_timeout.setInterval(1); renderer->m_timeout.start(); }
+        if (action == "destroy") renderer.reset();
+        else QTRY_COMPARE_WITH_TIMEOUT(ready.count(), 1, 10000);
+        if (action == "finish") QCOMPARE(renderer->request(code, false, 500).size(), QSize(40, 20));
+        for (const auto &suffix : {"-child", "-leaf"}) {
+            QFile pidFile(directory.filePath(QString("pid") + suffix)); QVERIFY(pidFile.open(QIODevice::ReadOnly));
+            const DWORD pid = pidFile.readAll().trimmed().toULong(); QVERIFY(pid);
+            HANDLE process = OpenProcess(SYNCHRONIZE, FALSE, pid);
+            if (process) {
+                const DWORD result = WaitForSingleObject(process, 5000); CloseHandle(process);
+                QCOMPARE(result, DWORD(WAIT_OBJECT_0));
+            } else {
+                QCOMPARE(GetLastError(), DWORD(ERROR_INVALID_PARAMETER)); // Already reaped.
+            }
+        }
+    }
+#endif
     void platformFallbacksAreExplicit() {
 #ifdef Q_OS_MACOS
         QCOMPARE(MermaidRenderer::defaultSearchDirectories(), QStringList({"/opt/homebrew/bin", "/usr/local/bin", "/opt/local/bin"}));
@@ -164,5 +261,45 @@ private slots:
 #endif
     }
 };
-QTEST_GUILESS_MAIN(MermaidTests)
+#ifdef Q_OS_WIN
+// This executable doubles as fake Node/Chromium: no browser or downloads.
+static int windowsHelper(const QStringList &arguments) {
+    BOOL inJob = FALSE;
+    if (!IsProcessInJob(GetCurrentProcess(), nullptr, &inJob) || !inJob) return 86;
+    const QString marker = qEnvironmentVariable("PONCHOWRITER_TEST_PID");
+    const bool child = arguments.value(1) == "--mermaid-test-child";
+    const bool leaf = arguments.value(1) == "--mermaid-test-leaf";
+    if (!leaf) {
+        qint64 pid = 0;
+        if (!QProcess::startDetached(QCoreApplication::applicationFilePath(),
+                                    {child ? "--mermaid-test-leaf" : "--mermaid-test-child"}, {}, &pid)) return 87;
+        QSaveFile file(marker + (child ? "-leaf" : "-child"));
+        if (!file.open(QIODevice::WriteOnly)) return 88;
+        if (file.write(QByteArray::number(pid)) <= 0 || !file.commit()) return 88;
+    }
+    if (child || leaf || qEnvironmentVariable("PONCHOWRITER_TEST_HOLD") == "1") {
+        QThread::sleep(60);
+        return 89;
+    }
+    QElapsedTimer wait; wait.start();
+    while (!QFileInfo::exists(marker + "-leaf") && wait.elapsed() < 5000) QThread::msleep(10);
+    if (qEnvironmentVariable("PONCHOWRITER_TEST_CRASH") == "1") {
+        // Recognized by QProcess as CrashExit, without an interactive crash dialog.
+        TerminateProcess(GetCurrentProcess(), 0xC0000005);
+        return 91;
+    }
+    const int output = arguments.indexOf("-o");
+    return output > 0 && QFile::copy(qEnvironmentVariable("PONCHOWRITER_TEST_PNG"), arguments.value(output + 1)) ? 0 : 90;
+}
+#endif
+int main(int argc, char **argv) {
+    QCoreApplication app(argc, argv);
+#ifdef Q_OS_WIN
+    const auto arguments = app.arguments();
+    if (arguments.value(1).endsWith("/src/cli.js") || arguments.value(1).startsWith("--mermaid-test-"))
+        return windowsHelper(arguments);
+#endif
+    MermaidTests tests;
+    return QTest::qExec(&tests, argc, argv);
+}
 #include "tst_mermaid.moc"

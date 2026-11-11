@@ -2,6 +2,9 @@ cmake_minimum_required(VERSION 3.24)
 project(PonchoWriterDependencies LANGUAGES CXX)
 include(ExternalProject)
 find_package(Qt6 6.7 REQUIRED COMPONENTS Core Gui Network)
+# KSyntaxHighlighting generates PHP/Twig/Doxygen definitions even without tests.
+# Fail early and forward an explicit native Perl path into the external build.
+find_package(Perl REQUIRED)
 
 # Standalone, pinned Kate syntax engine. No Kate editor, WebEngine, or desktop.
 set(prefix "${CMAKE_BINARY_DIR}/install")
@@ -24,6 +27,7 @@ ExternalProject_Add(syntax-highlighting
         -DBUILD_TESTING:BOOL=OFF -DBUILD_QCH:BOOL=OFF -DKF_SKIP_PO_PROCESSING:BOOL=ON
         -DKDE_INSTALL_LIBDIR:PATH=lib -DKDE_INSTALL_INCLUDEDIR_KF:PATH=include/KF6
         -DKSYNTAXHIGHLIGHTING_USE_GUI:BOOL=ON -DQRC_SYNTAX:BOOL=ON
+        -DPERL_EXECUTABLE:FILEPATH=${PERL_EXECUTABLE}
         -DBUILD_codeeditor:BOOL=OFF -DBUILD_codepdfprinter:BOOL=OFF -DBUILD_minimaltest:BOOL=OFF
         -DCMAKE_DISABLE_FIND_PACKAGE_Qt6Quick:BOOL=ON -DCMAKE_DISABLE_FIND_PACKAGE_XercesC:BOOL=ON
         -DCMAKE_CXX_STANDARD:STRING=17 -DCMAKE_CXX_STANDARD_REQUIRED:BOOL=ON

@@ -1549,8 +1549,10 @@ ApplicationWindow {
                 }
 
                 Text {
-                    anchors.left: parent.left
-                    anchors.top: parent.top
+                    // Reserve room for the independently drawn insertion caret.
+                    // This is decorative only: never pad the canonical document.
+                    x: presentation.displayCursorRectangle.x + 1 + win.scaledSize(2)
+                    y: presentation.displayCursorRectangle.y
                     objectName: "emptyDocumentPlaceholder"
                     text: "# Start writing"
                     visible: editor.length === 0 && !win.readMode && !presentation.inputMethodComposing

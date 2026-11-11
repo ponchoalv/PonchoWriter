@@ -14,6 +14,7 @@ Created and maintained by **Alfonso Alvarez**: [ponchoalv/PonchoWriter](https://
 [printing and PDF layout guide](docs/printing.md),
 [file/window routing guide](docs/opening-files-and-windows.md), and
 [Windows, macOS and Linux installation guide](docs/install.md).
+For native Windows builds, see the [winget/Qt/Perl setup and `build.bat` guide](docs/windows-build.md).
 
 ## Features
 

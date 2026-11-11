@@ -10,6 +10,7 @@
 #include <QSemaphore>
 #include <QFont>
 #include <QFontDatabase>
+#include <QIcon>
 #include <QAbstractTextDocumentLayout>
 #include <QTextTable>
 #include <QTextBlock>
@@ -105,6 +106,16 @@ class PonchoWriterTest : public QObject {
     }
 
 private slots:
+    void bundledApplicationIconWorksWithoutSystemTheme() {
+        const QIcon fallback(QStringLiteral(":/icons/ponchowriter.png"));
+        QVERIFY(!fallback.isNull());
+        const auto icon = QIcon::fromTheme(QStringLiteral("ponchowriter-test-missing-theme-icon"), fallback);
+        for (const int size : {16, 32, 48, 256}) {
+            const auto pixmap = icon.pixmap(QSize(size, size), 1.0);
+            QVERIFY(!pixmap.isNull());
+            QCOMPARE(pixmap.size(), QSize(size, size));
+        }
+    }
     void renamedProfileKeepsDraftStoreAndImportsOnlyMissingPreferences() {
         QTemporaryDir temporary; QVERIFY(temporary.isValid());
         const QString old = temporary.filePath("previous");

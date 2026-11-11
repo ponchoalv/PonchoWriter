@@ -439,6 +439,29 @@ PonchoWriter is a native Markdown editor with Edit/Read views, not a browser, wh
 
 Native [language-fence syntax highlighting](syntax-highlighting.md) is implemented separately in Edit and Read, using the bundled library with no Node/browser requirement. It does not provide autocomplete, LSP or a graphical code editor.
 
+### Windows: install the optional renderer
+
+Install Node LTS from CMD or PowerShell:
+
+```text
+winget install --id OpenJS.NodeJS.LTS --exact --source winget
+```
+
+Close and reopen CMD so it sees Node's updated PATH, then install and verify Mermaid CLI:
+
+```bat
+node --version
+npm --version
+npm install --global @mermaid-js/mermaid-cli
+where node
+where mmdc
+mmdc --version
+```
+
+Ensure both Node's installation directory and `%APPDATA%\npm` are in your **user PATH**, then restart PonchoWriter. Explorer-launched apps may need a sign-out/sign-in to inherit updated PATH. The CLI may download its Puppeteer/Chrome browser; follow your organization's network/security policy if that fails. See the [Windows guide](windows-build.md#4-optional-mermaid-dependencies) for discovery details and browser troubleshooting.
+
+These tools are optional runtime dependencies. Automated Mermaid tests use a synthetic helper: installing Node/Mermaid is not a fix for every test failure. Report the exact failing test and assertion/output.
+
 ### macOS: install the optional renderer
 
 With a supported Node/npm installed (for example `brew install node` if missing):

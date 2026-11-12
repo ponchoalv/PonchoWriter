@@ -64,6 +64,18 @@ In **Edit**, ordinary clicking keeps editing. **Cmd-click on macOS / Ctrl-click 
 
 Typing `[` / `{` and straight quotes pairs them conservatively. Selections are surrounded; an existing closer is skipped; Backspace inside an empty pair deletes both. Word-interior apostrophes/escapes, paste and IME commit text are not automatically transformed.
 
+### Literal punctuation and backticks
+
+Outside code, a backslash escapes ASCII punctuation: `\*literal\*`, `\_name\_`, `\# not a heading`, and `\\` (one literal backslash). Letters and spaces are **not** backslash escapes. Use code for literal spacing rather than `\ `.
+
+Inside inline code, backslashes are literal. To include backticks, choose a longer matching delimiter run; for example:
+
+~~~markdown
+`` C-x ` ``
+~~~
+
+This renders as a code span containing **C-x followed by a backtick**. The one padding space at each end is removed. Closing runs must match the opening length exactly; single and double backticks are not interchangeable. Edit keeps the original code/escape syntax available, and switching to Read never rewrites the Markdown.
+
 ## Existing writing behavior
 
 - Bold, italic, strike and link markers are caret-aware: source becomes visible when editing the relevant span.

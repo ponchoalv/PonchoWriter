@@ -3130,6 +3130,66 @@ private slots:
         QCOMPARE(afterCode.constFirst().kind, MarkdownHighlighter::InlineKind::Italic);
     }
 
+    void matchesExactBacktickRuns_data() {
+        QTest::addColumn<QString>("text");
+        QTest::addColumn<QString>("expected");
+        QTest::newRow("shortcut") << QStringLiteral("`` C-x ` ``") << QStringLiteral("`` C-x ` ``");
+        QTest::newRow("three-ticks") << QStringLiteral("```a `` b ` c```") << QStringLiteral("```a `` b ` c```");
+        QTest::newRow("mismatched") << QStringLiteral("``a`") << QString();
+        QTest::newRow("backslash-does-not-split-closer") << QStringLiteral(R"(`C-x \``)") << QString();
+        QTest::newRow("no-partial-run") << QStringLiteral("`a``") << QString();
+        QTest::newRow("unmatched-then-valid") << QStringLiteral("before ``` unmatched ``*literal*``") << QStringLiteral("``*literal*``");
+        QTest::newRow("escaped-opener") << QStringLiteral(R"(\`*italic*\`)") << QString();
+        QTest::newRow("escaped-first-of-two") << QStringLiteral(R"(\``*literal*`)") << QStringLiteral("`*literal*`");
+        QTest::newRow("literal-backslash-before-closer") << QStringLiteral(R"(``code\``)") << QStringLiteral(R"(``code\``)");
+        QTest::newRow("even-slashes") << QStringLiteral(R"(\\``*literal*``)") << QStringLiteral("``*literal*``");
+        QTest::newRow("space-only") << QStringLiteral("`` ``") << QStringLiteral("`` ``");
+    }
+
+    void matchesExactBacktickRuns() {
+        QFETCH(QString, text);
+        QFETCH(QString, expected);
+        const auto spans = MarkdownHighlighter::codeSpans(text);
+        QCOMPARE(spans.size(), expected.isEmpty() ? 0 : 1);
+        if (!expected.isEmpty()) {
+            QCOMPARE(text.mid(spans.first().start, spans.first().length), expected);
+            QCOMPARE(spans.first().start, text.indexOf(expected));
+        }
+    }
+
+    void keepsLongDelimitedCodeLiteralAndSeparate() {
+        QVERIFY(MarkdownHighlighter::inlineMarkup(
+            QStringLiteral("``*literal* _literal_ [literal](url) ` tick``")).isEmpty());
+        const QString first = QStringLiteral("``one ` tick``");
+        const QString second = QStringLiteral("```two `` ticks```");
+        const QString text = first + QStringLiteral(" and ") + second;
+        const auto spans = MarkdownHighlighter::codeSpans(text);
+        QCOMPARE(spans.size(), 2);
+        QCOMPARE(spans.at(0).start, 0);
+        QCOMPARE(spans.at(0).length, first.size());
+        QCOMPARE(spans.at(1).start, first.size() + 5);
+        QCOMPARE(spans.at(1).length, second.size());
+    }
+
+    void rendersMarkdownEscapesAndLiteralBackticks() {
+        // CommonMark permits escapes for all ASCII punctuation, not spaces or letters.
+        for (ushort ch = 33; ch <= 126; ++ch) {
+            if (QChar(ch).isLetterOrNumber())
+                continue;
+            QTextDocument rendered;
+            rendered.setMarkdown(QString(QLatin1Char('\\')) + QChar(ch));
+            QCOMPARE(rendered.toPlainText(), QString(QChar(ch)));
+        }
+        QTextDocument rendered;
+        rendered.setMarkdown(QStringLiteral("`` C-x ` ``"));
+        QCOMPARE(rendered.toPlainText(), QStringLiteral("C-x `"));
+        rendered.setMarkdown(QStringLiteral(R"(`C-x \``)"));
+        // The final two adjacent ticks form a run of two, not a single closer.
+        QCOMPARE(rendered.toPlainText(), QStringLiteral("`C-x ``"));
+        rendered.setMarkdown(QStringLiteral(R"(\a and a\ b)"));
+        QCOMPARE(rendered.toPlainText(), QStringLiteral(R"(\a and a\ b)"));
+    }
+
     void keepsEnclosedCodeStyling_data() {
         QTest::addColumn<QString>("text");
         QTest::addColumn<int>("kind");

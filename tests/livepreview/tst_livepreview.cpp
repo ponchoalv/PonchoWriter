@@ -310,6 +310,25 @@ private slots:
         QVERIFY(!view->begin().blockFormat().nonBreakableLines());
         QVERIFY(!view->begin().blockFormat().hasProperty(QTextFormat::UserProperty + 120));
     }
+    void escapesAndBacktickRunsSurviveModeSwitches() {
+        const QString text = QStringLiteral(R"(\*literal\* and `` C-x ` ``
+
+\# not a heading)");
+        source->setPlainText(text); source->clearUndoRedoStacks(); flush();
+        for (int n = 0; n < 3; ++n) {
+            controller->setReadMode(true); flush();
+            QCOMPARE(view->toPlainText(), QStringLiteral("*literal* and C-x `\n# not a heading"));
+            controller->setReadMode(false); flush();
+            QCOMPARE(view->toPlainText(), text);
+            QCOMPARE(source->toPlainText(), text);
+            QVERIFY(!source->isUndoAvailable());
+        }
+        QTextCursor change(source); change.movePosition(QTextCursor::End);
+        change.insertText(QStringLiteral(" changed")); flush();
+        source->undo(); flush();
+        QCOMPARE(source->toPlainText(), text);
+        QVERIFY(!source->isUndoAvailable());
+    }
     void modeSwitchesRetainEditBlocksHighlighterAndCachedRead() {
         const QString text = QString("Ordinary paragraph with **strong** text.\n\n").repeated(800)
             + "```cpp\nint answer = 42;\n```\n\nlast";

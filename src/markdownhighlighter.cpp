@@ -4,6 +4,7 @@
 #include <QColor>
 #include <QFont>
 #include <QFontMetricsF>
+#include <QHash>
 #include <QSignalBlocker>
 #include <QSet>
 #include <QTextBlock>
@@ -789,27 +790,43 @@ QList<MarkdownHighlighter::Span> MarkdownHighlighter::codeSpans(const QString &t
     if (!text.contains(QLatin1Char('`')))
         return spans;
 
-    static const QRegularExpression codeRe(QStringLiteral("`([^`]+)`"));
-    int from = 0;
-    while ((from = text.indexOf(QLatin1Char('`'), from)) >= 0) {
+    // Code delimiters are maximal, equal-length runs, not individual ticks.
+    // Index the next closing run once to avoid rescanning unmatched openers.
+    // Keep matching rules aligned with SpellingProse::words (spellingprose.cpp),
+    // which additionally handles paragraph boundaries and excluded regions.
+    struct Run { int start; int length; bool escaped; int next = -1; };
+    QList<Run> runs;
+    for (int p = 0; p < text.size();) {
+        if (text.at(p) != QLatin1Char('`')) {
+            ++p;
+            continue;
+        }
+        const int start = p++;
+        while (p < text.size() && text.at(p) == QLatin1Char('`'))
+            ++p;
         int backslashes = 0;
-        for (int i = from - 1; i >= 0 && text.at(i) == QLatin1Char('\\'); --i)
+        for (int i = start - 1; i >= 0 && text.at(i) == QLatin1Char('\\'); --i)
             ++backslashes;
-        if (backslashes % 2 != 0) {
-            ++from;
+        runs.append({start, p - start, backslashes % 2 != 0});
+    }
+    QHash<int, int> nextRun;
+    for (int r = int(runs.size()) - 1; r >= 0; --r) {
+        Run &run = runs[r];
+        // An escaped first tick leaves the remainder available as an opener.
+        // In code, however, backslashes are literal and closers use the full run.
+        const int openingLength = run.length - (run.escaped ? 1 : 0);
+        if (openingLength > 0)
+            run.next = nextRun.value(openingLength, -1);
+        nextRun.insert(run.length, r);
+    }
+    for (int r = 0; r < runs.size(); ++r) {
+        const Run &run = runs.at(r);
+        if (run.next < 0)
             continue;
-        }
-
-        // Backslashes escape opening backticks in prose, but are literal once
-        // inside code, including immediately before the closing backtick.
-        const auto match = codeRe.match(text, from, QRegularExpression::NormalMatch,
-                                        QRegularExpression::AnchorAtOffsetMatchOption);
-        if (!match.hasMatch()) {
-            ++from;
-            continue;
-        }
-        spans.append({from, int(match.capturedLength(0))});
-        from = match.capturedEnd(0);
+        const Run &close = runs.at(run.next);
+        const int start = run.start + (run.escaped ? 1 : 0);
+        spans.append({start, close.start + close.length - start});
+        r = run.next;
     }
     return spans;
 }

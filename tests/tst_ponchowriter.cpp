@@ -769,8 +769,9 @@ private slots:
             QVERIFY(QMetaObject::invokeMethod(source, "undo"));
             QTRY_COMPARE(source->property("text").toString(), text);
             QVERIFY(QMetaObject::invokeMethod(root.data(), "toggleReadMode")); QTRY_VERIFY(root->property("readMode").toBool());
-            QTRY_VERIFY(document()->toRawText().contains(QString(QChar::LineSeparator) + "second line"));
-            QVERIFY(!document()->toPlainText().contains("PWQUOTE"));
+            QTRY_VERIFY(document()->toRawText().contains(QString(" second line")));
+            QVERIFY(!document()->toRawText().contains(QChar::LineSeparator));
+            QVERIFY(!document()->toPlainText().contains("PWHARDBREAK"));
             QCOMPARE(source->property("text").toString(), text);
             QVERIFY(QMetaObject::invokeMethod(root.data(), "toggleReadMode")); QTRY_VERIFY(!root->property("readMode").toBool());
             QTRY_COMPARE(document()->toPlainText(), text);

@@ -49,6 +49,17 @@ int redPixels(const QImage &image) {
 class PrintingTest : public QObject {
     Q_OBJECT
 private slots:
+    void standardLineBreaksMatchReadMode() {
+        const QString markdown = "soft\nwords\n\nhard\\\nbreak\n\n> quoted\n> words\n>\n> line  \n> break";
+        auto job = Printing::build(markdown, options(), {});
+        QVERIFY2(job.error.isEmpty(), qPrintable(job.error));
+        QCOMPARE(job.sections.size(), size_t(1));
+        const QString paragraph(QChar::ParagraphSeparator), hard(QChar::LineSeparator);
+        QCOMPARE(job.sections.front().document->toRawText(),
+                 "soft words" + paragraph + "hard" + hard + "break" + paragraph
+                 + "quoted words" + paragraph + "line" + hard + "break");
+        QCOMPARE(job.sections.front().document->blockCount(), 4);
+    }
     void geometryUsesLayoutUnitsRatherThanPlatformFormatUnits_data() {
         QTest::addColumn<QMarginsF>("margins");
         QTest::newRow("default") << QMarginsF(15, 15, 15, 15);

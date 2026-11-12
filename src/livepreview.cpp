@@ -638,10 +638,10 @@ void LivePreview::buildReadDocument(const QString &source) {
         markdown.replace(it->start, it->end - it->start, QStringLiteral("![%1](%2)").arg(table ? "Table" : "Mermaid diagram", name));
     }
     const QString originalReadMarkdown = markdown;
-    QStringList quoteBreaks;
-    markdown = ListPreview::readQuoteBreaks(markdown, &quoteBreaks);
+    QStringList hardBreaks;
+    markdown = ListPreview::readHardBreaks(markdown, &hardBreaks);
     rendered.setMarkdown(markdown, QTextDocument::MarkdownDialectGitHub);
-    if (!ListPreview::restoreReadQuoteBreaks(rendered, quoteBreaks))
+    if (!ListPreview::restoreReadHardBreaks(rendered, hardBreaks))
         rendered.setMarkdown(originalReadMarkdown, QTextDocument::MarkdownDialectGitHub); // No sentinel may escape.
     markdown = originalReadMarkdown;
     // Resolve every image ourselves, including inline images. Qt Quick must

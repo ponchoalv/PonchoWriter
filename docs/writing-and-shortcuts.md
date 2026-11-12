@@ -4,7 +4,7 @@ This is the user guide for [PonchoWriter](https://github.com/ponchoalv/PonchoWri
 
 ## Files and windows
 
-Opening a file already owned by this app activates its existing window without reloading. A different file opens separately; the file picker no longer replaces or discards the originating draft. Cmd/Ctrl+N always opens a fresh untitled window. Save As cannot overwrite a file owned by another window. Recovery drafts retain independent slots and do not get consumed by New Window.
+Launching the app without a file opens a fresh untitled window, including from the macOS Dock/Finder. Recovered drafts remain separate. Simply switching back to the app does not create a window. Opening a file already owned by this app activates its existing window without reloading. A different file opens separately; the file picker no longer replaces or discards the originating draft. Cmd/Ctrl+N always opens a fresh untitled window. Save As cannot overwrite a file owned by another window. Recovery drafts retain independent slots and do not get consumed by New Window.
 
 On macOS, prefer `open -a "/path/to/ponchowriter.app" "/path/to/note.md"` rather than `-n` or `--args`. Windows/Linux executable launches forward file requests through the same local Qt broker. Quit older, un-routed copies before using this build. If forwarding fails, retry after closing old copies; do not delete recovery data or compatible lock files to force a second owner.
 

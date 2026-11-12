@@ -124,8 +124,8 @@ void WindowManager::start(const QStringList &files) {
     }
     m_startupBlank = blank;
     if (files.isEmpty()) {
-        if (m_entries.size() == 1 && blank) activate(blank);
-        else if (blank) remove(blank);
+        // Recovery restores drafts, not the user's request for a blank document.
+        if (blank) activate(blank); else newWindow();
     } else {
         for (const QString &file : files) openFile(QUrl::fromLocalFile(file));
         if (m_startupBlank) remove(m_startupBlank);
@@ -134,7 +134,7 @@ void WindowManager::start(const QStringList &files) {
 
 void WindowManager::openFiles(const QStringList &files) {
     if (files.isEmpty()) {
-        if (m_entries.empty()) newWindow(); else activate(m_entries.back().get());
+        newWindow();
         return;
     }
     for (const auto &file : files) openFile(QUrl::fromLocalFile(file));

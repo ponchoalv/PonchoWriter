@@ -11,6 +11,8 @@ include(spellchecking.pri)
 TEMPLATE = app
 win32: RC_ICONS = $$PWD/assets/ponchowriter.ico
 macx {
+    OBJECTIVE_SOURCES += src/macapplicationreopen.mm
+    LIBS += -framework AppKit
     ICON = assets/ponchowriter.icns
     QMAKE_INFO_PLIST = assets/Info.plist
     syntaxNotices.files = $$PWD/third_party/ksyntaxhighlighting

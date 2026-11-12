@@ -33,6 +33,9 @@ int main(int argc, char *argv[]) {
     app.setQuitOnLastWindowClosed(false);
 
     FileOpenRequests nativeFiles(&app);
+#ifdef Q_OS_MACOS
+    installMacReopenHandler(&nativeFiles);
+#endif
     std::unique_ptr<WindowManager> windows;
     std::vector<std::unique_ptr<InstanceBroker>> brokers;
     QList<QStringList> requests;

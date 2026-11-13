@@ -8,9 +8,18 @@ try {
     if (!(Test-Path -LiteralPath $exe) -or !(Test-Path -LiteralPath "$DistDir\notices\COPYRIGHT.md")) {
         throw 'A complete build.bat --deploy folder with notices is required.'
     }
-    $output = & $exe --version
-    if ($LASTEXITCODE -ne 0) { throw 'Could not read the deployed application version.' }
-    $match = [regex]::Match(($output -join "`n"), '(?im)^omawrite\s+(\d+\.\d+\.\d+)\s*$')
+    # A GUI-subsystem EXE at the end of a PowerShell pipeline is asynchronous,
+    # even in an assignment. A downstream cmdlet forces waiting/output capture.
+    $global:LASTEXITCODE = 1
+    $ErrorActionPreference = 'Continue'
+    $output = & $exe --version 2>&1 | Out-String
+    $versionExit = $global:LASTEXITCODE
+    $ErrorActionPreference = 'Stop'
+    if ($versionExit -ne 0) {
+        $hex = '{0:X8}' -f ($versionExit -band 0xffffffffL)
+        throw "Could not read the deployed application version: $exe (exit $versionExit / 0x$hex). Check the deployed Qt/compiler runtime DLLs.`n$output"
+    }
+    $match = [regex]::Match($output, '(?im)^omawrite\s+(\d+\.\d+\.\d+)\s*$')
     if (!$match.Success) { throw "Unexpected --version output: $output" }
     $version = $match.Groups[1].Value
     $destination = Join-Path (Split-Path $DistDir -Parent) 'installer'

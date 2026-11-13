@@ -130,9 +130,15 @@ jobs:
         env:
           QT_QPA_PLATFORM: offscreen
           # Offscreen uses the generic font database, not Windows' native one.
-          # Qt no longer ships lib/fonts; supply the runner's installed fonts.
-          QT_QPA_FONTDIR: C:/Windows/Fonts
+          QT_QPA_FONTDIR: ${{ github.workspace }}/build/windows-ci/fonts
         run: |
+          $fonts = New-Item -ItemType Directory -Force $env:QT_QPA_FONTDIR
+          Get-ChildItem C:/Windows/Fonts -File | Where-Object { $_.Extension -in '.ttf', '.ttc', '.otf' } | Copy-Item -Destination $fonts.FullName
+          # Server images lack a CJK fallback. Keep the wide-character hit test
+          # intact using Noto CJK (SIL OFL), pinned to the Sans 2.004 release.
+          $cjk = Join-Path $fonts.FullName NotoSansCJKsc-Regular.otf
+          Invoke-WebRequest 'https://raw.githubusercontent.com/notofonts/noto-cjk/523d033d6cb47f4a80c58a35753646f5c3608a78/Sans/OTF/SimplifiedChinese/NotoSansCJKsc-Regular.otf' -OutFile $cjk
+          if ((Get-FileHash $cjk -Algorithm SHA256).Hash -ne '2c76254f6fc379fddfce0a7e84fb5385bb135d3e399294f6eeb6680d0365b74b') { throw 'Unexpected Noto CJK font checksum' }
           $global:LASTEXITCODE = 1
           & build/windows-ci/omawrite_editor_tests.exe -o build/windows-ci/editor-all-tests.txt,txt | Out-Host
           $testExit = $LASTEXITCODE

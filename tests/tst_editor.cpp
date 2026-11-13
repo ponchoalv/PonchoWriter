@@ -3218,7 +3218,11 @@ private slots:
         editor->setProperty("text", QStringLiteral("[\u5bbd](https://example.com)"));
         const QRectF wide = boxAt(1);
         const qreal wideRight = boxAt(2).x();
-        QVERIFY(wideRight - wide.x() > editor->property("font").value<QFont>().pixelSize() * 0.7);
+        const QFont linkFont = editor->property("font").value<QFont>();
+        QVERIFY2(wideRight - wide.x() > linkFont.pixelSize() * 0.7,
+                 qPrintable(QStringLiteral("Wide glyph advance %1, font %2, pixel size %3, CJK available %4")
+                                .arg(wideRight - wide.x()).arg(linkFont.family())
+                                .arg(linkFont.pixelSize()).arg(QFontMetricsF(linkFont).inFont(QChar(0x5bbd)))));
         QCOMPARE(urlUnder(wideRight - 1, wide.y() + wide.height() / 2),
                  QStringLiteral("https://example.com"));
 

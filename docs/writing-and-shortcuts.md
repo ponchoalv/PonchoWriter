@@ -37,6 +37,7 @@ Qt normally maps a source-code `Ctrl` modifier to **Command** on macOS and `Meta
 | Close search | Escape in search panel | Escape in search panel |
 | Bold | Cmd+B | Ctrl+B |
 | Italic | Cmd+I | Ctrl+I |
+| Underline | Cmd+U | Ctrl+U |
 | Strikethrough | Cmd+Shift+X | Ctrl+Shift+X |
 | Inline code | Cmd+T | Ctrl+T |
 | Fenced code block | Cmd+Shift+T | Ctrl+Shift+T |
@@ -60,6 +61,8 @@ In **Edit**, ordinary clicking keeps editing. **Cmd-click on macOS / Ctrl-click 
 
 ## Code formatting and automatic pairs
 
+**Cmd/Ctrl+U** toggles underline using `<u>text</u>` (Markdown has no standard underline delimiter). Edit previews the underline and hides the HTML tags until the caret or selection touches the span; Read renders the same underline. Like bold/italic, this is Edit-only and one undo restores the original source.
+
 **Cmd/Ctrl+T** toggles inline code around the selection; **Cmd/Ctrl+Shift+T** toggles a fenced code block. Empty selections put the caret inside a new pair/block. Fences occupy separate lines, adding newlines around a mid-paragraph selection when needed. Longer backtick delimiters protect literal backticks in the body. Both are Edit-only, retain the body selection and use one canonical undo. Multiple unrelated spans/blocks are wrapped safely rather than having outer delimiters stripped.
 
 Typing `[` / `{` and straight quotes pairs them conservatively. Selections are surrounded; an existing closer is skipped; Backspace inside an empty pair deletes both. Word-interior apostrophes/escapes, paste and IME commit text are not automatically transformed.
@@ -74,7 +77,7 @@ Inside inline code, backslashes are literal. To include backticks, choose a long
 `` C-x ` ``
 ~~~
 
-This renders as a code span containing **C-x followed by a backtick**. The one padding space at each end is removed. Closing runs must match the opening length exactly; single and double backticks are not interchangeable. Edit keeps the original code/escape syntax available, and switching to Read never rewrites the Markdown.
+This renders as a code span containing **C-x followed by a backtick**. The one padding space at each end is removed. Closing runs must match the opening length exactly; single and double backticks are not interchangeable. Edit hides the outer delimiters and optional padding while inactive, revealing them when the caret or selection touches the span; literal backticks inside remain visible. The original source is preserved, and switching to Read never rewrites the Markdown.
 
 ## Language and fonts
 

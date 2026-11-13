@@ -1367,7 +1367,9 @@ private slots:
         QCOMPARE(prose.background().style(), Qt::NoBrush);
 
         const int codeStart = text.indexOf(QLatin1Char('`'));
-        for (int i = codeStart; i < codeStart + 6; ++i) {
+        for (int marker : {codeStart, codeStart + 5})
+            QCOMPARE(formatAt(marker).fontPointSize(), 1.0);
+        for (int i = codeStart + 1; i < codeStart + 5; ++i) {
             const auto code = formatAt(i);
             QCOMPARE(code.background().color(), QColor("#23372b"));
             QVERIFY(!code.fontItalic());
@@ -1478,8 +1480,9 @@ private slots:
             }
             return hidden;
         };
-        for (int blockNumber : {0, 1, 2, 4, 5, 6})
+        for (int blockNumber : {0, 1, 2, 5, 6})
             QCOMPARE(hiddenIn(blockNumber), 0);
+        QCOMPARE(hiddenIn(4), 2); // Hide the outer ticks, not the code's literal '*'.
         QCOMPARE(hiddenIn(3), 2);
 
         // Removing a fence rehighlights the following blocks as prose.

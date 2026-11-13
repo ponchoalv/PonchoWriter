@@ -973,6 +973,59 @@ private slots:
         QTRY_COMPARE(receiver.urls.size(), 3);
         QCOMPARE(source->property("text").toString(), text);
     }
+    void underlineShortcutUsesHtmlAndCanonicalUndo() {
+        QTemporaryDir directory;
+        Backend backend;
+        backend.m_recoveryPath = directory.filePath("recovery.json");
+        QQmlEngine engine;
+        engine.rootContext()->setContextProperty("backend", &backend);
+        QQmlComponent component(&engine, QUrl::fromLocalFile(QFINDTESTDATA("../src/Main.qml")));
+        QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+        QScopedPointer<QObject> root(component.create());
+        auto *window = qobject_cast<QQuickWindow *>(root.data());
+        QVERIFY(window);
+        auto *source = root->findChild<QObject *>("sourceEditor");
+        auto *projection = root->findChild<LivePreview *>();
+        QVERIFY(source && projection);
+        if (QGuiApplication::platformName() != "offscreen") {
+            QVERIFY(QTest::qWaitForWindowExposed(window));
+            window->requestActivate();
+            QVERIFY(QTest::qWaitForWindowActive(window));
+        }
+        const auto toggle = [&](const QString &text, int from, int to) {
+            source->setProperty("text", text);
+            QCoreApplication::processEvents();
+            QMetaObject::invokeMethod(source, "select", Q_ARG(int, from), Q_ARG(int, to));
+            editorKeyClick(window, Qt::Key_U, Qt::ControlModifier);
+            QCoreApplication::processEvents();
+            return backend.documentText();
+        };
+        QCOMPARE(toggle("hello world", 0, 5), QString("<u>hello</u> world"));
+        QCOMPARE(source->property("selectedText").toString(), QString("hello"));
+        QMetaObject::invokeMethod(source, "undo");
+        QCOMPARE(backend.documentText(), QString("hello world"));
+        QCOMPARE(toggle("<u>hello</u>", 3, 8), QString("hello"));
+        QCOMPARE(toggle("<u>hello</u>", 0, 12), QString("hello"));
+        QCOMPARE(toggle("<U>hello</U>", 3, 8), QString("hello"));
+        QCOMPARE(toggle("<u>a</u> and <u>b</u>", 0, 21), QString("<u><u>a</u> and <u>b</u></u>"));
+        QCOMPARE(toggle("", 0, 0), QString("<u></u>"));
+        QCOMPARE(source->property("cursorPosition").toInt(), 3);
+        QCOMPARE(toggle("<u>word</u>", 5, 5), QString("word"));
+        QCOMPARE(source->property("cursorPosition").toInt(), 2);
+        QCOMPARE(toggle("<u>word</u>", 7, 7), QString("<u>word</u>"));
+        QCOMPARE(source->property("cursorPosition").toInt(), 11);
+        QCOMPARE(toggle("<u>word</u>", 11, 11), QString("<u>word</u>"));
+        QCOMPARE(source->property("cursorPosition").toInt(), 7);
+        const QString unicode = QStringLiteral("\u00e9\u00a0\U0001f31f");
+        QCOMPARE(toggle(unicode, 0, unicode.size()), "<u>" + unicode + "</u>");
+        QCOMPARE(toggle(QStringLiteral(R"(\<u>x</u>)"), 4, 5), QStringLiteral(R"(\<u><u>x</u></u>)"));
+        const QString before = backend.documentText();
+        QMetaObject::invokeMethod(window, "toggleReadMode");
+        editorKeyClick(window, Qt::Key_U, Qt::ControlModifier);
+        QCOMPARE(backend.documentText(), before);
+        QVERIFY(window->property("readMode").toBool());
+    }
+
     void codeShortcutsWrapSafelyAndUseCanonicalUndo() {
         QTemporaryDir directory; Backend backend; backend.m_recoveryPath = directory.filePath("recovery.json");
         QQmlEngine engine; engine.rootContext()->setContextProperty("backend", &backend);
@@ -3435,7 +3488,9 @@ private slots:
         QCOMPARE(prose.background().style(), Qt::NoBrush);
 
         const int codeStart = text.indexOf(QLatin1Char('`'));
-        for (int i = codeStart; i < codeStart + 6; ++i) {
+        for (int marker : {codeStart, codeStart + 5})
+            QCOMPARE(formatAt(marker).fontPointSize(), 1.0);
+        for (int i = codeStart + 1; i < codeStart + 5; ++i) {
             const auto code = formatAt(i);
             QCOMPARE(code.background().color(), QColor("#23372b"));
             QVERIFY(!code.fontItalic());
@@ -3519,6 +3574,90 @@ private slots:
         QVERIFY(!MarkdownHighlighter::closesFence(QStringLiteral("``` text"), 3));
     }
 
+    void inlineCodeMarkersFollowCaret_data() {
+        QTest::addColumn<QString>("text");
+        QTest::addColumn<QString>("visible");
+        QTest::newRow("single") << QString("see `code` end") << QString("see code end");
+        QTest::newRow("literal-tick") << QString("see `` C-x ` `` end") << QString("see C-x ` end");
+        QTest::newRow("three-ticks") << QString("see ``` a `` b ` c ``` end") << QString("see a `` b ` c end");
+        QTest::newRow("padding") << QString("see ``  a  `` end") << QString("see  a  end");
+        QTest::newRow("only-spaces") << QString("see `   ` end") << QString("see     end");
+        QTest::newRow("mismatch") << QString("see `bad`` end") << QString("see `bad`` end");
+        QTest::newRow("escaped") << QString(R"(see \`literal\` end)") << QString(R"(see \`literal\` end)");
+    }
+
+    void inlineCodeMarkersFollowCaret() {
+        QFETCH(QString, text);
+        QFETCH(QString, visible);
+        const auto inactive = highlightedFormats(text, 0);
+        QString rendered;
+        for (int i = 0; i < text.size(); ++i)
+            if (inactive.at(i).fontPointSize() != 1.0) rendered += text.at(i);
+        QCOMPARE(rendered, visible);
+        for (const auto &code : MarkdownHighlighter::codeSpans(text)) {
+            const auto active = highlightedFormats(text, code.start + 1);
+            for (int i = code.start; i < code.start + code.length; ++i)
+                QVERIFY(active.at(i).fontPointSize() != 1.0);
+        }
+    }
+
+    void inlineMarkersFollowSelectionOffsetsWithinTheSameBlock() {
+        QTextDocument document;
+        document.setPlainText(QStringLiteral("a `one` b `two`"));
+        MarkdownHighlighter highlighter(&document);
+        highlighter.setCaret(0);
+        const auto hidden = [&](int offset) {
+            for (const auto &range : document.firstBlock().layout()->formats())
+                if (offset >= range.start && offset < range.start + range.length)
+                    return range.format.fontPointSize() == 1.0;
+            return false;
+        };
+        highlighter.setSelection(1, 7);
+        QVERIFY(!hidden(2));
+        QVERIFY(hidden(10));
+        highlighter.setSelection(9, 15);
+        QVERIFY(hidden(2));
+        QVERIFY(!hidden(10));
+        highlighter.setSelection(0, 0);
+        QVERIFY(hidden(2));
+        QVERIFY(hidden(10));
+        QCOMPARE(document.toPlainText(), QStringLiteral("a `one` b `two`"));
+    }
+
+    void underlinePreviewIsCaretAwareAndLiteralInCode() {
+        const QString text = QStringLiteral("see <u>word</u> and `<u>literal</u>`");
+        const auto formats = highlightedFormats(text, 0);
+        QVERIFY(formats.at(7).fontUnderline());
+        for (int i : {4, 5, 6, 11, 12, 13, 14})
+            QCOMPARE(formats.at(i).fontPointSize(), 1.0);
+        const auto active = highlightedFormats(text, 8);
+        for (int i = 4; i < 15; ++i)
+            QVERIFY(active.at(i).fontPointSize() != 1.0);
+        QVERIFY(!formats.at(text.indexOf("literal")).fontUnderline());
+        QVERIFY(MarkdownHighlighter::inlineMarkup(QStringLiteral(R"(\<u>literal</u>)")).isEmpty());
+        const auto upper = MarkdownHighlighter::inlineMarkup(QStringLiteral("<U>word</U>"));
+        QCOMPARE(upper.size(), 1);
+        QCOMPARE(upper.first().kind, MarkdownHighlighter::InlineKind::Underline);
+        const QString nested = QStringLiteral("<u>outer <u>inner</u> end</u>");
+        QCOMPARE(MarkdownHighlighter::inlineMarkup(nested).size(), 2);
+        const auto nestedFormats = highlightedFormats(nested);
+        QString nestedVisible;
+        for (int i = 0; i < nested.size(); ++i)
+            if (nestedFormats.at(i).fontPointSize() != 1.0) nestedVisible += nested.at(i);
+        QCOMPARE(nestedVisible, QStringLiteral("outer inner end"));
+        QTextDocument document;
+        document.setPlainText(text);
+        document.clearUndoRedoStacks();
+        MarkdownHighlighter highlighter(&document);
+        highlighter.setCaret(0);
+        highlighter.setSelection(0, text.size());
+        highlighter.rehighlight();
+        for (const auto &range : document.firstBlock().layout()->formats())
+            QVERIFY(range.format.fontPointSize() != 1.0);
+        QCOMPARE(document.toPlainText(), text);
+        QVERIFY(!document.isUndoAvailable());
+    }
+
     void hidesNoMarkersInsideCode() {
         Backend backend;
         QQmlEngine engine;
@@ -3549,8 +3688,9 @@ private slots:
             }
             return hidden;
         };
-        for (int blockNumber : {0, 1, 2, 4, 5, 6})
+        for (int blockNumber : {0, 1, 2, 5, 6})
             QCOMPARE(hiddenIn(blockNumber), 0);
+        QCOMPARE(hiddenIn(4), 2); // Only the code delimiters, never its literal '*'.
         QCOMPARE(hiddenIn(3), 2);
 
         // Removing a fence rehighlights the following blocks as prose.

@@ -34,7 +34,7 @@ public:
     // blocks only; does not mutate document text or its undo history.
     void setSpellingRanges(const QList<Span> &ranges);
 
-    enum class InlineKind { Bold, Italic, Strikethrough, Link };
+    enum class InlineKind { Bold, Italic, Strikethrough, Underline, Link };
 
     // Carried from block to block so a fenced run of code knows it is inside
     // one. Stored on the block, which is where Backend reads it.

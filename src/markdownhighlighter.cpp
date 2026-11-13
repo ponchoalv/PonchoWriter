@@ -182,9 +182,9 @@ void MarkdownHighlighter::setSelection(int start, int end) {
     m_selection.setPosition(qMax(start, end), QTextCursor::KeepAnchor);
     m_selection.setKeepPositionOnInsert(true);
 
-    // Inclusive endpoint blocks match the heading activation rule. Only
-    // restyle the symmetric difference: dragging within the same blocks or
-    // reporting an unchanged selection must not rehighlight the whole range.
+    // Inclusive endpoint blocks match the heading activation rule. Restyle
+    // the symmetric difference plus the inline boundaries below, never the
+    // whole unchanged range when dragging or reporting the same selection.
     const auto range = [this](const QTextCursor &cursor) {
         return cursor.isNull() || !cursor.hasSelection()
             ? std::pair<int, int>{-1, -2}
@@ -193,7 +193,9 @@ void MarkdownHighlighter::setSelection(int start, int end) {
     };
     const auto oldRange = range(previous);
     const auto newRange = range(m_selection);
-    if (oldRange == newRange)
+    if (oldRange == newRange && (!m_selection.hasSelection()
+            || (previous.selectionStart() == m_selection.selectionStart()
+                && previous.selectionEnd() == m_selection.selectionEnd())))
         return;
     std::vector<std::pair<int, int>> changed;
     const auto subtract = [&changed](std::pair<int, int> a, std::pair<int, int> b) {
@@ -210,6 +212,23 @@ void MarkdownHighlighter::setSelection(int start, int end) {
     };
     subtract(oldRange, newRange);
     subtract(newRange, oldRange);
+    // Inline marker visibility also depends on offsets within the boundary
+    // blocks. Restyle those even when the selection stays in the same blocks.
+    for (const auto &range : {oldRange, newRange}) {
+        if (range.first > range.second) continue;
+        for (int boundary : {range.first, range.second}) {
+            const bool covered = std::any_of(changed.cbegin(), changed.cend(),
+                [boundary](const auto &interval) {
+                    return boundary >= interval.first && boundary <= interval.second;
+                });
+            if (!covered) {
+                const QString text = document()->findBlockByNumber(boundary).text();
+                // Plain/heading blocks do not depend on offsets within them.
+                if (!codeSpans(text).isEmpty() || !inlineMarkup(text).isEmpty())
+                    changed.emplace_back(boundary, boundary);
+            }
+        }
+    }
     int count = 0;
     for (const auto &interval : changed)
         count += interval.second - interval.first + 1;
@@ -381,7 +400,7 @@ void MarkdownHighlighter::highlightBlock(const QString &text) {
         highlightMarkers(text);
         if (text.contains(QLatin1Char('`')) || text.contains(QLatin1Char('*'))
             || text.contains(QLatin1Char('_')) || text.contains(QLatin1Char('['))
-            || text.contains(QLatin1Char('~'))) {
+            || text.contains(QLatin1Char('~')) || text.contains(QLatin1Char('<'))) {
             highlightInline(text);
         }
         // Last among markup styles, so inline links/emphasis cannot restore
@@ -737,7 +756,8 @@ void MarkdownHighlighter::highlightInline(const QString &text) {
 
     // Code keeps its own styling even when emphasis or a link encloses it.
     QList<bool> inCode(text.length(), false);
-    for (const Span &code : codeSpans(text)) {
+    const QList<Span> codes = codeSpans(text);
+    for (const Span &code : codes) {
         for (int i = code.start; i < code.start + code.length; ++i) {
             mergeFormat(i, m_codeFormat);
             inCode[i] = true;
@@ -751,6 +771,11 @@ void MarkdownHighlighter::highlightInline(const QString &text) {
         format.setFontStrikeOut(true);
         return format;
     }();
+    static const QTextCharFormat underlined = [] {
+        QTextCharFormat format;
+        format.setFontUnderline(true);
+        return format;
+    }();
     QList<InlineMarkup> markup = inlineMarkup(text);
     std::stable_sort(markup.begin(), markup.end(),
                      [](const InlineMarkup &a, const InlineMarkup &b) {
@@ -761,7 +786,8 @@ void MarkdownHighlighter::highlightInline(const QString &text) {
             item.kind == InlineKind::Bold ? m_boldFormat
             : item.kind == InlineKind::Italic ? m_italicFormat
             : item.kind == InlineKind::Strikethrough ? struck
-                                                     : m_linkFormat;
+            : item.kind == InlineKind::Underline ? underlined
+                                                   : m_linkFormat;
         for (int i = item.content.start; i < item.content.start + item.content.length; ++i) {
             if (!inCode[i] || item.kind == InlineKind::Strikethrough)
                 mergeFormat(i, contentFormat);
@@ -771,17 +797,38 @@ void MarkdownHighlighter::highlightInline(const QString &text) {
     // Last, so no enclosing style shows a marker that should be hidden.
     const int caret = !m_caret.isNull() && m_caret.block() == currentBlock()
         ? m_caret.positionInBlock() : -1;
-    for (const InlineMarkup &item : markup) {
-        const bool atCaret = caret >= item.markers[0].start
-            && caret <= item.markers[1].start + item.markers[1].length;
-        for (const Span &marker : item.markers) {
-            if (!atCaret) {
+    const auto styleMarkers = [&](const Span &opening, const Span &closing) {
+        const int end = closing.start + closing.length;
+        const bool atCaret = caret >= opening.start && caret <= end;
+        const int base = currentBlock().position();
+        const bool selected = m_selection.hasSelection()
+            && m_selection.selectionStart() < base + end
+            && m_selection.selectionEnd() > base + opening.start;
+        for (const Span &marker : {opening, closing}) {
+            if (!atCaret && !selected) {
                 setFormat(marker.start, marker.length, m_hiddenMarkerFormat);
                 continue;
             }
             for (int i = marker.start; i < marker.start + marker.length; ++i)
                 mergeFormat(i, m_markerFormat);
         }
+    };
+    for (const InlineMarkup &item : markup)
+        styleMarkers(item.markers[0], item.markers[1]);
+    for (const Span &span : codes) {
+        int ticks = 0;
+        while (text.at(span.start + ticks) == QLatin1Char('`'))
+            ++ticks;
+        const int bodyStart = span.start + ticks;
+        const int bodyEnd = span.start + span.length - ticks;
+        // CommonMark removes one edge space, but never an all-space body.
+        const bool padded = text.at(bodyStart) == QLatin1Char(' ')
+            && text.at(bodyEnd - 1) == QLatin1Char(' ')
+            && std::any_of(text.cbegin() + bodyStart, text.cbegin() + bodyEnd,
+                           [](QChar ch) { return ch != QLatin1Char(' '); });
+        const int markerLength = ticks + (padded ? 1 : 0);
+        styleMarkers({span.start, markerLength},
+                     {span.start + span.length - markerLength, markerLength});
     }
 }
 
@@ -834,7 +881,8 @@ QList<MarkdownHighlighter::Span> MarkdownHighlighter::codeSpans(const QString &t
 QList<MarkdownHighlighter::InlineMarkup> MarkdownHighlighter::inlineMarkup(const QString &text) {
     QList<InlineMarkup> markup;
     if (!text.contains(QLatin1Char('*')) && !text.contains(QLatin1Char('_'))
-            && !text.contains(QLatin1Char('[')) && !text.contains(QLatin1Char('~'))) {
+            && !text.contains(QLatin1Char('[')) && !text.contains(QLatin1Char('~'))
+            && !text.contains(QLatin1Char('<'))) {
         return markup;
     }
     if (isThematicBreak(text))
@@ -928,6 +976,28 @@ QList<MarkdownHighlighter::InlineMarkup> MarkdownHighlighter::inlineMarkup(const
         const Span whole = span(match, 0);
         append({InlineKind::Strikethrough, span(match, 1),
                 {{whole.start, 2}, {whole.start + whole.length - 2, 2}}});
+    }
+
+    // Underline has no Markdown delimiter; Qt's Read importer accepts HTML <u>.
+    static const QRegularExpression underlineRe(
+        QStringLiteral("</?u>"), QRegularExpression::CaseInsensitiveOption);
+    auto underlineMatches = underlineRe.globalMatch(text);
+    QList<int> underlineOpenings;
+    while (underlineMatches.hasNext()) {
+        const auto match = underlineMatches.next();
+        const Span tag = span(match, 0);
+        bool literal = escaped(tag.start);
+        for (const Span &span : code)
+            literal |= tag.start < span.start + span.length && span.start < tag.start + tag.length;
+        if (literal) continue;
+        if (tag.length == 3) {
+            underlineOpenings.append(tag.start);
+        } else if (!underlineOpenings.isEmpty()) {
+            const int opening = underlineOpenings.takeLast();
+            if (tag.start > opening + 3)
+                append({InlineKind::Underline, {opening + 3, tag.start - opening - 3},
+                        {{opening, 3}, tag}});
+        }
     }
 
     static const QRegularExpression linkRe(

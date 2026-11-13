@@ -32,29 +32,31 @@ function replaceRange(editor, rangeStart, rangeEnd, replacement,
     return insertedText;
 }
 
-// Unwraps when the marker is already there, selected or just outside the
-// selection, and wraps otherwise. A marker only counts as a whole run, so the
-// "*" of "**bold**" is not taken for italic; "***" counts as both.
-//
-// With nothing selected it acts on the span around the caret: at the end of
+// With nothing selected, act on the span around the caret: at the end of
 // its text the caret steps past the closing marker, so typing carries on
 // plain (and steps back in on a second press); anywhere else in it the span
 // comes off.
+function toggleAtCaret(editor, span) {
+    var start = editor.selectionStart;
+    if (start !== editor.selectionEnd || !span || span.start === undefined) return false;
+    if (start === span.end) {
+        editor.cursorPosition = span.textEnd;
+    } else if (start >= span.textEnd) {
+        editor.cursorPosition = span.end;
+    } else {
+        var content = editor.rawText().slice(span.contentStart, span.contentEnd);
+        var caret = Math.max(0, start - span.contentStart);
+        replaceRange(editor, span.start, span.end, content, caret, caret);
+    }
+    return true;
+}
+
+// Unwraps when a whole marker is selected or just outside the selection,
+// otherwise wraps. The '*' of '**bold**' is not italic; '***' counts as both.
 function toggleWrap(editor, marker, span) {
+    if (toggleAtCaret(editor, span)) return;
     var start = editor.selectionStart;
     var end = editor.selectionEnd;
-    if (start === end && span && span.start !== undefined) {
-        if (start === span.end) {
-            editor.cursorPosition = span.textEnd;
-        } else if (start >= span.textEnd) {
-            editor.cursorPosition = span.end;
-        } else {
-            var content = editor.rawText().slice(span.contentStart, span.contentEnd);
-            var caret = Math.max(0, start - span.contentStart);
-            replaceRange(editor, span.start, span.end, content, caret, caret);
-        }
-        return;
-    }
     var text = editor.rawText();
     var size = marker.length;
     var mark = marker.charAt(0);
@@ -86,6 +88,27 @@ function toggleWrap(editor, marker, span) {
     } else {
         replaceRange(editor, start, end, marker + selected + marker,
                      size, size + selected.length);
+    }
+}
+
+// Underline is HTML in Markdown, with asymmetric opening/closing markers.
+function toggleUnderline(editor, span) {
+    if (toggleAtCaret(editor, span)) return;
+    var start = editor.selectionStart, end = editor.selectionEnd;
+    var text = editor.rawText(), body = text.slice(start, end);
+    var lower = body.toLowerCase();
+    var tags = /<\/?u>/i;
+    if (lower.startsWith("<u>") && lower.endsWith("</u>")
+        && unescapedAt(text, start) && unescapedAt(text, end - 4)
+        && !tags.test(body.slice(3, -4))) {
+        body = body.slice(3, -4);
+        replaceRange(editor, start, end, body, 0, body.length);
+    } else if (text.slice(start - 3, start).toLowerCase() === "<u>"
+               && text.slice(end, end + 4).toLowerCase() === "</u>"
+               && unescapedAt(text, start - 3) && unescapedAt(text, end) && !tags.test(body)) {
+        replaceRange(editor, start - 3, end + 4, body, 0, body.length);
+    } else {
+        replaceRange(editor, start, end, "<u>" + body + "</u>", 3, 3 + body.length);
     }
 }
 

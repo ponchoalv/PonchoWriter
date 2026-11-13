@@ -43,6 +43,7 @@ Dialog {
         { key: "Escape", desc: qsTr("Close Find") },
         { key: "Ctrl+B", desc: qsTr("Bold") },
         { key: "Ctrl+I", desc: qsTr("Italic") },
+        { key: "Ctrl+U", desc: qsTr("Underline") },
         { key: "Ctrl+Shift+X", desc: qsTr("Strikethrough") },
         { key: "Ctrl+T", desc: "Inline code" },
         { key: "Ctrl+Shift+T", desc: "Fenced code block" },

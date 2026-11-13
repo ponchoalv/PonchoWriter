@@ -1328,6 +1328,45 @@ private slots:
                     .value<QImage>().isNull());
     }
 
+    void inlineCodeAndUnderlinePreviewPreserveSource() {
+        const QString text = QStringLiteral("outside\n\nA `code` and `` C-x ` `` with <u>underlined</u>.");
+        sourceItem->setProperty("text", text);
+        sourceItem->setProperty("cursorPosition", 0);
+        source->clearUndoRedoStacks();
+        flush();
+        const auto visibleEditText = [&] {
+            QString visible;
+            for (QTextBlock block = view->begin(); block.isValid(); block = block.next()) {
+                if (!visible.isEmpty()) visible += QLatin1Char('\n');
+                for (int i = 0; i < block.text().size(); ++i) {
+                    bool hidden = false;
+                    for (const auto &range : block.layout()->formats())
+                        if (i >= range.start && i < range.start + range.length)
+                            hidden = range.format.fontPointSize() == 1.0;
+                    if (!hidden) visible += block.text().at(i);
+                }
+            }
+            return visible;
+        };
+        QVERIFY(visibleEditText().contains(QStringLiteral("A code and C-x ` with underlined.")));
+        const auto underlined = view->find(QStringLiteral("underlined"));
+        bool hasUnderline = false;
+        const int offset = underlined.selectionStart() - underlined.block().position();
+        for (const auto &range : underlined.block().layout()->formats())
+            if (offset >= range.start && offset < range.start + range.length)
+                hasUnderline = range.format.fontUnderline();
+        QVERIFY(hasUnderline);
+        controller->setReadMode(true);
+        QVERIFY(view->toPlainText().contains(QStringLiteral("A code and C-x ` with underlined.")));
+        QVERIFY(view->find(QStringLiteral("underlined")).charFormat().fontUnderline());
+        controller->setReadMode(false);
+        sourceItem->setProperty("cursorPosition", text.indexOf(QStringLiteral("code")) + 1);
+        flush();
+        QVERIFY(visibleEditText().contains(QStringLiteral("`code` and C-x `")));
+        QCOMPARE(source->toPlainText(), text);
+        QVERIFY(!source->isUndoAvailable());
+    }
+
     void readSpacingAndInlineStylesMatchEdit() {
         const QString text = QStringLiteral("before\n\n# Header\n\nA **bold** *italic* [link](https://example.com) `code`.\n\nAnother paragraph.\n\n| A | B |\n| --- | --- |\n| cell | y |\n\nAfter table.\n\n```text\nfirst\nsecond\n```\n\n- one\n- two\n");
         sourceItem->setProperty("text", text);

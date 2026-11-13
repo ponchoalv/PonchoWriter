@@ -120,6 +120,11 @@ jobs:
             fallsBackForSelectionColors `
             keepsDefaultsForColorsItCannotParse `
             takesItsDefaultsFromTheModeTheThemeAsksFor `
+            underlineShortcutUsesHtmlAndCanonicalUndo `
+            inlineCodeMarkersFollowCaret `
+            inlineMarkersFollowSelectionOffsetsWithinTheSameBlock `
+            underlinePreviewIsCaretAwareAndLiteralInCode `
+            codeShortcutsWrapSafelyAndUseCanonicalUndo `
             -o build/windows-ci/editor-tests.txt,txt | Out-Host
           $testExit = $LASTEXITCODE
           if (Test-Path build/windows-ci/editor-tests.txt) { Get-Content build/windows-ci/editor-tests.txt }

@@ -8,6 +8,7 @@ $previousStamp = $env:OMAWRITE_STAMP
 $previousSignature = $env:OMAWRITE_SIGNATURE
 $previousIscc = $env:ISCC
 $previousReject = $env:OMAWRITE_TEST_REJECT_PROBE
+$previousVersionFailure = $env:OMAWRITE_TEST_VERSION_FAILURE
 try {
     foreach ($file in @('bin/setup-windows.ps1', 'bin/check-inno-compiler.ps1', 'bin/package-windows.ps1', 'tests/windows-packaging.ps1')) {
         $tokens = $null; $errors = $null
@@ -48,6 +49,7 @@ try {
     Set-Content -LiteralPath "$temp/dist/notices/COPYRIGHT.md" -Value 'test notice'
     $helper = Join-Path $temp 'helper.exe'
     Remove-Item Env:OMAWRITE_TEST_REJECT_PROBE -ErrorAction SilentlyContinue
+    Remove-Item Env:OMAWRITE_TEST_VERSION_FAILURE -ErrorAction SilentlyContinue
     if ($env:OS -eq 'Windows_NT') {
         Add-Type -OutputAssembly $helper -OutputType ConsoleApplication -TypeDefinition @'
 using System;
@@ -130,6 +132,9 @@ if sys.argv[1:] == ['-']:
     assert os.environ.get('OMAWRITE_TEST_REJECT_PROBE') != '1'
     print('Compiler engine version: Inno Setup 6.3.0')
 elif sys.argv[1:] == ['--version']:
+    if os.environ.get('OMAWRITE_TEST_VERSION_FAILURE') == '1':
+        print('Simulated version failure', file=sys.stderr)
+        sys.exit(42)
     print('omawrite 1.2.3')
 else:
     assert '/DNeedsVCRuntime=' + os.environ['OMAWRITE_TEST_RUNTIME'] in sys.argv
@@ -185,7 +190,30 @@ else:
     $ErrorActionPreference = 'Stop'
     Remove-Item Env:OMAWRITE_TEST_REJECT_PROBE
     if ($code -eq 0) { throw 'Unsupported compiler was not refused' }
-    Copy-Item -LiteralPath $helper -Destination "$temp/dist/omawrite.exe"
+    $appHelper = $helper
+    if ($env:OS -eq 'Windows_NT') {
+        # Match the real application's PE subsystem. A console helper masks
+        # PowerShell's asynchronous GUI invocation and missing exit-code bug.
+        $appHelper = Join-Path $temp 'gui-version.exe'
+        Add-Type -OutputAssembly $appHelper -OutputType WindowsApplication -TypeDefinition @'
+using System;
+using System.Threading;
+public static class GuiVersionHelper {
+    public static int Main(string[] args) {
+        if (args.Length != 1 || args[0] != "--version") return 3;
+        Thread.Sleep(300);
+        if (Environment.GetEnvironmentVariable("OMAWRITE_TEST_VERSION_FAILURE") == "1") {
+            Console.Error.WriteLine("Simulated version failure"); return 42;
+        }
+        Console.WriteLine("omawrite 1.2.3"); return 0;
+    }
+}
+'@
+        $pe = [IO.File]::ReadAllBytes($appHelper)
+        $peOffset = [BitConverter]::ToInt32($pe, 60)
+        if ([BitConverter]::ToUInt16($pe, $peOffset + 92) -ne 2) { throw 'Version fixture must use the Windows GUI subsystem' }
+    }
+    Copy-Item -LiteralPath $appHelper -Destination "$temp/dist/omawrite.exe"
     $packager = Join-Path $root 'bin/package-windows.ps1'
     foreach ($kit in @('win32-msvc', 'win32-g++')) {
         $env:OMAWRITE_TEST_RUNTIME = if ($kit -eq 'win32-msvc') { '1' } else { '0' }
@@ -201,6 +229,18 @@ else:
         if ($code -eq 0) { throw 'Existing installer was not refused' }
         Remove-Item -LiteralPath $artifact
     }
+    $env:OMAWRITE_TEST_VERSION_FAILURE = '1'
+    $ErrorActionPreference = 'Continue'
+    $failure = & $engine -NoProfile -File $packager -DistDir "$temp/dist" -Iscc $helper -Kit win32-msvc 2>&1 | Out-String
+    $code = $LASTEXITCODE
+    $ErrorActionPreference = 'Stop'
+    Remove-Item Env:OMAWRITE_TEST_VERSION_FAILURE
+    # PowerShell's error formatter may wrap words with line-number gutters.
+    if ($code -eq 0 -or $failure -notmatch '0x0000002A' -or $failure -notmatch 'Simulated') {
+        throw "Failed version query was not refused with exit/output diagnostics: $failure"
+    }
+    if (Test-Path -LiteralPath "$temp/installer/Write-1.2.3-windows-x64-setup.exe") { throw 'Version failure still produced an installer' }
+    Write-Host 'PASS: synchronous application version capture and fail-closed exit/output diagnostics (GUI-subsystem app on Windows).'
     Remove-Item -LiteralPath "$temp/dist/notices/COPYRIGHT.md"
     $ErrorActionPreference = 'Continue'
     & $engine -NoProfile -File $packager -DistDir "$temp/dist" -Iscc $helper -Kit win32-msvc 2>$null
@@ -213,6 +253,7 @@ else:
     [Environment]::SetEnvironmentVariable('OMAWRITE_SIGNATURE', $previousSignature, 'Process')
     [Environment]::SetEnvironmentVariable('ISCC', $previousIscc, 'Process')
     [Environment]::SetEnvironmentVariable('OMAWRITE_TEST_REJECT_PROBE', $previousReject, 'Process')
+    [Environment]::SetEnvironmentVariable('OMAWRITE_TEST_VERSION_FAILURE', $previousVersionFailure, 'Process')
     Remove-Item Env:OMAWRITE_TEST_RUNTIME -ErrorAction SilentlyContinue
     if (Test-Path -LiteralPath $temp) { Remove-Item -LiteralPath $temp -Recurse -Force }
 }

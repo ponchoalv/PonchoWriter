@@ -4,7 +4,7 @@ param(
     [switch]$Install,
     [switch]$Mermaid,
     [switch]$Installer,
-    [ValidatePattern('^6\.[0-9]+\.[0-9]+$')][string]$QtVersion = '6.8.3',
+    [ValidatePattern('^6\.[0-9]+\.[0-9]+$')][string]$QtVersion = '6.12.0',
     [string]$QtRoot = "$env:LOCALAPPDATA\Write\Qt"
 )
 $ErrorActionPreference = 'Stop'

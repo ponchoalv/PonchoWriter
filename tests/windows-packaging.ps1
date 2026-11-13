@@ -102,3 +102,6 @@ else:
     Remove-Item Env:OMAWRITE_TEST_RUNTIME -ErrorAction SilentlyContinue
     if (Test-Path -LiteralPath $temp) { Remove-Item -LiteralPath $temp -Recurse -Force }
 }
+# Expected failing child probes leave LASTEXITCODE nonzero. Report our own
+# success explicitly, including to GitHub's Windows PowerShell wrapper.
+exit 0

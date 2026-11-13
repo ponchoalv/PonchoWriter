@@ -531,22 +531,39 @@ private slots:
         QCOMPARE(controller->listMarkers().size(), 0); // No border/replacement marker.
         view->documentLayout()->documentSize();
         QVERIFY(block.layout()->lineCount() > 1);
-        const auto bodyX = [&] { return block.layout()->position().x() + block.layout()->lineAt(0).cursorToX(2); };
+        // Justification may stretch prefix spaces depending on font metrics.
+        // Verify the hanging indent separately from that expanded advance.
+        QVERIFY(qAbs(block.layout()->lineAt(1).x() - block.layout()->lineAt(0).x()
+                     + block.blockFormat().textIndent()) < 1);
+        const auto geometry = [&] {
+            auto *layout = block.layout();
+            QList<QPointF> result{layout->position()};
+            for (int n = 0; n < layout->lineCount(); ++n) {
+                const auto line = layout->lineAt(n);
+                result.append(line.position());
+                for (int pos = line.textStart(); pos <= line.textStart() + line.textLength(); ++pos)
+                    result.append(QPointF(line.cursorToX(pos), line.y()));
+            }
+            return result;
+        };
+        const auto hiddenGeometry = geometry();
         const auto prefixColor = [&] {
             for (const auto &range : block.layout()->formats()) if (range.start == 0) return range.format.foreground().color();
             return QColor();
         };
-        const qreal x = bodyX();
-        QVERIFY(qAbs(x - block.layout()->position().x() - block.layout()->lineAt(1).x()) < 1);
         QCOMPARE(prefixColor().alpha(), 0);
         const auto resets = controller->m_fullResets, patches = controller->m_projectionPatches;
         select(sourceItem, at + 8, at + 8); // Anywhere in the body reveals >.
-        QVERIFY(prefixColor().alpha() > 0); QCOMPARE(bodyX(), x);
+        QVERIFY(prefixColor().alpha() > 0); QCOMPARE(geometry(), hiddenGeometry);
         select(sourceItem, text.size(), text.size()); QCOMPARE(prefixColor().alpha(), 0);
+        QCOMPARE(geometry(), hiddenGeometry);
         select(sourceItem, at + 9, at + 4); QVERIFY(prefixColor().alpha() > 0);
+        QCOMPARE(geometry(), hiddenGeometry);
         select(sourceItem, text.size(), text.size());
         controller->setSearchHighlight("> q", at); flush(); QVERIFY(prefixColor().alpha() > 0);
+        QCOMPARE(geometry(), hiddenGeometry);
         controller->setSearchHighlight("", -1); flush(); QCOMPARE(prefixColor().alpha(), 0);
+        QCOMPARE(geometry(), hiddenGeometry);
         QCOMPARE(controller->m_fullResets, resets); QCOMPARE(controller->m_projectionPatches, patches);
         QCOMPARE(source->toPlainText(), text); QVERIFY(!source->isUndoAvailable());
         select(sourceItem, at + 8, at + 8); type("x");

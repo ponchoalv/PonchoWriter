@@ -8,7 +8,7 @@ Build/dependency/kit requirements are in [install.md](install.md).
 ./bin/test --native-spelling
 ```
 
-For an existing CMake build: `ctest --test-dir build/cmake --output-on-failure`. Native probes retain their qmake harnesses.
+For an existing CMake build: `ctest --test-dir build/cmake --output-on-failure`. CTest checks that the platform's static spelling plugin is registered even without installed dictionaries. The real macOS dictionary smoke is opt-in: `OMAWRITE_NATIVE_SPELLCHECK=1 build/cmake/omawrite_native_spellchecking_tests`. Native probes also retain their qmake harnesses.
 
 On Windows: `build.bat --test` runs the main editor and Mermaid suites, not the complete Unix suite set. Native tests need an interactive desktop; focus failures in a headless session are not necessarily editor regressions. Missing system spelling dictionaries can cause expected skips.
 

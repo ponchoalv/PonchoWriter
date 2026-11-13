@@ -26,12 +26,11 @@ build tool. Other targets follow the same pattern:
 | `spellchecking.pro` | `tst_spellchecking` | Pure classifier; injected fake dictionary; debounce, cache eviction/reuse, ordered batches, stale generations, language switches, unavailable dictionaries, ignores, learning, suggestions and composition |
 | `integration.pro` | `tst_spellingintegration` | Real source/view TextEdits and both highlighters; no projection rebuild on async arrival, object-safe mapping, Read mode, IME events, merged/search formats, affected-block-only clearing, untouched source undo |
 | `main.pro` | `tst_spelling_main` | Actual Backend/Main.qml with fake dictionary; one source undo/redo correction, stale action rejection, pointer/keyboard menus, installed-language controls, attachment priority |
-| `native.pro` | `tst_native_spellchecking` | Opt-in macOS NSSpellChecker smoke; an installed English dictionary, known word, typo and suggestion completion |
+| `native.pro` | `tst_native_spellchecking` | Static backend registration; opt-in macOS NSSpellChecker smoke with an installed English dictionary, known word, typo and suggestion completion |
 
 GUI integration targets can run with `QT_QPA_PLATFORM=offscreen`. Fake tests
 explicitly select their dictionary and isolate preferences from the user's app
-settings. The controller-only suite requires no display server. Native smoke
-needs a normal macOS GUI-capable session and is skipped by default:
+settings. The controller-only suite requires no display server. CMake/CTest also builds `omawrite_native_spellchecking_tests`: its platform-plugin registration check always runs, independently of installed languages, so a discarded static import cannot masquerade as missing dictionaries. The real OS smoke needs a normal macOS GUI-capable session and is skipped by default:
 
 ```sh
 OMAWRITE_NATIVE_SPELLCHECK=1 ./tst_native_spellchecking

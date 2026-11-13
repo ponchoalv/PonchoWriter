@@ -21,9 +21,18 @@ try {
     if (!$stampCommand) { throw 'Missing toolchain stamp guard' }
     $env:OMAWRITE_STAMP = Join-Path $temp 'omawrite-toolchain.txt'
     $env:OMAWRITE_SIGNATURE = 'fake qmake|Qt|compiler|version|x64'
+    if ($env:OS -eq 'Windows_NT') {
+        if ($batch -match "(?<!`r)`n") { throw 'build.bat must have CRLF endings; re-check out the file using .gitattributes.' }
+        # Keep the full real batch body (not just its PowerShell payload), so
+        # CMD itself must resolve and CALL the toolchain subroutine label.
+        $stampBatch = Join-Path $temp 'toolchain-guard.cmd'
+        $entry = "@echo off`r`nsetlocal EnableExtensions DisableDelayedExpansion`r`ncall :checkToolchain`r`nexit /b %errorlevel%`r`n"
+        [IO.File]::WriteAllText($stampBatch, $entry + $batch, [Text.Encoding]::ASCII)
+    }
     function Invoke-StampCheck {
         $ErrorActionPreference = 'Continue'
-        & $engine -NoProfile -Command $stampCommand 2>$null
+        if ($env:OS -eq 'Windows_NT') { & $env:ComSpec /d /c $stampBatch 2>$null }
+        else { & $engine -NoProfile -Command $stampCommand 2>$null }
         return $LASTEXITCODE
     }
     if ((Invoke-StampCheck) -ne 0) { throw 'Fresh stamp failed' }

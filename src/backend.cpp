@@ -1028,6 +1028,7 @@ QVariantMap Backend::emphasisSpanAt(int position, const QString &marker) const {
     using Kind = MarkdownHighlighter::InlineKind;
     const Kind kind = marker == QStringLiteral("**") ? Kind::Bold
         : marker == QStringLiteral("~~")              ? Kind::Strikethrough
+        : marker == QStringLiteral("<u>")             ? Kind::Underline
                                                       : Kind::Italic;
     const int offset = position - block.position();
     const QList<MarkdownHighlighter::InlineMarkup> markup =

@@ -626,6 +626,12 @@ ApplicationWindow {
     }
 
     Shortcut {
+        sequence: "Ctrl+U"
+        context: Qt.WindowShortcut
+        onActivated: editor.wrapSelection("<u>")
+    }
+
+    Shortcut {
         sequence: "Ctrl+Shift+X"
         context: Qt.WindowShortcut
         onActivated: editor.wrapSelection("~~")
@@ -1140,8 +1146,10 @@ ApplicationWindow {
                     if (win.activeTableCell) return;
                     if (win.readMode) return;
                     presentation.forceActiveFocus();
-                    EditorMutations.toggleWrap(editor, marker,
-                                               backend.emphasisSpanAt(cursorPosition, marker));
+                    if (marker === "<u>") livePreview.prepareFormatting();
+                    var span = backend.emphasisSpanAt(cursorPosition, marker);
+                    if (marker === "<u>") EditorMutations.toggleUnderline(editor, span);
+                    else EditorMutations.toggleWrap(editor, marker, span);
                 }
 
                 function wrapCode(fenced) {

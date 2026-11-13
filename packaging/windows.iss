@@ -12,22 +12,23 @@
   #error NeedsVCRuntime is required
 #endif
 [Setup]
+; Stable ID retains upgrades from the formerly named PonchoWriter installer.
 AppId={{E2711809-4A86-4F2C-B612-2BE5C46E057A}
-AppName=PonchoWriter
+AppName=Write
 AppVersion={#AppVersion}
-AppPublisher=Alfonso Alvarez
+AppPublisher=Omacom and contributors
 AppPublisherURL=https://github.com/ponchoalv/PonchoWriter
-DefaultDirName={localappdata}\Programs\PonchoWriter
-DefaultGroupName=PonchoWriter
+DefaultDirName={localappdata}\Programs\Write
+DefaultGroupName=Write
 PrivilegesRequired=lowest
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 OutputDir={#OutputDir}
-OutputBaseFilename=PonchoWriter-{#AppVersion}-windows-x64-setup
+OutputBaseFilename=Write-{#AppVersion}-windows-x64-setup
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
-UninstallDisplayIcon={app}\ponchowriter.exe
+UninstallDisplayIcon={app}\omawrite.exe
 CloseApplications=yes
 
 [Code]
@@ -49,12 +50,18 @@ Name: "desktopicon"; Description: "Create a desktop shortcut"; Flags: unchecked
 [Files]
 Source: "{#DistDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
+[InstallDelete]
+; Upgrade cleanup is confined to the previous installer's binary/shortcuts.
+Type: files; Name: "{app}\ponchowriter.exe"
+Type: files; Name: "{group}\PonchoWriter.lnk"
+Type: files; Name: "{autodesktop}\PonchoWriter.lnk"
+
 [Icons]
-Name: "{group}\PonchoWriter"; Filename: "{app}\ponchowriter.exe"
-Name: "{autodesktop}\PonchoWriter"; Filename: "{app}\ponchowriter.exe"; Tasks: desktopicon
+Name: "{group}\Write"; Filename: "{app}\omawrite.exe"
+Name: "{autodesktop}\Write"; Filename: "{app}\omawrite.exe"; Tasks: desktopicon
 
 [Run]
-Filename: "{app}\ponchowriter.exe"; Description: "Launch PonchoWriter"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\omawrite.exe"; Description: "Launch Write"; Flags: nowait postinstall skipifsilent
 
 [Messages]
-WelcomeLabel2=This installs PonchoWriter for your account.%n%nMSVC builds require the Microsoft Visual C++ 2015-2022 x64 Redistributable. Mermaid additionally requires separately installed Node.js, Mermaid CLI and its browser. This unsigned installer does not install those prerequisites.%n%nSee the installed notices folder for third-party licenses. Packaging does not establish redistribution clearance.
+WelcomeLabel2=This installs Write for your account.%n%nMSVC builds require the Microsoft Visual C++ 2015-2022 x64 Redistributable. Mermaid additionally requires separately installed Node.js, Mermaid CLI and its browser. This unsigned installer does not install those prerequisites.%n%nSee the installed notices folder for third-party licenses. Packaging does not establish redistribution clearance.

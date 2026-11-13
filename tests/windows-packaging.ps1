@@ -20,7 +20,7 @@ using System.IO;
 public static class PackagingHelper {
     public static int Main(string[] args) {
         if (args.Length == 1 && args[0] == "--version") {
-            Console.WriteLine("ponchowriter 1.2.3"); return 0;
+            Console.WriteLine("omawrite 1.2.3"); return 0;
         }
         string output = null; bool runtime = false;
         foreach (string a in args) {
@@ -29,7 +29,7 @@ public static class PackagingHelper {
         }
         if (output == null || !runtime) return 2;
         Directory.CreateDirectory(output);
-        File.WriteAllText(Path.Combine(output, "PonchoWriter-1.2.3-windows-x64-setup.exe"), "fake installer");
+        File.WriteAllText(Path.Combine(output, "Write-1.2.3-windows-x64-setup.exe"), "fake installer");
         return 0;
     }
 }
@@ -40,23 +40,23 @@ public static class PackagingHelper {
 #!/usr/bin/env python3
 import os, sys
 if sys.argv[1:] == ['--version']:
-    print('ponchowriter 1.2.3')
+    print('omawrite 1.2.3')
 else:
     assert '/DNeedsVCRuntime=' + os.environ['PONCHO_TEST_RUNTIME'] in sys.argv
     path = next(a[12:] for a in sys.argv if a.startswith('/DOutputDir='))
     os.makedirs(path, exist_ok=True)
-    open(os.path.join(path, 'PonchoWriter-1.2.3-windows-x64-setup.exe'), 'w').write('fake installer')
+    open(os.path.join(path, 'Write-1.2.3-windows-x64-setup.exe'), 'w').write('fake installer')
 '@ | Set-Content -LiteralPath $helper -Encoding ASCII
         & chmod +x $helper
         if ($LASTEXITCODE -ne 0) { throw 'Could not mark mock executable.' }
     }
-    Copy-Item -LiteralPath $helper -Destination "$temp/dist/ponchowriter.exe"
+    Copy-Item -LiteralPath $helper -Destination "$temp/dist/omawrite.exe"
     $packager = Join-Path $root 'bin/package-windows.ps1'
     foreach ($kit in @('win32-msvc', 'win32-g++')) {
         $env:PONCHO_TEST_RUNTIME = if ($kit -eq 'win32-msvc') { '1' } else { '0' }
         & $engine -NoProfile -File $packager -DistDir "$temp/dist" -Iscc $helper -Kit $kit
         if ($LASTEXITCODE -ne 0) { throw "Packaging failed for $kit" }
-        $artifact = "$temp/installer/PonchoWriter-1.2.3-windows-x64-setup.exe"
+        $artifact = "$temp/installer/Write-1.2.3-windows-x64-setup.exe"
         if (!(Test-Path -LiteralPath $artifact)) { throw 'Missing expected artifact' }
         # PS 5.1 can promote redirected native stderr under Stop: these failures are expected.
         $ErrorActionPreference = 'Continue'

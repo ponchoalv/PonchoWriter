@@ -1,12 +1,12 @@
 # Writing, visual blocks, attachments and shortcuts
 
-This is the user guide for [PonchoWriter](https://github.com/ponchoalv/PonchoWriter), maintained by Alfonso Alvarez. See [copyright and dependency notices](../COPYRIGHT.md). Markdown remains the file format; this is not a rich-text document format or an Obsidian plugin.
+This is the user guide for this feature-rich [Write/Omawrite fork](https://github.com/ponchoalv/PonchoWriter). See [copyright and dependency notices](../COPYRIGHT.md). Markdown remains the file format; this is not a rich-text document format or an Obsidian plugin.
 
 ## Files and windows
 
 Launching the app without a file opens a fresh untitled window, including from the macOS Dock/Finder. Recovered drafts remain separate. Simply switching back to the app does not create a window. Opening a file already owned by this app activates its existing window without reloading. A different file opens separately; the file picker no longer replaces or discards the originating draft. Cmd/Ctrl+N always opens a fresh untitled window. Save As cannot overwrite a file owned by another window. Recovery drafts retain independent slots and do not get consumed by New Window.
 
-On macOS, prefer `open -a "/path/to/ponchowriter.app" "/path/to/note.md"` rather than `-n` or `--args`. Windows/Linux executable launches forward file requests through the same local Qt broker. Quit older, un-routed copies before using this build. If forwarding fails, retry after closing old copies; do not delete recovery data or compatible lock files to force a second owner.
+On macOS, prefer `open -a "/path/to/Write.app" "/path/to/note.md"` rather than `-n` or `--args`. Windows/Linux executable launches forward file requests through the same local Qt broker. Quit older, un-routed copies before using this build. If forwarding fails, retry after closing old copies; do not delete recovery data or compatible lock files to force a second owner.
 
 An empty Edit document shows the decorative **# Start writing** hint even with the caret focused. Typing or IME preedit hides it; clearing/cancelling restores it. Read mode hides it. It is never inserted into Markdown or undo history.
 
@@ -76,6 +76,10 @@ Inside inline code, backslashes are literal. To include backticks, choose a long
 
 This renders as a code span containing **C-x followed by a backtick**. The one padding space at each end is removed. Closing runs must match the opening length exactly; single and double backticks are not interchangeable. Edit keeps the original code/escape syntax available, and switching to Read never rewrites the Markdown.
 
+## Language and fonts
+
+The footer's **Font** button opens a searchable font picker. UI translations follow upstream's `~/.config/omarchy/language` file (a language code on its first line, such as `de`); absent or unsupported translations fall back to English. Language changes update every open window without changing document text.
+
 ## Existing writing behavior
 
 - Bold, italic, strike and link markers are caret-aware: source becomes visible when editing the relevant span.
@@ -136,7 +140,7 @@ Read validates its source/import alignment before baking colors into HTML; compl
 
 ## Paste screenshots without saving them manually
 
-On macOS, **Cmd+Ctrl+Shift+4** copies a selected screenshot region to the clipboard (an OS shortcut, not PonchoWriter's). Then paste with **Cmd+V** into the document.
+On macOS, **Cmd+Ctrl+Shift+4** copies a selected screenshot region to the clipboard (an OS shortcut, not Write's). Then paste with **Cmd+V** into the document.
 
 The app stages a PNG in persistent application data and inserts ordinary Markdown:
 
@@ -190,10 +194,10 @@ Mermaid is not built into Qt. If **`mmdc`** (Mermaid CLI) is already installed a
 
 ```sh
 command -v mmdc
-./build/ponchowriter.app/Contents/MacOS/ponchowriter docs/preview-example.md
+./build/cmake/Write.app/Contents/MacOS/Write docs/preview-example.md
 ```
 
-Launching from Finder may give a different PATH than your shell. Restart the app after changing renderer availability. PonchoWriter does **not** install or download the renderer. Mermaid CLI normally needs its own Node/Puppeteer/Chromium setup: no embedded WebEngine does not mean no external browser runtime.
+Launching from Finder may give a different PATH than your shell. Restart the app after changing renderer availability. Write does **not** install or download the renderer. Mermaid CLI normally needs its own Node/Puppeteer/Chromium setup: no embedded WebEngine does not mean no external browser runtime.
 
 Rendering uses an external CLI on macOS/Linux and Windows. Windows resolves standard npm installs to direct Node invocation and contains the process tree in a kill-on-close Job Object; native Windows validation is pending (see [setup/checklist](install.md#windows)). Missing tools or failed containment keep Mermaid source. Document-provided configuration, HTML labels, click actions, styling directives, encoded escapes and remote-resource syntax are rejected by the constrained renderer. This conservative syntax filter is not an OS/browser sandbox; do not treat an external renderer as a general untrusted-code execution boundary. Missing CLI, invalid/incomplete/unsupported syntax and render failures leave source usable. There is no drag-node editor, whiteboard or arbitrary Mermaid graphical round-trip support.
 

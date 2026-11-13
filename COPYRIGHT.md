@@ -1,6 +1,6 @@
-# PonchoWriter — copyright and third-party notices
+# Write — copyright and third-party notices
 
-PonchoWriter is maintained by Alfonso Alvarez (ponchoalv). The product name, new identity/artwork and original contributions are provided under the root [MIT license](LICENSE).
+This feature-rich fork is maintained by Alfonso Alvarez (ponchoalv). Original fork contributions are provided under the root [MIT license](LICENSE). The Write/Omawrite branding and application artwork follow upstream; this fork does not claim upstream endorsement.
 
 The application is derived from [Omawrite](https://github.com/omacom/omawrite), copyright © 2026 David Heinemeier Hansson. Its MIT copyright, permission notice and disclaimer remain applicable and are retained in `LICENSE`. Rebranding and substantial modifications do not transfer the upstream author's copyright. Git history and historical benchmark reports remain factual records, not current branding.
 

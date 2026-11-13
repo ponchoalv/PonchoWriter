@@ -19,6 +19,7 @@ SOURCES += \
     ../src/windowmanager.cpp \
     ../src/fileopenrequests.cpp \
     ../src/systemtheme.cpp \
+    ../src/translator.cpp \
     ../src/spellingcontroller.cpp \
     ../src/spellingprose.cpp \
     ../src/cli.cpp \
@@ -34,6 +35,7 @@ HEADERS += \
     ../src/windowmanager.h \
     ../src/fileopenrequests.h \
     ../src/systemtheme.h \
+    ../src/translator.h \
     ../src/spellingcontroller.h \
     ../src/spellingprose.h \
     ../src/cli.h \

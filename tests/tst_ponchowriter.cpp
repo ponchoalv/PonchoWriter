@@ -37,6 +37,7 @@
 #include "backend.h"
 #include "profile.h"
 #include "windowmanager.h"
+#include "translator.h"
 #include "fileopenrequests.h"
 #include <QFileOpenEvent>
 #include <QScopeGuard>
@@ -144,6 +145,26 @@ private slots:
         QVERIFY(Profile::adopt(clean, {}, temporary.filePath("absent"), fresh));
         QCOMPARE(clean.value("profileStorageRoot").toString(), fresh);
         QCOMPARE(Profile::ipcDirectoryName(), QStringLiteral("omawrite-instance")); // Stable cross-version lock namespace.
+        QSettings returning(temporary.filePath("returning.ini"), QSettings::IniFormat);
+        const QVariantMap poncho{{"profileStorageRoot", old}, {"profileMigrationVersion", 1}};
+        QVERIFY(Profile::adopt(returning, poncho, fresh, fresh));
+        QCOMPARE(returning.value("profileStorageRoot").toString(), old);
+        QSettings chosen(temporary.filePath("chosen.ini"), QSettings::IniFormat);
+        chosen.setValue("profileStorageRoot", old);
+        QVERIFY(Profile::adopt(chosen, {}, fresh, fresh));
+        QCOMPARE(chosen.value("profileStorageRoot").toString(), old);
+        QSettings write(temporary.filePath("write.ini"), QSettings::IniFormat);
+        write.setValue("profileMigrationVersion", 1);
+        write.setValue("profileStorageRoot", fresh);
+        write.setValue("textZoom", 1.0);
+        const QVariantMap latest{{"textZoom", 1.5}, {"profileStorageRoot", old}};
+        QVERIFY(Profile::adoptWrite(write, latest, old, fresh));
+        QCOMPARE(write.value("profileStorageRoot").toString(), old);
+        QCOMPARE(write.value("textZoom").toDouble(), 1.5);
+        write.setValue("textZoom", 2.0);
+        QVERIFY(Profile::adoptWrite(write, latest, fresh, fresh));
+        QCOMPARE(write.value("profileStorageRoot").toString(), old);
+        QCOMPARE(write.value("textZoom").toDouble(), 2.0);
     }
     void emptyDocumentHintSurvivesStartupFocusAndTracksIme() {
         QTemporaryDir directory; QVERIFY(directory.isValid());
@@ -1436,6 +1457,39 @@ private slots:
         QVERIFY(requests.last()[0].toStringList().isEmpty());
     }
 
+    void languageChangesRetranslateEveryManagedWindow() {
+        const QString oldName = QCoreApplication::applicationName();
+        const QLocale oldLocale;
+        const auto oldDirection = QGuiApplication::layoutDirection();
+        QCoreApplication::setApplicationName(oldName + "-translations");
+        const QString state = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+        const auto cleanup = qScopeGuard([&] {
+            QDir(state).removeRecursively();
+            QCoreApplication::setApplicationName(oldName);
+            QLocale::setDefault(oldLocale);
+            QGuiApplication::setLayoutDirection(oldDirection);
+        });
+        QTemporaryDir catalogs; QVERIFY(catalogs.isValid());
+        const QString language = catalogs.filePath("language");
+        writeFile(catalogs.filePath("en.json"), R"({"Write":"Write","Untitled":"Untitled"})");
+        writeFile(catalogs.filePath("de.json"), R"({"Write":"Schreiben","Untitled":"Unbenannt"})");
+        writeFile(language, "en\n");
+        Translator translator(language, catalogs.path());
+        QVERIFY(qApp->installTranslator(&translator));
+        WindowManager manager;
+        connect(&translator, &Translator::changed, &manager, &WindowManager::retranslate);
+        manager.start({});
+        manager.newWindow();
+        QCOMPARE(manager.windows().size(), 2);
+        for (auto *window : manager.windows())
+            QVERIFY(window->title().endsWith("Write"));
+        writeFile(language, "de\n");
+        for (auto *window : manager.windows()) {
+            QTRY_VERIFY(window->title().endsWith("Schreiben"));
+            QCOMPARE(manager.backendFor(window)->fileName(), QString("Unbenannt.md"));
+        }
+    }
+
     void emptyLaunchesAlwaysCreateBlankWindowsAndKeepFileOwners() {
         const QString oldName = QCoreApplication::applicationName();
         QCoreApplication::setApplicationName(oldName + "-routing-blank");
@@ -2335,7 +2389,7 @@ private slots:
 
     void answersHelpBeforeOpeningAWindow() {
         const QString usage = Cli::usage();
-        QVERIFY(usage.contains(QStringLiteral("ponchowriter [FILE ...]")));
+        QVERIFY(usage.contains(QStringLiteral("omawrite [FILE ...]")));
         QVERIFY(usage.contains(QStringLiteral("-h, --help")));
         QVERIFY(usage.contains(QStringLiteral("-v, --version")));
 
@@ -4623,13 +4677,10 @@ private slots:
         QSignalSpy discardSpy(dialog, SIGNAL(discardRequested()));
         QSignalSpy saveSpy(dialog, SIGNAL(saveRequested()));
 
-        // Bare letters and Ctrl chords do nothing, so a stray keypress
-        // while typing can never discard work.
+        // Modified Ctrl chords are inert. Bare-letter choices are covered by
+        // the upstream tests and intentionally supported while the modal is up.
         QVERIFY(QMetaObject::invokeMethod(dialog, "open"));
         QTRY_VERIFY(dialog->property("opened").toBool());
-        QTest::keyClick(window, Qt::Key_C);
-        QTest::keyClick(window, Qt::Key_D);
-        QTest::keyClick(window, Qt::Key_S);
         QTest::keyClick(window, Qt::Key_C, Qt::ControlModifier);
         QCOMPARE(cancelSpy.count(), 0);
         QCOMPARE(discardSpy.count(), 0);
@@ -4698,7 +4749,7 @@ private slots:
         backend.decreaseTextSize();
         backend.decreaseTextSize();
         QCOMPARE(backend.textScale(), 1.5 * 0.9);
-        QCOMPARE(backend.status(), QStringLiteral("Text size 90%"));
+        QVERIFY(backend.status().isEmpty()); // Upstream keeps routine zoom changes quiet.
 
         // The ends of the ladder hold instead of running away.
         for (int step = 0; step < 8; ++step)
@@ -4897,7 +4948,7 @@ private slots:
             QVERIFY(versionLabel);
             QVERIFY(versionLabel->property("visible").toBool());
             QCOMPARE(versionLabel->property("text").toString(),
-                     QStringLiteral("PonchoWriter ") + QCoreApplication::applicationVersion());
+                     QStringLiteral("Write ") + QCoreApplication::applicationVersion());
             QTest::keyClick(window, Qt::Key_Minus, Qt::ControlModifier);
             QCOMPARE(backend.textScale(), scale);
             QVERIFY(dialog->property("x").toReal() >= 0);
@@ -5361,12 +5412,19 @@ private slots:
         QSignalSpy keepSpy(dialog, SIGNAL(keepRequested()));
         QSignalSpy reloadSpy(dialog, SIGNAL(reloadRequested()));
 
-        // Escape closes it without a choice.
+        // Dismissing a changed-file prompt does not resume auto-save.
+        QVERIFY(QMetaObject::invokeMethod(dialog, "open"));
+        QTRY_VERIFY(dialog->property("opened").toBool());
+        QVERIFY(QMetaObject::invokeMethod(dialog, "close"));
+        QTRY_VERIFY(!dialog->property("visible").toBool());
+        QCOMPARE(keepSpy.count(), 0);
+        QCOMPARE(reloadSpy.count(), 0);
+        // A deleted file still becomes an unsaved document when dismissed.
+        dialog->setProperty("deleted", true);
         QVERIFY(QMetaObject::invokeMethod(dialog, "open"));
         QTRY_VERIFY(dialog->property("opened").toBool());
         QVERIFY(QMetaObject::invokeMethod(dialog, "close"));
         QTRY_COMPARE(keepSpy.count(), 1);
-        QCOMPARE(reloadSpy.count(), 0);
     }
 
     void opensAnExistingFileFromTheCommandLine() {

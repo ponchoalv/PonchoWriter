@@ -23,7 +23,7 @@ Set `QT_DIR=C:\Qt\6.x.y\msvc2022_64` (or matching MinGW kit); explicit `QT_DIR`/
 
 `build.bat --check` validates tools/Qt/compiler architecture without building. Normal builds bootstrap pinned KDE dependencies privately and build Release. `--test` runs the main and Mermaid suites; it does **not** run all Unix suites. `--deploy` collects the matching Qt runtime, QML plugins and notices into `build/windows-<kit>-qt<version>-<arch>/dist`. Keep the **entire folder**. Existing dist folders are refused: move/remove only generated output before rebuilding.
 
-`--installer` implies `--deploy` and compiles `packaging/windows.iss`, producing `installer/PonchoWriter-<version>-windows-x64-setup.exe` beside `dist`. It is an **unsigned, per-user x64 installer** with Start Menu/optional desktop shortcut and uninstaller; it does not change file associations. Set `ISCC` for a nonstandard Inno compiler path. The installed app still needs the **VC++ Redistributable** for MSVC builds; setup installs it on the developer machine, but the generated installer does not bundle it and blocks MSVC installation when its registry prerequisite is absent. Use the latest supported redistributable; the presence check does not certify that an older runtime is sufficient. Static Qt is not used: this is a bundled deployment, like a typical macOS `.app`.
+`--installer` implies `--deploy` and compiles `packaging/windows.iss`, producing `installer/Write-<version>-windows-x64-setup.exe` beside `dist`. It is an **unsigned, per-user x64 installer** with Start Menu/optional desktop shortcut and uninstaller; it does not change file associations. Set `ISCC` for a nonstandard Inno compiler path. The installed app still needs the **VC++ Redistributable** for MSVC builds; setup installs it on the developer machine, but the generated installer does not bundle it and blocks MSVC installation when its registry prerequisite is absent. Use the latest supported redistributable; the presence check does not certify that an older runtime is sufficient. Static Qt is not used: this is a bundled deployment, like a typical macOS `.app`.
 
 Optional diagrams: `setup.bat -Install -Mermaid` installs Node LTS and global Mermaid CLI (which may download Chromium). Alternatively run `npm install --global @mermaid-js/mermaid-cli` with an existing Node installation. Ensure Node and the npm global bin directory (normally `%APPDATA%\npm`) are in the app's PATH; restart the app/sign out if Explorer has stale environment. Node/Mermaid/browser remain separate from the installer.
 
@@ -37,10 +37,10 @@ On macOS with Homebrew and Apple's command-line tools installed:
 brew install qt cmake ninja perl
 ./bin/build
 ./bin/test
-open -a "$PWD/build/ponchowriter.app" /absolute/path/note.md
+open -a "$PWD/build/cmake/Write.app" /absolute/path/note.md
 ```
 
-On Linux, install the equivalent packages through your distribution (check that its Qt is new enough), then `./bin/build`; run `./build/ponchowriter note.md`. `bin/build` bootstraps SHA-pinned ECM/KSyntaxHighlighting/Sonnet into `.deps`; no manual KDE install is needed. Perl and Qt Test are required even when dependency tests are disabled. These Unix scripts do not detect all stale toolchains: move generated `build`, `build-tests` and `.deps` aside when changing Qt/compiler/architecture. Do not remove app data or documents. See [test commands](testing.md).
+On Linux, install the equivalent packages through your distribution (check that its Qt is new enough), then `./bin/build`; run `./build/cmake/omawrite note.md`. `bin/build` uses upstream's CMake build and bootstraps SHA-pinned ECM/KSyntaxHighlighting/Sonnet into `.deps`; no manual KDE install is needed. Perl and Qt Test are required even when dependency tests are disabled. These Unix scripts do not detect all stale toolchains: move generated `build`, `build-tests` and `.deps` aside when changing Qt/compiler/architecture. Do not remove app data or documents. See [test commands](testing.md).
 
 ## Checks before distributing
 

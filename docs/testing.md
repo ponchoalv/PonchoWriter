@@ -3,10 +3,12 @@
 Build/dependency/kit requirements are in [install.md](install.md).
 
 ```sh
-./bin/test                 # normal offscreen suites on macOS/Linux
+./bin/test                 # CMake/CTest: upstream + fork offscreen suites
 ./bin/test --rendered
 ./bin/test --native-spelling
 ```
+
+For an existing CMake build: `ctest --test-dir build/cmake --output-on-failure`. Native probes retain their qmake harnesses.
 
 On Windows: `build.bat --test` runs the main editor and Mermaid suites, not the complete Unix suite set. Native tests need an interactive desktop; focus failures in a headless session are not necessarily editor regressions. Missing system spelling dictionaries can cause expected skips.
 

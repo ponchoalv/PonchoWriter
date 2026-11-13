@@ -25,6 +25,13 @@ WindowManager::WindowManager(const QUrl &qml, QObject *parent)
     : QObject(parent), m_mainQml(qml), m_theme(std::make_unique<SystemTheme>()) {}
 WindowManager::~WindowManager() = default;
 
+void WindowManager::retranslate() {
+    for (const auto &entry : m_entries) {
+        entry->engine->retranslate();
+        entry->backend->retranslate();
+    }
+}
+
 QString WindowManager::documentKey(const QUrl &url) {
     if (!url.isLocalFile() || url.toLocalFile().isEmpty()) return {};
     const QFileInfo info(url.toLocalFile());
@@ -78,7 +85,7 @@ WindowManager::Entry *WindowManager::create(bool recover) {
     ptr->engine->rootContext()->setContextProperty(QStringLiteral("backend"), ptr->backend.get());
     ptr->engine->load(m_mainQml);
     if (ptr->engine->rootObjects().isEmpty()) {
-        emit errorOccurred(QStringLiteral("Could not load the PonchoWriter interface."));
+        emit errorOccurred(tr("Could not open a new window."));
         return nullptr;
     }
     ptr->window = qobject_cast<QWindow *>(ptr->engine->rootObjects().first());

@@ -1,11 +1,12 @@
-# PonchoWriter
+# Write (Omawrite)
 
-A native Qt Markdown editor, forked from [Omawrite](https://github.com/omacom/omawrite) and maintained by Alfonso Alvarez.
+A feature-rich fork of [Omawrite](https://github.com/omacom/omawrite), following upstream's Write branding and development.
 
-- Caret-aware Markdown Edit and Read modes, search/replace and familiar shortcuts.
+- Caret-aware Markdown Edit/Read modes, translated UI, font picker and search/replace.
 - Editable virtualized tables, syntax-colored code fences, local images and clipboard screenshots.
 - Independent document windows, recovery drafts, native spelling and Print/PDF snapshots.
 - Optional Mermaid diagrams through an external CLI; no embedded browser.
+- Windows, macOS and Linux support.
 
 ## Use and build
 
@@ -29,7 +30,9 @@ macOS/Linux, with the [dependencies](docs/install.md#macos-and-linux) installed:
 ./bin/test
 ```
 
-On macOS: `open -a "$PWD/build/ponchowriter.app" document.md`. On Linux: `./build/ponchowriter document.md`.
+On macOS: `open -a "$PWD/build/cmake/Write.app" document.md`. On Linux: `./build/cmake/omawrite document.md`.
+
+Quit older copies before upgrading. Existing fork settings, recovery storage and ownership locks are reused in place; internal legacy identifiers are intentionally retained for compatibility. No documents or drafts are copied or deleted by the rename.
 
 Installer automation is unsigned and requires native Windows validation. MSVC targets need the VC++ Redistributable; Node/Mermaid remain external. Bundling libraries is not a fully static Qt build.
 

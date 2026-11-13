@@ -37,6 +37,7 @@
 #include <QProcess>
 #include <QPrintDialog>
 #include <QPrinter>
+#include <QQuickItem>
 #include <QQuickTextDocument>
 #include <QRegularExpression>
 #include <QScreen>
@@ -61,6 +62,7 @@
 #include <QWindow>
 
 #include <algorithm>
+#include <cmath>
 #include <iterator>
 
 #include "markdownhighlighter.h"
@@ -257,9 +259,18 @@ void Backend::setParentWindow(QWindow *window) {
     m_parentWindow = window;
 }
 
+// The name an untitled document goes by, which a save suggests too.
+QString Backend::untitledName() {
+    return tr("Untitled") + QStringLiteral(".md");
+}
+
+void Backend::retranslate() {
+    emit fileUrlChanged();
+}
+
 QString Backend::fileName() const {
     if (!m_fileUrl.isValid() || m_fileUrl.isEmpty())
-        return QStringLiteral("Untitled.md");
+        return untitledName();
 
     if (m_fileUrl.isLocalFile()) {
         const QFileInfo info(m_fileUrl.toLocalFile());
@@ -268,7 +279,7 @@ QString Backend::fileName() const {
     }
 
     const QString name = m_fileUrl.fileName();
-    return name.isEmpty() ? QStringLiteral("Untitled.md") : name;
+    return name.isEmpty() ? untitledName() : name;
 }
 
 void Backend::setDarkMode(bool darkMode) {
@@ -309,9 +320,6 @@ qreal Backend::steppedTextZoom(int direction) const {
 }
 
 void Backend::setTextZoom(qreal zoom) {
-    // Report the size even when the ladder has run out, so a keypress that
-    // changes nothing still says why.
-    setStatus(QStringLiteral("Text size %1%").arg(qRound(zoom * 100)));
     if (qFuzzyCompare(m_textZoom, zoom))
         return;
 
@@ -333,18 +341,23 @@ bool Backend::replaceSpelling(const QVariantMap &token, const QString &replaceme
 void Backend::attachDocument(QObject *textDocument) {
     auto *quickDocument = qobject_cast<QQuickTextDocument *>(textDocument);
     if (!quickDocument || !quickDocument->textDocument()) {
-        setStatus(QStringLiteral("Could not attach the Markdown renderer."));
+        setStatus(tr("Could not attach the Markdown renderer."));
         return;
     }
 
     if (m_highlighter)
         delete m_highlighter.data();
 
+    // Qt Quick draws only the visible part of a long text, but turns that on
+    // only for text set through TextEdit.text, never through its document.
+    if (auto *editor = qobject_cast<QQuickItem *>(quickDocument->parent()))
+        editor->setFlag(QQuickItem::ItemObservesViewport);
+
     m_document = quickDocument->textDocument();
     m_lastDocumentText = m_document->toPlainText();
     m_highlighter = new MarkdownHighlighter(m_document);
     m_highlighter->setTheme(m_darkMode, m_themeBackground, m_themeForeground, m_themeAccent,
-                            m_themeCodeBackground);
+                            m_themePanelBackground);
     m_highlighter->setCaret(m_caretPosition);
     m_spelling->attach(m_document);
 
@@ -367,14 +380,14 @@ void Backend::openDialog() {
 void Backend::open(const QUrl &url) {
     if (m_openRouter && !m_bypassRouting) { m_openRouter(url); return; }
     if (!url.isLocalFile()) {
-        setStatus(QStringLiteral("Only local files can be opened."));
+        setStatus(tr("Only local files can be opened."));
         return;
     }
 
     const QString targetName = QFileInfo(url.toLocalFile()).fileName();
     QFile file(url.toLocalFile());
     if (!file.open(QIODevice::ReadOnly)) {
-        setStatus(QStringLiteral("Could not open %1.").arg(targetName));
+        setStatus(tr("Could not open %1.").arg(targetName));
         return;
     }
 
@@ -396,12 +409,12 @@ void Backend::open(const QUrl &url) {
     watchCurrentFile();
     setModified(false);
     if (savesUnchanged(raw)) {
-        setStatus(QStringLiteral("Opened %1").arg(fileName()));
+        setStatus(tr("Opened %1").arg(fileName()));
     } else {
         // Saving writes UTF-8 with plain line endings, which would change
         // bytes this file holds. Leave that to an explicit save.
         suspendAutoSave();
-        setStatus(QStringLiteral("Opened %1. Auto-save is off to keep its encoding and line endings.")
+        setStatus(tr("Opened %1. Auto-save is off to keep its encoding and line endings.")
                       .arg(fileName()));
     }
     emit documentLoaded();
@@ -444,7 +457,7 @@ void Backend::openOrStartFile(const QUrl &requestedUrl) {
         ? QUrl::fromLocalFile(info.absoluteFilePath()) : requestedUrl;
     if (m_modified) {
         // A recovered draft fills this window; opening over it would lose it.
-        setStatus(QStringLiteral("Recovered unsaved changes; %1 was not opened.")
+        setStatus(tr("Recovered unsaved changes; %1 was not opened.")
                       .arg(info.fileName()));
         return;
     }
@@ -465,7 +478,7 @@ void Backend::openOrStartFile(const QUrl &requestedUrl) {
     setFileUrl(url);
     watchCurrentFile();
     setModified(false);
-    setStatus(QStringLiteral("New file %1").arg(fileName()));
+    setStatus(tr("New file %1").arg(fileName()));
     emit documentLoaded();
 }
 
@@ -494,7 +507,7 @@ void Backend::keepExternalVersion() {
     scheduleRecovery();
     scheduleAutoSave();
     watchCurrentFile();
-    setStatus(QStringLiteral("Kept your version"));
+    setStatus(tr("Kept your version"));
 }
 
 QFont Backend::printFont(const QFont &editorFont, qreal screenDpi) {
@@ -528,7 +541,7 @@ void Backend::reportPrintFailure(const QString &message) {
 }
 
 void Backend::printDocument() {
-    if (!m_document) { reportPrintFailure(QStringLiteral("There is no document to print.")); return; }
+    if (!m_document) { reportPrintFailure(tr("There is no document to print.")); return; }
     QDialog settings;
     settings.setWindowTitle(QStringLiteral("Print layout"));
     QVBoxLayout layout(&settings);
@@ -548,7 +561,7 @@ void Backend::printDocument() {
     printer.setDocName(fileName());
     printer.setPageMargins(QMarginsF(15, 15, 15, 15), QPageLayout::Millimeter);
     QPrintDialog dialog(&printer);
-    dialog.setWindowTitle(QStringLiteral("Print %1").arg(fileName()));
+    dialog.setWindowTitle(tr("Print %1").arg(fileName()));
     dialog.setMinMax(1, 2000);
     dialog.setOption(QAbstractPrintDialog::PrintSelection, false);
     dialog.setOption(QAbstractPrintDialog::PrintCurrentPage, false);
@@ -646,7 +659,7 @@ void Backend::copyAsHtml(int start, int end, QObject *renderedDocument, bool pla
     // the exported markup too, not silently fall back to rendered words.
     mimeData->setText(plainMarkup ? html : rendered.toPlainText());
     QGuiApplication::clipboard()->setMimeData(mimeData);
-    if (plainMarkup) setStatus(QStringLiteral("Copied as HTML."));
+    if (plainMarkup) setStatus(tr("Copied as HTML."));
 }
 
 QString Backend::attachmentStoragePath() const {
@@ -980,12 +993,12 @@ bool Backend::editorTextChanged() {
         setModified(false);
         clearRecovery();
         if (m_hasKnownFileContents)
-            setStatus(QStringLiteral("Saved %1").arg(fileName()));
+            setStatus(tr("Saved %1").arg(fileName()));
         else
             setStatus(QString());
     } else {
         setModified(true);
-        setStatus(QStringLiteral("Unsaved"));
+        setStatus(QString());
         scheduleRecovery();
         scheduleAutoSave();
     }
@@ -1239,16 +1252,26 @@ void Backend::documentFontChanged() {
 
 void Backend::loadDocumentText(const QString &text) {
     if (!m_document) {
-        setStatus(QStringLiteral("Could not attach the Markdown renderer."));
+        setStatus(tr("Could not attach the Markdown renderer."));
         return;
     }
 
+    // Inserting under the line height already set styles the text once, where
+    // setPlainText and a typography pass after it would restyle it twice.
     m_loading = true;
-    m_document->setPlainText(text);
+    const bool undoEnabled = m_document->isUndoRedoEnabled();
+    m_document->setUndoRedoEnabled(false);
+    QTextCursor cursor(m_document);
+    cursor.beginEditBlock();
+    cursor.select(QTextCursor::Document);
+    cursor.removeSelectedText();
+    cursor.setBlockFormat(lineHeightFormat());
+    cursor.insertText(text);
+    cursor.endEditBlock();
+    m_document->setUndoRedoEnabled(undoEnabled);
     m_lastDocumentText = text;
     m_loading = false;
 
-    applyDocumentTypography();
     m_wordCountTimer.stop();
     m_wordCountStale = true;
     m_wordCountAgain = false;
@@ -1281,7 +1304,7 @@ void Backend::setStatus(const QString &status) {
 
 void Backend::saveTo(const QUrl &url) {
     if (!url.isLocalFile()) {
-        setStatus(QStringLiteral("Only local files can be saved."));
+        setStatus(tr("Only local files can be saved."));
         emit saveFailed();
         return;
     }
@@ -1303,10 +1326,9 @@ void Backend::saveTo(const QUrl &url) {
     // Without a temporary file beside it, as in a folder only the file itself
     // may be written in, write the file in place rather than fail.
     file.setDirectWriteFallback(true);
-    // Write exactly the UTF-8/LF bytes tracked as our saved baseline. Text
-    // mode translates LF to CRLF on Windows, violating the save contract.
+    // Binary writes preserve the UTF-8/LF baseline on Windows too.
     if (!file.open(QIODevice::WriteOnly)) {
-        setStatus(QStringLiteral("Could not save %1.").arg(targetName));
+        setStatus(tr("Could not save %1.").arg(targetName));
         emit saveFailed();
         return;
     }
@@ -1326,7 +1348,7 @@ void Backend::saveTo(const QUrl &url) {
     // returning false (and leaving the original untouched) on any write error.
     if (!file.commit()) {
         watchCurrentFile();
-        setStatus(QStringLiteral("Could not write %1.").arg(targetName));
+        setStatus(tr("Could not write %1.").arg(targetName));
         emit saveFailed();
         return;
     }
@@ -1342,7 +1364,7 @@ void Backend::saveTo(const QUrl &url) {
     QSettings().setValue(lastSaveDirectorySetting,
                          QFileInfo(url.toLocalFile()).absolutePath());
     setModified(false);
-    setStatus(QStringLiteral("Saved %1").arg(fileName()));
+    setStatus(tr("Saved %1").arg(fileName()));
     clearRecovery();
     emit saveSucceeded();
 }
@@ -1505,8 +1527,8 @@ void Backend::restoreRecovery() {
     watchCurrentFile();
     setModified(true);
     setStatus(missingAttachment
-        ? QStringLiteral("Recovered unsaved changes; some staged attachments are missing or invalid.")
-        : QStringLiteral("Recovered unsaved changes"));
+        ? tr("Recovered unsaved changes; some staged attachments are missing or invalid.")
+        : tr("Recovered unsaved changes"));
     emit documentLoaded();
 }
 
@@ -1549,6 +1571,14 @@ void Backend::checkWatchedFile() {
     if (m_fileMissing && wasMissing)
         return;
     reportExternalChange(m_fileMissing);
+}
+
+// Black or white, whichever reads on the color (WCAG relative luminance).
+QString Backend::readableOn(const QString &color) {
+    const QColor c(color);
+    auto linear = [](double v) { return v <= .04045 ? v / 12.92 : std::pow((v + .055) / 1.055, 2.4); };
+    const double luminance = .2126 * linear(c.redF()) + .7152 * linear(c.greenF()) + .0722 * linear(c.blueF());
+    return luminance > .179 ? QStringLiteral("black") : QStringLiteral("white");
 }
 
 // A quoted TOML value ends at its closing quote; whatever trails it is an inline comment.
@@ -1616,7 +1646,7 @@ void Backend::loadOmarchyTheme() {
     const bool wasDark = m_darkMode;
     const QStringList previousColors{m_themeBackground, m_themeForeground, m_themeAccent,
                                      m_themeSelection, m_themeSelectionForeground,
-                                     m_themeCodeBackground};
+                                     m_themePanelBackground};
 
     bool themeIsDark = m_systemDarkMode;
     if (themeMode == QStringLiteral("dark")) {
@@ -1662,20 +1692,20 @@ void Backend::loadOmarchyTheme() {
     // unlike lightening, still moves on a pure black background.
     const QColor page(m_themeBackground);
     const QColor lighter(lighterBackground);
-    m_themeCodeBackground = (lighter.isValid() && lighter != page
+    m_themePanelBackground = (lighter.isValid() && lighter != page
                                  ? lighter
                                  : blend(page, QColor(m_themeForeground), 0.06)).name();
 
     if (m_highlighter) {
         m_highlighter->setTheme(m_darkMode, m_themeBackground, m_themeForeground,
-                                m_themeAccent, m_themeCodeBackground);
+                                m_themeAccent, m_themePanelBackground);
     }
 
     if (m_darkMode != wasDark)
         emit darkModeChanged();
     const QStringList colors{m_themeBackground, m_themeForeground, m_themeAccent,
                              m_themeSelection, m_themeSelectionForeground,
-                             m_themeCodeBackground};
+                             m_themePanelBackground};
     if (colors != previousColors)
         emit themeColorsChanged();
 }
@@ -1710,8 +1740,14 @@ QUrl Backend::suggestedSaveUrl() const {
         directory.filePath(suggestedFileName(currentDocumentText())));
 }
 
+// toPlainText() turns non-breaking spaces into spaces and line separators
+// into newlines, which saving would write over the file's own characters.
 QString Backend::currentDocumentText() const {
-    return m_document ? m_document->toPlainText() : QString();
+    if (!m_document)
+        return {};
+    QString text = m_document->toRawText();
+    text.replace(QChar::ParagraphSeparator, QLatin1Char('\n'));
+    return text;
 }
 
 int Backend::countWords(const QString &text) {
@@ -1845,7 +1881,7 @@ QString Backend::suggestedFileName(const QString &text) {
                  QStringLiteral("-"));
     name = name.left(120).trimmed();
     if (name.isEmpty() || name == QStringLiteral(".") || name == QStringLiteral(".."))
-        name = QStringLiteral("Untitled");
+        name = tr("Untitled");
     if (!name.endsWith(QStringLiteral(".md"), Qt::CaseInsensitive))
         name += QStringLiteral(".md");
     return name;
@@ -1879,8 +1915,9 @@ void Backend::applyDocumentTypography() {
     if (!m_document)
         return;
 
-    // A full pass is only used for freshly loaded/attached documents, so it is
-    // safe to drop undo history here (re-enabling clears the stack anyway).
+    // A full pass is only used for a freshly attached document, so it is safe
+    // to drop undo history here (re-enabling clears the stack anyway). A loaded
+    // file gets the line height as it is inserted, in loadDocumentText.
     const bool undoEnabled = m_document->isUndoRedoEnabled();
     m_document->setUndoRedoEnabled(false);
 

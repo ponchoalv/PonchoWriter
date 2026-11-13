@@ -125,7 +125,7 @@ ApplicationWindow {
             }
         }
     }
-    title: (backend.modified ? "* " : "") + backend.fileName + " - PonchoWriter"
+    title: (backend.modified ? "* " : "") + backend.fileName + " - " + qsTr("Write")
 
     readonly property bool darkMode: backend.darkMode
     readonly property color pageColor: backend.themeBackground
@@ -138,6 +138,9 @@ ApplicationWindow {
     readonly property color mutedColor: darkMode ? "#909191" : "#aeb1b5"
     readonly property color selectionFill: backend.themeSelection
     readonly property color selectionTextColor: backend.themeSelectionForeground
+    // The theme's shade for panels, which the search bar, font picker and
+    // tooltips sit on.
+    readonly property color panelColor: backend.themePanelBackground
     // The desktop's text size knob (GNOME's text-scaling-factor, which
     // `omarchy display text size` drives) anchored so its 12px default leaves
     // the app at the sizes it was designed around, times the user's own
@@ -769,17 +772,17 @@ ApplicationWindow {
 
     Dialogs.FileDialog {
         id: openFileDialog
-        title: "Open File"
+        title: qsTr("Open File")
         fileMode: Dialogs.FileDialog.OpenFile
-        nameFilters: ["Markdown files (*.md *.markdown)", "All files (*)"]
+        nameFilters: [qsTr("Markdown files") + " (*.md *.markdown)", qsTr("All files") + " (*)"]
         onAccepted: win.requestOpen(selectedFile)
     }
 
     Dialogs.FileDialog {
         id: saveFileDialog
-        title: "Save File"
+        title: qsTr("Save File")
         fileMode: Dialogs.FileDialog.SaveFile
-        nameFilters: ["Markdown files (*.md *.markdown)", "All files (*)"]
+        nameFilters: [qsTr("Markdown files") + " (*.md *.markdown)", qsTr("All files") + " (*)"]
         onAccepted: if (win.commitTableCell()) backend.saveAs(selectedFile)
         onRejected: {
             win.awaitingPendingSave = false;
@@ -796,6 +799,7 @@ ApplicationWindow {
         textColor: win.textColor
         strongTextColor: win.textColor
         activeButtonColor: backend.themeAccent
+        activeButtonLabelColor: backend.themeAccentForeground
         containerWidth: win.width
         containerHeight: win.height
 
@@ -823,6 +827,7 @@ ApplicationWindow {
         textColor: win.textColor
         strongTextColor: win.textColor
         activeButtonColor: backend.themeAccent
+        activeButtonLabelColor: backend.themeAccentForeground
         containerWidth: win.width
         containerHeight: win.height
 
@@ -836,12 +841,17 @@ ApplicationWindow {
         textScale: win.textScale
         textColor: win.textColor
         activeButtonColor: backend.themeAccent
+        activeButtonLabelColor: backend.themeAccentForeground
         containerWidth: win.width
         containerHeight: win.height
     }
 
+    // Right-to-left languages mirror the window; the Translator sets the
+    // application's layout direction.
     Item {
         anchors.fill: parent
+        LayoutMirroring.enabled: Qt.application.layoutDirection === Qt.RightToLeft
+        LayoutMirroring.childrenInherit: true
 
         Flickable {
             id: editorFlick
@@ -1109,6 +1119,12 @@ ApplicationWindow {
                 onCursorPositionChanged: backend.setCaretPosition(cursorPosition)
                 onFontChanged: backend.documentFontChanged()
 
+                // The document's own characters, where `text` turns non-breaking
+                // spaces into spaces; read this for text that is written back.
+                function rawText() {
+                    return backend.documentText();
+                }
+
                 // One edit command, so a single undo takes the change back.
                 function replaceText(start, end, replacement) {
                     if (win.readMode) return;
@@ -1142,9 +1158,9 @@ ApplicationWindow {
                     presentation.forceActiveFocus();
                     var start = selectionStart;
                     var end = selectionEnd;
-                    var selected = text.slice(start, end);
+                    var selected = rawText().slice(start, end);
                     var url = backend.clipboardUrl();
-                    var label = selected.length > 0 ? selected : "link text";
+                    var label = selected.length > 0 ? selected : qsTr("link text");
                     var markdown = markdownLink(label, url.length > 0 ? url : "https://");
                     var labelLength = escapeMarkdownLinkText(label).length;
                     if (selected.length === 0) {
@@ -1165,7 +1181,8 @@ ApplicationWindow {
                         return;
                     }
                     var lineStart = text.lastIndexOf("\n", cursorPosition - 1) + 1;
-                    var line = text.slice(lineStart, cursorPosition);
+                    // Raw, as its indentation is copied onto the next line.
+                    var line = rawText().slice(lineStart, cursorPosition);
                     if (backend.insideFence(cursorPosition)) {
                         replaceSelectionWith("\n");
                         return;
@@ -1225,7 +1242,10 @@ ApplicationWindow {
                     var end = text.indexOf("\n", Math.max(start, selectionEnd - 1));
                     if (end < 0)
                         end = text.length;
-                    var lines = text.slice(start, end).split("\n");
+                    // A line separator breaks a line on screen as a newline does,
+                    // and each line keeps the one it had.
+                    var parts = rawText().slice(start, end).split(/(\n|\u2028)/);
+                    var lines = parts.filter(function(part, i) { return i % 2 === 0; });
                     // The selection starts at an item and holds only lines that
                     // belong to one: other items, blanks, and indented lines.
                     // A fence indented under an item moves along with it whole;
@@ -1250,7 +1270,9 @@ ApplicationWindow {
                             ? " ".repeat(columns(line) + step) + line.slice(lead.length)
                             : line;
                     });
-                    var nested = moved.join("\n");
+                    var nested = moved.map(function(line, i) {
+                        return i > 0 ? parts[2 * i - 1] + line : line;
+                    }).join("");
                     var from = Math.max(start, selectionStart + moved[0].length - lines[0].length);
                     // Neither end of the selection leaves its line, even when
                     // the indent it sat in is gone.
@@ -1289,7 +1311,7 @@ ApplicationWindow {
                     if (url === "")
                         return false;
 
-                    var selected = text.slice(start, end);
+                    var selected = rawText().slice(start, end);
                     var leading = selected.match(/^\s*/)[0];
                     var trailing = selected.match(/\s*$/)[0];
                     var linkText = selected.slice(leading.length,
@@ -1554,7 +1576,7 @@ ApplicationWindow {
                     x: presentation.displayCursorRectangle.x + 1 + win.scaledSize(2)
                     y: presentation.displayCursorRectangle.y
                     objectName: "emptyDocumentPlaceholder"
-                    text: "# Start writing"
+                    text: "# " + qsTr("Start writing")
                     visible: editor.length === 0 && !win.readMode && !presentation.inputMethodComposing
                     color: win.mutedColor
                     font: presentation.font
@@ -1643,22 +1665,30 @@ ApplicationWindow {
             anchors.bottom: parent.bottom
             anchors.leftMargin: 12
             anchors.bottomMargin: 10
-            spacing: 12
-            opacity: 0.55
+            spacing: win.scaledSize(12)
 
+            // Brighter while there are unsaved changes, as in Plain.
             FooterIconButton {
                 objectName: "saveButton"
                 iconName: "save"
-                iconColor: win.mutedColor
-                tooltip: "Save"
+                size: win.scaledSize(16)
+                iconColor: backend.modified ? win.textColor : win.mutedColor
+                opacity: backend.modified ? 0.9 : 0.55
+                tooltip: qsTr("Save")
+                tooltipColor: win.panelColor
+                tooltipTextColor: win.textColor
                 onClicked: if (win.commitTableCell()) backend.save()
             }
 
             FooterIconButton {
                 objectName: "openButton"
                 iconName: "open"
+                size: win.scaledSize(16)
                 iconColor: win.mutedColor
-                tooltip: "Open"
+                opacity: 0.55
+                tooltip: qsTr("Open")
+                tooltipColor: win.panelColor
+                tooltipTextColor: win.textColor
                 onClicked: if (win.commitTableCell()) backend.openDialog()
             }
 
@@ -1666,21 +1696,26 @@ ApplicationWindow {
                 id: fontButton
                 objectName: "fontButton"
                 iconName: "font"
+                size: win.scaledSize(16)
                 iconColor: win.mutedColor
-                tooltip: "Font"
+                opacity: 0.55
+                // Its tooltip would sit on the list it just opened.
+                tooltip: fontPicker.opened ? "" : qsTr("Font")
+                tooltipColor: win.panelColor
+                tooltipTextColor: win.textColor
                 onClicked: fontPicker.opened ? fontPicker.close() : fontPicker.open()
             }
 
             Label {
                 text: backend.status
                 color: win.mutedColor
+                opacity: 0.55
                 font.family: "IBM Plex Mono"
                 font.pixelSize: win.scaledSize(11)
                 visible: text !== ""
                 elide: Text.ElideRight
                 width: Math.min(360, win.width / 3)
-                height: win.scaledSize(16)
-                verticalAlignment: Text.AlignVCenter
+                anchors.verticalCenter: parent.verticalCenter
             }
         }
 
@@ -1690,15 +1725,17 @@ ApplicationWindow {
             // Parented to its button, so a press on the button is not a press
             // outside that closes it only for the click to open it again.
             parent: fontButton
-            x: -8
+            // A popup is not mirrored with its parent, so it opens towards the
+            // window's middle from the footer's end it sits at.
+            x: Qt.application.layoutDirection === Qt.RightToLeft ? fontButton.width - width + 8 : -8
             y: -height - 10
             width: win.scaledSize(320)
             maximumHeight: Math.min(win.scaledSize(440), win.height - 80)
             fonts: backend.availableFonts
             currentFont: backend.editorFont
             defaultFont: "IBM Plex Mono"
-            darkMode: win.darkMode
             textScale: win.textScale
+            panelColor: win.panelColor
             textColor: win.textColor
             mutedColor: win.mutedColor
             highlightColor: backend.themeAccent
@@ -1713,8 +1750,8 @@ ApplicationWindow {
             anchors.bottomMargin: 10
             objectName: "wordCountLabel"
             text: (presentation.selectionStart !== presentation.selectionEnd
-                ? backend.selectionWordCount + " selected · " : "")
-                + backend.wordCount + (backend.wordCount === 1 ? " Word" : " Words")
+                ? qsTr("%1 selected · ").arg(backend.selectionWordCount) : "")
+                + qsTr("%n Words", "", backend.wordCount)
             color: win.mutedColor
             opacity: 0.75
             font.family: "IBM Plex Mono"
@@ -1745,7 +1782,7 @@ ApplicationWindow {
 
             background: Rectangle {
                 radius: 9
-                color: win.darkMode ? "#22221f" : "#fffef2"
+                color: win.panelColor
             }
 
             RowLayout {
@@ -1799,7 +1836,7 @@ ApplicationWindow {
 
                     Label {
                         anchors.verticalCenter: replaceField.verticalCenter
-                        text: "Replace with"
+                        text: qsTr("Replace with")
                         visible: win.replaceOpen && replaceField.text.length === 0
                         color: win.mutedColor
                         font.pixelSize: win.scaledSize(17)
@@ -1807,7 +1844,7 @@ ApplicationWindow {
 
                     Label {
                         anchors.verticalCenter: searchField.verticalCenter
-                        text: "Find"
+                        text: qsTr("Find")
                         visible: searchField.text.length === 0
                         color: win.mutedColor
                         font.pixelSize: win.scaledSize(17)
@@ -1830,7 +1867,7 @@ ApplicationWindow {
                     id: replaceCurrentButton
                     objectName: "replaceButton"
                     visible: win.replaceOpen
-                    text: "Replace"
+                    text: qsTr("Replace")
                     onClicked: {
                         win.flushSearch();
                         if (win.searchMatchIndex < 0) return;
@@ -1850,7 +1887,7 @@ ApplicationWindow {
                 Button {
                     objectName: "replaceAllButton"
                     visible: win.replaceOpen
-                    text: "All"
+                    text: qsTr("All")
                     onClicked: {
                         win.flushSearch();
                         var query = searchField.text;
@@ -1859,10 +1896,11 @@ ApplicationWindow {
                         // One replacement over the span of every match, so a
                         // single undo takes them all back.
                         var first = matches[0];
+                        var text = editor.rawText();
                         var replaced = "";
                         var position = first;
                         for (var i = 0; i < matches.length; ++i) {
-                            replaced += editor.text.slice(position, matches[i]) + replaceField.text;
+                            replaced += text.slice(position, matches[i]) + replaceField.text;
                             position = matches[i] + query.length;
                         }
                         EditorMutations.replaceRange(editor, first, position, replaced);

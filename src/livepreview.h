@@ -80,6 +80,7 @@ signals:
     void readModeChanged();
     void imeCursorVisibleChanged();
     void copyHtmlRequested();
+    void toggleReadModeRequested();
     void formatCodeRequested(bool fenced);
     void codeBlockPanelsChanged();
     void listMarkersChanged();

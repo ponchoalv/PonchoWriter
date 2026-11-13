@@ -265,6 +265,9 @@ private:
     QMap<QString, QString> m_stagedAttachments; // logical relative path -> immutable storage ID
     QSet<QString> m_materializedAttachments; // use the current document's copy after a successful save
 
+    // Capture the theme root independently of the OS home-directory API.
+    // Tests redirect this private path, never the user's process environment.
+    QString m_themeHome;
     QString m_themeBackground;
     QString m_themeForeground;
     QString m_themeAccent;

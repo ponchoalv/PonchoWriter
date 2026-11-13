@@ -231,6 +231,7 @@ ApplicationWindow {
         resolver: backend
         spelling: backend.spelling
         onCopyHtmlRequested: win.copyHtml()
+        onToggleReadModeRequested: win.toggleReadMode()
         onFormatCodeRequested: function(fenced) { editor.wrapCode(fenced); }
         onProjectionReady: win.applyReadingPosition()
         onProjectionAboutToChange: {

@@ -73,7 +73,7 @@ try {
                 & py.exe -3.12 -m venv $venv
                 if ($LASTEXITCODE -ne 0) { throw 'Could not create the aqt virtual environment.' }
             }
-            & "$venv\Scripts\python.exe" -m pip install aqtinstall
+            & "$venv\Scripts\python.exe" -m pip install --upgrade git+https://github.com/miurahr/aqtinstall.git
             if ($LASTEXITCODE -ne 0) { throw 'Could not install aqtinstall.' }
             & "$venv\Scripts\python.exe" -m aqt install-qt windows desktop $QtVersion win64_msvc2022_64 --outputdir $QtRoot
             if ($LASTEXITCODE -ne 0) { throw 'Qt download failed. Check archive availability, network and Qt licensing.' }

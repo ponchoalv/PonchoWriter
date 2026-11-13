@@ -103,12 +103,14 @@ jobs:
       - name: Test Windows clipboard, mode shortcuts and theme paths
         shell: pwsh
         run: |
+          $global:LASTEXITCODE = 1
           & build/windows-ci/omawrite_editor_tests.exe `
             codePanelHoverCopyAndReadLanguageUseQtClipboard `
             codePanelsHaveNativePaddingInBothModesAtDifferentZooms `
             quotePreviewPhysicalClickImeAndReadBreaks `
             horizontalRulesRevealMarkdownOnPhysicalClick `
             codeBlockPanelsAreContinuousDecorationsInBothThemes `
+            modeShortcutWorksThroughTheFocusedEditorInBothModes `
             resumesEditingAtTheReadingViewport `
             pastesScreenshotThroughVisibleEditorAndPreservesSourceInReadMode `
             themePathsSupportUnicodeWithoutChangingHome `
@@ -118,8 +120,21 @@ jobs:
             fallsBackForSelectionColors `
             keepsDefaultsForColorsItCannotParse `
             takesItsDefaultsFromTheModeTheThemeAsksFor `
-            -o build/windows-ci/editor-tests.txt,txt -o -,txt
-          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+            -o build/windows-ci/editor-tests.txt,txt | Out-Host
+          $testExit = $LASTEXITCODE
+          if (Test-Path build/windows-ci/editor-tests.txt) { Get-Content build/windows-ci/editor-tests.txt }
+          exit $testExit
+
+      - name: Run the complete portable editor suite on Windows
+        shell: pwsh
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          $global:LASTEXITCODE = 1
+          & build/windows-ci/omawrite_editor_tests.exe -o build/windows-ci/editor-all-tests.txt,txt | Out-Host
+          $testExit = $LASTEXITCODE
+          if (Test-Path build/windows-ci/editor-all-tests.txt) { Get-Content build/windows-ci/editor-all-tests.txt }
+          exit $testExit
 
       - name: Preserve Windows editor diagnostics
         if: failure()
@@ -128,5 +143,6 @@ jobs:
           name: windows-editor-logs
           path: |
             build/windows-ci/editor-tests.txt
+            build/windows-ci/editor-all-tests.txt
             build/windows-ci/CMakeFiles/CMakeConfigureLog.yaml
           if-no-files-found: ignore

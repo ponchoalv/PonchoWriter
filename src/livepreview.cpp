@@ -1536,6 +1536,12 @@ bool LivePreview::eventFilter(QObject *object, QEvent *event) {
     }
     if (event->type() == QEvent::KeyPress) {
         auto *key = static_cast<QKeyEvent *>(event);
+        if (key->keyCombination() == QKeyCombination(Qt::ControlModifier | Qt::ShiftModifier, Qt::Key_M)) {
+            // Native Qt Quick can miss the window shortcut in a read-only
+            // TextEdit. Keep the focused-editor route working in both modes.
+            emit toggleReadModeRequested();
+            return true;
+        }
         if (key->keyCombination() == QKeyCombination(Qt::ControlModifier | Qt::ShiftModifier, Qt::Key_C)) {
             // Focused-editor fallback: native Qt Quick shortcut activation can
             // depend on window activation. Never insert C or perform plain Copy.

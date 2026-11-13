@@ -1769,6 +1769,39 @@ private slots:
         QVERIFY2(threaded->load(), "Use QSG_RENDER_LOOP=threaded and a native hardware rendering backend.");
     }
 
+    void modeShortcutWorksThroughTheFocusedEditorInBothModes() {
+        QTemporaryDir directory; QVERIFY(directory.isValid());
+        Backend backend; backend.m_recoveryPath = directory.filePath("recovery.json");
+        QQmlEngine engine; engine.rootContext()->setContextProperty("backend", &backend);
+        QQmlComponent component(&engine, QUrl::fromLocalFile(QFINDTESTDATA("../src/Main.qml")));
+        QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+        QScopedPointer<QObject> root(component.create());
+        auto *source = root->findChild<QObject *>("sourceEditor");
+        auto *view = root->findChild<QQuickItem *>("previewEditor");
+        auto *preview = root->findChild<LivePreview *>();
+        QVERIFY(source && view && preview);
+        const QString text = QStringLiteral("Before\n\n**source** and `code`\n");
+        source->setProperty("text", text);
+        QCoreApplication::processEvents();
+        QSignalSpy changes(preview, &LivePreview::readModeChanged);
+        QSignalSpy requests(preview, &LivePreview::toggleReadModeRequested);
+        for (const bool read : {true, false}) {
+            view->forceActiveFocus();
+            // Bypass the window shortcut map to exercise the focused fallback,
+            // including the read-only TextEdit on affected native Qt versions.
+            QKeyEvent press(QEvent::KeyPress, Qt::Key_M, Qt::ControlModifier | Qt::ShiftModifier);
+            QCoreApplication::sendEvent(view, &press);
+            QCOMPARE(preview->readMode(), read);
+            QCOMPARE(changes.size(), read ? 1 : 2);
+            QCOMPARE(requests.size(), changes.size());
+            QKeyEvent release(QEvent::KeyRelease, Qt::Key_M, Qt::ControlModifier | Qt::ShiftModifier);
+            QCoreApplication::sendEvent(view, &release);
+            QCOMPARE(changes.size(), read ? 1 : 2);
+            QCOMPARE(source->property("text").toString(), text);
+            QVERIFY(!source->property("canUndo").toBool());
+        }
+    }
+
     void resumesEditingAtTheReadingViewport() {
         QTemporaryDir recovery;
         Backend backend;

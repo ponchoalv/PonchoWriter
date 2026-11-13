@@ -3,9 +3,9 @@
 Run in a separate build directory (Qt 6 with QtTest, Qt Quick, PrintSupport):
 
 ```sh
-mkdir -p /tmp/ponchowriter-attachment-tests
-cd /tmp/ponchowriter-attachment-tests
-qmake6 /path/to/ponchowriter/tests/attachments/attachments.pro
+mkdir -p /tmp/omawrite-attachment-tests
+cd /tmp/omawrite-attachment-tests
+qmake6 /path/to/omawrite/tests/attachments/attachments.pro
 make -j4
 QT_QPA_PLATFORM=offscreen ./tst_attachments  # macOS: ./tst_attachments.app/Contents/MacOS/tst_attachments
 ```

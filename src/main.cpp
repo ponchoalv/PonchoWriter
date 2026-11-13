@@ -13,25 +13,30 @@
 #include "instancebroker.h"
 #include "livepreview.h"
 #include "windowmanager.h"
+#include "translator.h"
 
 #include "profile.h"
 
-#define PONCHOWRITER_VERSION "0.7.2"
+#ifndef OMAWRITE_VERSION
+#define OMAWRITE_VERSION "0.7.4"
+#endif
 
 int main(int argc, char *argv[]) {
-    if (const auto code = Cli::handleArguments(argc, argv, QStringLiteral(PONCHOWRITER_VERSION)))
+    if (const auto code = Cli::handleArguments(argc, argv, QStringLiteral(OMAWRITE_VERSION)))
         return *code;
     if (qgetenv("QT_QPA_PLATFORMTHEME") == "gtk3")
         qputenv("QT_QPA_PLATFORMTHEME", "xdgdesktopportal");
     QApplication app(argc, argv);
     Profile::configureIdentity();
-    app.setApplicationDisplayName(QStringLiteral("PonchoWriter"));
-    app.setApplicationVersion(QStringLiteral(PONCHOWRITER_VERSION));
-    app.setDesktopFileName(QStringLiteral("ponchowriter"));
-    app.setWindowIcon(QIcon::fromTheme(QStringLiteral("ponchowriter"),
-                                      QIcon(QStringLiteral(":/icons/ponchowriter.png"))));
+    app.setApplicationDisplayName(QStringLiteral("Write"));
+    app.setApplicationVersion(QStringLiteral(OMAWRITE_VERSION));
+    app.setDesktopFileName(QStringLiteral("omawrite"));
+    app.setWindowIcon(QIcon::fromTheme(QStringLiteral("omawrite"),
+                                      QIcon(QStringLiteral(":/icons/omawrite.png"))));
     app.setQuitOnLastWindowClosed(false);
 
+    Translator translator;
+    app.installTranslator(&translator);
     FileOpenRequests nativeFiles(&app);
 #ifdef Q_OS_MACOS
     installMacReopenHandler(&nativeFiles);
@@ -46,13 +51,14 @@ int main(int argc, char *argv[]) {
         }, Qt::QueuedConnection); // ACK transport acceptance before any disk/QML work.
     };
     const auto becomePrimary = [&](const QStringList &initialFiles) {
-        if (!Profile::activate()) { qCritical("Could not initialize PonchoWriter preferences; no drafts were changed."); app.exit(1); return; }
+        if (!Profile::activate()) { qCritical("Could not initialize Write preferences; no drafts were changed."); app.exit(1); return; }
         nativeFiles.activate(false);
         for (const char *weight : {"Regular", "Italic", "Bold", "BoldItalic"})
             QFontDatabase::addApplicationFont(QStringLiteral(":/fonts/IBMPlexMono-%1.ttf").arg(QLatin1String(weight)));
         QQuickStyle::setStyle(QStringLiteral("Material"));
-        qmlRegisterType<LivePreview>("PonchoWriter", 1, 0, "LivePreview");
+        qmlRegisterType<LivePreview>("Omawrite", 1, 0, "LivePreview");
         windows = std::make_unique<WindowManager>();
+        QObject::connect(&translator, &Translator::changed, windows.get(), &WindowManager::retranslate);
         QObject::connect(windows.get(), &WindowManager::noWindowsRemaining, &app, &QCoreApplication::quit);
         QObject::connect(windows.get(), &WindowManager::errorOccurred, &app,
                          [](const QString &message) { qCritical().noquote() << message; });

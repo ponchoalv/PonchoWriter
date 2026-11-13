@@ -17,7 +17,7 @@ private slots:
     void init() { previousPath = qgetenv("PATH"); }
     void cleanup() {
         qputenv("PATH", previousPath);
-        qunsetenv("PONCHOWRITER_TEST_PNG");
+        qunsetenv("OMAWRITE_TEST_PNG");
     }
     void supportedSyntax() {
         QVERIFY(MermaidRenderer::supported("flowchart LR\nA-->B"));
@@ -58,9 +58,9 @@ private slots:
         if (symlinkCli) QVERIFY(QFile::link(script, cli.filePath("mmdc")));
         const QString nodeDir = separateNode ? node.path() : cli.path();
         // env passes the script name as $1, so the CLI output argument is $5.
-        QVERIFY(executable(nodeDir + "/node", "#!/bin/sh\n/bin/cp \"$PONCHOWRITER_TEST_PNG\" \"$5\"\n"));
+        QVERIFY(executable(nodeDir + "/node", "#!/bin/sh\n/bin/cp \"$OMAWRITE_TEST_PNG\" \"$5\"\n"));
         auto environment = QProcessEnvironment::systemEnvironment();
-        environment.insert("PATH", inherited.path()); environment.insert("PONCHOWRITER_TEST_PNG", png);
+        environment.insert("PATH", inherited.path()); environment.insert("OMAWRITE_TEST_PNG", png);
         const QByteArray parentPath = qgetenv("PATH");
         MermaidRenderer renderer(nullptr, environment, {cli.path(), nodeDir});
         QCOMPARE(renderer.m_executable, cli.filePath("mmdc"));
@@ -154,7 +154,7 @@ private slots:
     void windowsJobCleansDescendants() {
         QFETCH(QString, action);
         // Spaces, Unicode and cmd metacharacters must remain literal path data.
-        QTemporaryDir directory(QDir::tempPath() + QString::fromUtf8("/poncho ü & % ! (test)-XXXXXX"));
+        QTemporaryDir directory(QDir::tempPath() + QString::fromUtf8("/omawrite ü & % ! (test)-XXXXXX"));
         QVERIFY(directory.isValid());
         QVERIFY(QFile::copy(QCoreApplication::applicationFilePath(), directory.filePath("node.exe")));
         const QString package = directory.filePath("node_modules/@mermaid-js/mermaid-cli/");
@@ -168,10 +168,10 @@ private slots:
         QVERIFY(fixture.save(directory.filePath("fixture.png")));
         auto environment = QProcessEnvironment::systemEnvironment();
         environment.insert("PATH", directory.path() + ";" + QCoreApplication::applicationDirPath() + ";" + environment.value("PATH"));
-        environment.insert("PONCHOWRITER_TEST_PNG", directory.filePath("fixture.png"));
-        environment.insert("PONCHOWRITER_TEST_PID", directory.filePath("pid"));
-        environment.insert("PONCHOWRITER_TEST_HOLD", action == "finish" || action == "crash" ? "0" : "1");
-        environment.insert("PONCHOWRITER_TEST_CRASH", action == "crash" ? "1" : "0");
+        environment.insert("OMAWRITE_TEST_PNG", directory.filePath("fixture.png"));
+        environment.insert("OMAWRITE_TEST_PID", directory.filePath("pid"));
+        environment.insert("OMAWRITE_TEST_HOLD", action == "finish" || action == "crash" ? "0" : "1");
+        environment.insert("OMAWRITE_TEST_CRASH", action == "crash" ? "1" : "0");
         auto renderer = std::unique_ptr<MermaidRenderer>(new MermaidRenderer(nullptr, environment, {}));
         QSignalSpy ready(renderer.get(), &MermaidRenderer::ready);
         const auto code = fenced("flowchart LR\nA-->B");
@@ -202,7 +202,7 @@ private slots:
 #endif
     }
     void unavailable() {
-        qputenv("PATH", "/nonexistent/ponchowriter-mermaid-renderer");
+        qputenv("PATH", "/nonexistent/omawrite-mermaid-renderer");
         MermaidRenderer renderer(nullptr, QProcessEnvironment::systemEnvironment(), {});
         QSignalSpy ready(&renderer, &MermaidRenderer::ready);
         QVERIFY(renderer.request(fenced("flowchart LR\nA-->B"), false, 500).isNull());
@@ -218,7 +218,7 @@ private slots:
         fixture.fill(Qt::red);
         const QString png = dir.filePath("fixture.png");
         QVERIFY(fixture.save(png));
-        qputenv("PONCHOWRITER_TEST_PNG", png.toUtf8());
+        qputenv("OMAWRITE_TEST_PNG", png.toUtf8());
         const QString script = dir.filePath("mmdc");
         QFile file(script);
         QVERIFY(file.open(QIODevice::WriteOnly));
@@ -226,7 +226,7 @@ private slots:
         // let a permissive fake renderer conceal this compatibility bug.
         file.write("#!/bin/sh\nfor arg in \"$@\"; do\n"
                    "case \"$arg\" in -w|--width) echo 'unknown option' >&2; exit 1;; esac\n"
-                   "done\ncp \"$PONCHOWRITER_TEST_PNG\" \"$4\"\n");
+                   "done\ncp \"$OMAWRITE_TEST_PNG\" \"$4\"\n");
         file.close();
         QVERIFY(file.setPermissions(QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner));
         qputenv("PATH", dir.path().toUtf8() + ":" + previousPath);
@@ -266,7 +266,7 @@ private slots:
 static int windowsHelper(const QStringList &arguments) {
     BOOL inJob = FALSE;
     if (!IsProcessInJob(GetCurrentProcess(), nullptr, &inJob) || !inJob) return 86;
-    const QString marker = qEnvironmentVariable("PONCHOWRITER_TEST_PID");
+    const QString marker = qEnvironmentVariable("OMAWRITE_TEST_PID");
     const bool child = arguments.value(1) == "--mermaid-test-child";
     const bool leaf = arguments.value(1) == "--mermaid-test-leaf";
     if (!leaf) {
@@ -277,19 +277,19 @@ static int windowsHelper(const QStringList &arguments) {
         if (!file.open(QIODevice::WriteOnly)) return 88;
         if (file.write(QByteArray::number(pid)) <= 0 || !file.commit()) return 88;
     }
-    if (child || leaf || qEnvironmentVariable("PONCHOWRITER_TEST_HOLD") == "1") {
+    if (child || leaf || qEnvironmentVariable("OMAWRITE_TEST_HOLD") == "1") {
         QThread::sleep(60);
         return 89;
     }
     QElapsedTimer wait; wait.start();
     while (!QFileInfo::exists(marker + "-leaf") && wait.elapsed() < 5000) QThread::msleep(10);
-    if (qEnvironmentVariable("PONCHOWRITER_TEST_CRASH") == "1") {
+    if (qEnvironmentVariable("OMAWRITE_TEST_CRASH") == "1") {
         // Recognized by QProcess as CrashExit, without an interactive crash dialog.
         TerminateProcess(GetCurrentProcess(), 0xC0000005);
         return 91;
     }
     const int output = arguments.indexOf("-o");
-    return output > 0 && QFile::copy(qEnvironmentVariable("PONCHOWRITER_TEST_PNG"), arguments.value(output + 1)) ? 0 : 90;
+    return output > 0 && QFile::copy(qEnvironmentVariable("OMAWRITE_TEST_PNG"), arguments.value(output + 1)) ? 0 : 90;
 }
 #endif
 int main(int argc, char **argv) {

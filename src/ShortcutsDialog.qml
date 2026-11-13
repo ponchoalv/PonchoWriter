@@ -10,10 +10,11 @@ Dialog {
     property color textColor: darkMode ? "#d0d0d0" : "#42464c"
     property color strongTextColor: darkMode ? "#eeeeee" : "#222324"
     property color activeButtonColor: "#428bca"
+    property color activeButtonLabelColor: "#ffffff"
     property real textScale: 1
     property int containerWidth: 1280
     property int containerHeight: 820
-    readonly property string versionText: "PonchoWriter " + Qt.application.version
+    readonly property string versionText: qsTr("Write") + " " + Qt.application.version
     // Overridable so the reference can be tested on any host platform.
     property string platform: Qt.platform.os
 
@@ -27,40 +28,40 @@ Dialog {
         return sequence.replace(/\bMeta\+/g, "Super+");
     }
     readonly property var shortcuts: [
-        { key: "Ctrl+S", desc: "Save" },
-        { key: "Ctrl+Shift+S", desc: "Save As" },
-        { key: "Ctrl+O", desc: "Open" },
-        { key: "Ctrl+N", desc: "New Window" },
-        { key: "Ctrl+P", desc: "Print" },
-        { key: "Ctrl+Z", desc: "Undo" },
-        { key: "Ctrl+Shift+Z / Ctrl+Y", desc: "Redo" },
-        { key: root.platform === "osx" ? "F11 / Ctrl+Meta+F" : "F11 / Meta+F", desc: "Fullscreen" },
-        { key: "Ctrl+F", desc: "Find" },
-        { key: root.platform === "osx" ? "Ctrl+Alt+F" : "Ctrl+H", desc: "Find & Replace" },
-        { key: "Ctrl+G / Enter", desc: "Next Match in Find" },
-        { key: "Shift+Enter", desc: "Previous Match in Find" },
-        { key: "Escape", desc: "Close Find" },
-        { key: "Ctrl+B", desc: "Bold" },
-        { key: "Ctrl+I", desc: "Italic" },
-        { key: "Ctrl+Shift+X", desc: "Strikethrough" },
+        { key: "Ctrl+S", desc: qsTr("Save") },
+        { key: "Ctrl+Shift+S", desc: qsTr("Save As") },
+        { key: "Ctrl+O", desc: qsTr("Open") },
+        { key: "Ctrl+N", desc: qsTr("New Window") },
+        { key: "Ctrl+P", desc: qsTr("Print") },
+        { key: "Ctrl+Z", desc: qsTr("Undo") },
+        { key: "Ctrl+Shift+Z / Ctrl+Y", desc: qsTr("Redo") },
+        { key: root.platform === "osx" ? "F11 / Ctrl+Meta+F" : "F11 / Meta+F", desc: qsTr("Fullscreen") },
+        { key: "Ctrl+F", desc: qsTr("Find") },
+        { key: root.platform === "osx" ? "Ctrl+Alt+F" : "Ctrl+H", desc: qsTr("Find & Replace") },
+        { key: "Ctrl+G / Enter", desc: qsTr("Next Match in Find") },
+        { key: "Shift+Enter", desc: qsTr("Previous Match in Find") },
+        { key: "Escape", desc: qsTr("Close Find") },
+        { key: "Ctrl+B", desc: qsTr("Bold") },
+        { key: "Ctrl+I", desc: qsTr("Italic") },
+        { key: "Ctrl+Shift+X", desc: qsTr("Strikethrough") },
         { key: "Ctrl+T", desc: "Inline code" },
         { key: "Ctrl+Shift+T", desc: "Fenced code block" },
-        { key: "Ctrl+K", desc: "Link" },
-        { key: "Ctrl+Shift+C", desc: "Copy as HTML" },
-        { key: "Ctrl+= / Ctrl++", desc: "Increase Text Size" },
-        { key: "Ctrl+-", desc: "Decrease Text Size" },
-        { key: "Ctrl+0", desc: "Reset Text Size" },
-        { key: "Ctrl+scroll", desc: "Change Text Size" },
-        { key: "Ctrl+? / Ctrl+/ / F1", desc: "Shortcuts" },
-        { key: "Ctrl+Shift+M", desc: "Toggle Reading Mode" },
-        { key: "Alt+S", desc: "Save (Unsaved Changes)" },
-        { key: "Alt+D", desc: "Discard (Unsaved Changes)" },
-        { key: "Alt+C / Escape", desc: "Cancel (Unsaved Changes)" }
+        { key: "Ctrl+K", desc: qsTr("Link") },
+        { key: "Ctrl+Shift+C", desc: qsTr("Copy as HTML") },
+        { key: "Ctrl+= / Ctrl++", desc: qsTr("Increase Text Size") },
+        { key: "Ctrl+-", desc: qsTr("Decrease Text Size") },
+        { key: "Ctrl+0", desc: qsTr("Reset Text Size") },
+        { key: "Ctrl+scroll", desc: qsTr("Change Text Size") },
+        { key: "Ctrl+? / Ctrl+/ / F1", desc: qsTr("Shortcuts") },
+        { key: "Ctrl+Shift+M", desc: qsTr("Toggle Reading Mode") },
+        { key: "Alt+S", desc: qsTr("Save (Unsaved Changes)") },
+        { key: "Alt+D", desc: qsTr("Discard (Unsaved Changes)") },
+        { key: "Alt+C / Escape", desc: qsTr("Cancel (Unsaved Changes)") }
     ].map(function(shortcut) {
         return { key: root.shortcutLabel(shortcut.key), desc: shortcut.desc };
     })
 
-    title: "Keyboard shortcuts"
+    title: qsTr("Keyboard shortcuts")
     modal: true
     focus: true
     closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
@@ -171,11 +172,12 @@ Dialog {
             anchors.right: parent.right
             anchors.rightMargin: 24
             anchors.verticalCenter: parent.verticalCenter
-            text: "Close"
+            text: qsTr("Close")
             primary: true
             darkMode: root.darkMode
             textScale: root.textScale
             activeColor: root.activeButtonColor
+            activeLabelColor: root.activeButtonLabelColor
             onClicked: root.close()
         }
     }

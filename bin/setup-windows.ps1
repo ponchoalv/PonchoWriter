@@ -5,7 +5,7 @@ param(
     [switch]$Mermaid,
     [switch]$Installer,
     [ValidatePattern('^6\.[0-9]+\.[0-9]+$')][string]$QtVersion = '6.8.3',
-    [string]$QtRoot = "$env:LOCALAPPDATA\PonchoWriter\Qt"
+    [string]$QtRoot = "$env:LOCALAPPDATA\Write\Qt"
 )
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent
@@ -51,6 +51,12 @@ try {
         (Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\VisualStudio\14.0\VC\Runtimes\x64' -ErrorAction SilentlyContinue).Installed -eq 1
     }
     $qtDir = if ($env:QT_DIR) { $env:QT_DIR } else { Join-Path $QtRoot "$QtVersion\msvc2022_64" }
+    # Reuse a previously recorded kit across application/tool-directory renames.
+    $recordedSetup = Join-Path $root 'build\windows-setup.json'
+    if (!$env:QT_DIR -and !$PSBoundParameters.ContainsKey('QtRoot') -and !$PSBoundParameters.ContainsKey('QtVersion') -and (Test-Path -LiteralPath $recordedSetup)) {
+        $recordedQt = (Get-Content -LiteralPath $recordedSetup -Raw | ConvertFrom-Json).QtDir
+        if ($recordedQt -and (Test-Path -LiteralPath (Join-Path $recordedQt 'bin\qmake.exe'))) { $qtDir = $recordedQt }
+    }
     if (!(Test-Path -LiteralPath (Join-Path $qtDir 'bin\qmake.exe'))) {
         if (!$Install) { $missing.Add("Qt $QtVersion MSVC 2022 x64 (or set QT_DIR)") }
         elseif ($env:QT_DIR) { throw "QT_DIR does not contain bin\qmake.exe: $qtDir" }

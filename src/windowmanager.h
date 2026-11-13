@@ -17,6 +17,7 @@ public:
     explicit WindowManager(const QUrl &mainQml = QUrl(QStringLiteral("qrc:/Main.qml")), QObject *parent = nullptr);
     ~WindowManager() override;
     void start(const QStringList &files);
+    void retranslate();
     void openFiles(const QStringList &files);
     QWindow *openFile(const QUrl &url);
     QWindow *newWindow();

@@ -1,5 +1,7 @@
 #include "spellingcontroller.h"
 
+#include <QJsonObject>
+#include <QPluginLoader>
 #include <QSettings>
 #include <QTemporaryDir>
 #include <QTextDocument>
@@ -8,15 +10,34 @@
 class NativeSpellcheckingTest : public QObject {
     Q_OBJECT
 private slots:
+    void registersNativeBackend() {
+#ifdef Q_OS_MACOS
+        const QString expected = QStringLiteral("NSSpellCheckerClient");
+#elif defined(Q_OS_WIN)
+        const QString expected = QStringLiteral("ISpellCheckerClient");
+#else
+        const QString expected = QStringLiteral("HunspellClient");
+#endif
+        // Do not mistake a discarded static plugin for missing OS dictionaries.
+        // This check is independent of installed dictionaries and GUI services.
+        for (const auto &plugin : QPluginLoader::staticPlugins()) {
+            const QJsonObject metadata = plugin.metaData();
+            if (metadata.value(QStringLiteral("IID")).toString() == QStringLiteral("org.kde.sonnet.Client")
+                && metadata.value(QStringLiteral("className")).toString() == expected)
+                return;
+        }
+        QFAIL(qPrintable(QStringLiteral("Native spelling plugin was not linked/registered: %1").arg(expected)));
+    }
+
     void osDictionarySmoke() {
-        if (qEnvironmentVariable("PONCHOWRITER_NATIVE_SPELLCHECK") != QStringLiteral("1"))
-            QSKIP("Manual opt-in only: set PONCHOWRITER_NATIVE_SPELLCHECK=1 on macOS.");
+        if (qEnvironmentVariable("OMAWRITE_NATIVE_SPELLCHECK") != QStringLiteral("1"))
+            QSKIP("Manual opt-in only: set OMAWRITE_NATIVE_SPELLCHECK=1 on macOS.");
 #ifndef Q_OS_MACOS
         QSKIP("This smoke test exercises the macOS NSSpellChecker backend only.");
 #else
         QTemporaryDir settingsDirectory;
         QVERIFY(settingsDirectory.isValid());
-        QCoreApplication::setOrganizationName("PonchoWriterNativeSpellingTest");
+        QCoreApplication::setOrganizationName("OmawriteNativeSpellingTest");
         QCoreApplication::setApplicationName("IsolatedSmokeTest");
         QSettings::setDefaultFormat(QSettings::IniFormat);
         QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, settingsDirectory.path());
@@ -24,6 +45,7 @@ private slots:
 
         QTextDocument document("hello qzxqzxqzxqzx");
         SpellingController controller;
+        qInfo() << "Native spelling dictionaries:" << controller.languages().size();
         QString english;
         for (const auto &entry : controller.languages()) {
             const QString id = entry.toMap().value("id").toString();

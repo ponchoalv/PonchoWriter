@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(PonchoWriterDependencies LANGUAGES CXX)
+project(OmawriteDependencies LANGUAGES CXX)
 include(ExternalProject)
 find_package(Qt6 6.7 REQUIRED COMPONENTS Core Gui Network)
 # KSyntaxHighlighting generates PHP/Twig/Doxygen definitions even without tests.

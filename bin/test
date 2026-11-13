@@ -9,14 +9,24 @@ case "${1:-}" in
   *) echo "Usage: bin/test [--rendered|--native-spelling]" >&2; exit 2 ;;
 esac
 
+if [ -z "${1:-}" ]; then
+  "$ROOT/bin/build"
+  CMAKE_BUILD_DIR="${WRITE_BUILD_DIR:-$ROOT/build/cmake}"
+  cmake -S "$ROOT" -B "$CMAKE_BUILD_DIR" -DBUILD_TESTING=ON
+  cmake --build "$CMAKE_BUILD_DIR" --parallel "${JOBS:-4}"
+  ctest --test-dir "$CMAKE_BUILD_DIR" --output-on-failure --no-tests=error
+  exit 0
+fi
+
+# Native rendering/spelling probes retain their dedicated qmake harnesses.
 if command -v qmake6 >/dev/null 2>&1; then
   QMAKE=qmake6
 else
   QMAKE=qmake
 fi
 
-if { [ -z "${PONCHOWRITER_SYNTAX_PREFIX:-}" ] && [ ! -f "$ROOT/.deps/install/include/KF6/KSyntaxHighlighting/KSyntaxHighlighting/Repository" ]; } ||
-   { [ -z "${PONCHOWRITER_SPELL_PREFIX:-}" ] && [ ! -f "$ROOT/.deps/install/include/KF6/SonnetCore/Sonnet/Speller" ]; }; then
+if { [ -z "${OMAWRITE_SYNTAX_PREFIX:-}" ] && [ ! -f "$ROOT/.deps/install/include/KF6/KSyntaxHighlighting/KSyntaxHighlighting/Repository" ]; } ||
+   { [ -z "${OMAWRITE_SPELL_PREFIX:-}" ] && [ ! -f "$ROOT/.deps/install/include/KF6/SonnetCore/Sonnet/Speller" ]; }; then
   "$ROOT/bin/build-dependencies"
 fi
 
@@ -46,7 +56,7 @@ if [ "${1:-}" = --native-spelling ]; then
     Darwin) ;;
     *) echo "The optional native spelling smoke test currently supports macOS only." >&2; exit 2 ;;
   esac
-  PONCHOWRITER_NATIVE_SPELLCHECK=1 run_suite tests/spellchecking/native.pro tst_native_spellchecking "$BUILD_DIR/spellchecking-native" osDictionarySmoke
+  OMAWRITE_NATIVE_SPELLCHECK=1 run_suite tests/spellchecking/native.pro tst_native_spellchecking "$BUILD_DIR/spellchecking-native" osDictionarySmoke
   exit 0
 fi
 
@@ -54,21 +64,9 @@ if [ "${1:-}" = --rendered ]; then
   case "${QT_QPA_PLATFORM:-}" in
     offscreen|minimal) echo "Rendered tests require a native desktop platform, not $QT_QPA_PLATFORM." >&2; exit 2 ;;
   esac
-  run_suite tests/tests.pro tst_ponchowriter "$BUILD_DIR" rendersModeSwitchesWithDocumentImages
+  run_suite tests/tests.pro tst_editor "$BUILD_DIR" rendersModeSwitchesWithDocumentImages
   run_suite tests/livepreview/livepreview.pro tst_livepreview "$BUILD_DIR/livepreview" sceneGraphModeSwitchWithImages
   exit 0
 fi
 
-run_suite tests/tests.pro tst_ponchowriter "$BUILD_DIR"
-run_suite tests/shortcutlabels.pro tst_shortcutlabels "$BUILD_DIR/shortcutlabels"
-run_suite tests/headings/headings.pro tst_headings "$BUILD_DIR/headings"
-run_suite tests/attachments/attachments.pro tst_attachments "$BUILD_DIR/attachments"
-run_suite tests/previewblocks/previewblocks.pro tst_previewblocks "$BUILD_DIR/previewblocks"
-run_suite tests/livepreview/livepreview.pro tst_livepreview "$BUILD_DIR/livepreview"
-run_suite tests/mermaid/mermaid.pro tst_mermaid "$BUILD_DIR/mermaid"
-run_suite tests/codehighlighting/codehighlighting.pro tst_codehighlighting "$BUILD_DIR/codehighlighting"
-run_suite tests/spellchecking/spellchecking.pro tst_spellchecking "$BUILD_DIR/spellchecking"
-run_suite tests/spellchecking/integration.pro tst_spellingintegration "$BUILD_DIR/spellchecking-integration"
-run_suite tests/spellchecking/main.pro tst_spelling_main "$BUILD_DIR/spellchecking-main"
-run_suite tests/instancebroker/instancebroker.pro tst_instancebroker "$BUILD_DIR/instancebroker"
-run_suite tests/printing/printing.pro tst_printing "$BUILD_DIR/printing"
+exit 2 # Every supported mode exits above.

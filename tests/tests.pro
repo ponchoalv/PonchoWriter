@@ -5,7 +5,7 @@ include(../syntax-highlighting.pri)
 include(../spellchecking.pri)
 
 TEMPLATE = app
-TARGET = tst_ponchowriter
+TARGET = tst_editor
 macx {
     OBJECTIVE_SOURCES += ../src/macapplicationreopen.mm macapplicationreopentest.mm
     LIBS += -framework AppKit
@@ -13,12 +13,13 @@ macx {
 
 INCLUDEPATH += ../src
 SOURCES += \
-    tst_ponchowriter.cpp \
+    tst_editor.cpp \
     ../src/backend.cpp \
     ../src/printdocument.cpp \
     ../src/windowmanager.cpp \
     ../src/fileopenrequests.cpp \
     ../src/systemtheme.cpp \
+    ../src/translator.cpp \
     ../src/spellingcontroller.cpp \
     ../src/spellingprose.cpp \
     ../src/cli.cpp \
@@ -34,6 +35,7 @@ HEADERS += \
     ../src/windowmanager.h \
     ../src/fileopenrequests.h \
     ../src/systemtheme.h \
+    ../src/translator.h \
     ../src/spellingcontroller.h \
     ../src/spellingprose.h \
     ../src/cli.h \

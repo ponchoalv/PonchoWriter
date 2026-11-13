@@ -322,6 +322,10 @@ void InstanceBroker::acceptConnections()
                 return;
             }
             socket->write("1", 1);
+            // On Unix, disconnectFromServer may defer the buffered write until
+            // another notifier event. Flush before queued UI work can block
+            // this event loop longer than the secondary's ACK deadline.
+            socket->flush();
             socket->disconnectFromServer();
         };
         // Never deliver application callbacks on Qt's native socket-notifier

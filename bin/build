@@ -1,38 +1,20 @@
 #!/usr/bin/env sh
 set -eu
-
 ROOT="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
-BUILD_DIR="$ROOT/build"
-
-if command -v qmake6 >/dev/null 2>&1; then
-  QMAKE=qmake6
-elif command -v qmake >/dev/null 2>&1; then
-  QMAKE=qmake
-else
-  echo "qmake6 or qmake is required to build ponchowriter." >&2
+BUILD_DIR="${WRITE_BUILD_DIR:-$ROOT/build/cmake}"
+if ! command -v cmake >/dev/null 2>&1; then
+  echo "CMake 3.24+ is required to build Write." >&2
   exit 1
 fi
-
-if { [ -z "${PONCHOWRITER_SYNTAX_PREFIX:-}" ] && [ ! -f "$ROOT/.deps/install/include/KF6/KSyntaxHighlighting/KSyntaxHighlighting/Repository" ]; } ||
-   { [ -z "${PONCHOWRITER_SPELL_PREFIX:-}" ] && [ ! -f "$ROOT/.deps/install/include/KF6/SonnetCore/Sonnet/Speller" ]; }; then
+if { [ -z "${OMAWRITE_SYNTAX_PREFIX:-}" ] && [ ! -f "$ROOT/.deps/install/include/KF6/KSyntaxHighlighting/KSyntaxHighlighting/Repository" ]; } ||
+   { [ -z "${OMAWRITE_SPELL_PREFIX:-}" ] && [ ! -f "$ROOT/.deps/install/include/KF6/SonnetCore/Sonnet/Speller" ]; }; then
   "$ROOT/bin/build-dependencies"
 fi
-
 JOBS="${JOBS:-$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 1)}"
-
-mkdir -p "$BUILD_DIR"
-cd "$BUILD_DIR"
-
-# qmake can retain an old generated plist after ICON changes in an existing build.
-if [ "$(uname -s)" = "Darwin" ]; then
-  rm -f "$BUILD_DIR/ponchowriter.app/Contents/Info.plist"
-fi
-
-"$QMAKE" "$ROOT/ponchowriter.pro"
-make -j"$JOBS"
-
-if [ -x "$BUILD_DIR/ponchowriter.app/Contents/MacOS/ponchowriter" ]; then
-  echo "Built $BUILD_DIR/ponchowriter.app (open it with: open \"$BUILD_DIR/ponchowriter.app\")"
+cmake -S "$ROOT" -B "$BUILD_DIR" -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF "$@"
+cmake --build "$BUILD_DIR" --parallel "$JOBS"
+if [ -d "$BUILD_DIR/Write.app" ]; then
+  echo "Built $BUILD_DIR/Write.app (open it with: open \"$BUILD_DIR/Write.app\")"
 else
-  echo "Built $BUILD_DIR/ponchowriter"
+  echo "Built $BUILD_DIR/omawrite"
 fi

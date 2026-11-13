@@ -4,16 +4,18 @@ linux: QT += dbus
 !versionAtLeast(QT_VERSION, 6.7.0): error("Native live preview requires Qt 6.7 or newer")
 
 CONFIG += c++17 release
-TARGET = ponchowriter
+TARGET = omawrite
+VERSION = 0.7.4
+macx: TARGET = Write
 include(syntax-highlighting.pri)
 include(spellchecking.pri)
 
 TEMPLATE = app
-win32: RC_ICONS = $$PWD/assets/ponchowriter.ico
+win32: RC_ICONS = $$PWD/assets/omawrite.ico
 macx {
     OBJECTIVE_SOURCES += src/macapplicationreopen.mm
     LIBS += -framework AppKit
-    ICON = assets/ponchowriter.icns
+    ICON = assets/omawrite.icns
     QMAKE_INFO_PLIST = assets/Info.plist
     syntaxNotices.files = $$PWD/third_party/ksyntaxhighlighting
     syntaxNotices.path = Contents/Resources/third_party
@@ -42,7 +44,8 @@ HEADERS += \
     src/mermaidrenderer.h \
     src/previewblocks.h \
     src/markdownhighlighter.h \
-    src/systemtheme.h
+    src/systemtheme.h \
+    src/translator.h
 
 SOURCES += \
     src/main.cpp \
@@ -60,6 +63,7 @@ SOURCES += \
     src/mermaidrenderer.cpp \
     src/previewblocks.cpp \
     src/markdownhighlighter.cpp \
-    src/systemtheme.cpp
+    src/systemtheme.cpp \
+    src/translator.cpp
 
 RESOURCES += src/resources.qrc

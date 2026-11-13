@@ -1,4 +1,5 @@
 @echo off
+rem Keep CRLF line endings: cmd.exe CALL/GOTO label scanning relies on them.
 setlocal EnableExtensions DisableDelayedExpansion
 rem Native Windows build. See docs/install.md; setup.bat -Install bootstraps x64 MSVC.
 set "ROOT=%~dp0"

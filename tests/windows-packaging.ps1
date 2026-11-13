@@ -21,9 +21,18 @@ try {
     if (!$stampCommand) { throw 'Missing toolchain stamp guard' }
     $env:OMAWRITE_STAMP = Join-Path $temp 'omawrite-toolchain.txt'
     $env:OMAWRITE_SIGNATURE = 'fake qmake|Qt|compiler|version|x64'
+    if ($env:OS -eq 'Windows_NT') {
+        if ($batch -match "(?<!`r)`n") { throw 'build.bat must have CRLF endings; re-check out the file using .gitattributes.' }
+        # Keep the full real batch body (not just its PowerShell payload), so
+        # CMD itself must resolve and CALL the toolchain subroutine label.
+        $stampBatch = Join-Path $temp 'toolchain-guard.cmd'
+        $entry = "@echo off`r`nsetlocal EnableExtensions DisableDelayedExpansion`r`ncall :checkToolchain`r`nexit /b %errorlevel%`r`n"
+        [IO.File]::WriteAllText($stampBatch, $entry + $batch, [Text.Encoding]::ASCII)
+    }
     function Invoke-StampCheck {
         $ErrorActionPreference = 'Continue'
-        & $engine -NoProfile -Command $stampCommand 2>$null
+        if ($env:OS -eq 'Windows_NT') { & $env:ComSpec /d /c $stampBatch 2>$null }
+        else { & $engine -NoProfile -Command $stampCommand 2>$null }
         return $LASTEXITCODE
     }
     if ((Invoke-StampCheck) -ne 0) { throw 'Fresh stamp failed' }
@@ -103,7 +112,9 @@ public static class PackagingHelper {
                 $env:ISCC = $real
                 & $env:ComSpec /d /c $probe
                 if ($LASTEXITCODE -ne 0) { throw 'The installed real Inno compiler failed the capability check.' }
-                Write-Host 'PASS: real hosted Inno compiler syntax-only probe; no installer created or executed.'
+                & (Join-Path $root 'bin/check-inno-compiler.ps1') -Compiler $real -Quiet
+                if ($LASTEXITCODE -ne 0) { throw 'The installed real Inno compiler failed the in-process setup check.' }
+                Write-Host 'PASS: real hosted Inno compiler syntax-only probes, separate-process and in-process; no installer created or executed.'
             }
             Write-Host 'PASS: native CMD compiler discovery accepts quoted/unquoted zero-file-version paths and safely rejects missing compilers.'
         } finally { Pop-Location }
@@ -132,6 +143,41 @@ else:
     $checker = Join-Path $root 'bin/check-inno-compiler.ps1'
     & $engine -NoProfile -File $checker -Compiler $helper
     if ($LASTEXITCODE -ne 0) { throw 'Supported compiler capability probe failed' }
+    # setup invokes this script in-process; -File in a fresh host hides local
+    # LASTEXITCODE shadowing. Exercise its exact probe against a per-user kit.
+    function Test-SetupInnoProbe {
+        $names = @('LOCALAPPDATA', 'ProgramFiles', 'ProgramFiles(x86)')
+        $saved = @{}
+        foreach ($name in $names) { $saved[$name] = [Environment]::GetEnvironmentVariable($name, 'Process') }
+        try {
+            $env:LOCALAPPDATA = Join-Path $temp 'fake local profile'
+            $env:ProgramFiles = Join-Path $temp 'empty program files'
+            ${env:ProgramFiles(x86)} = Join-Path $temp 'empty program files x86'
+            $directory = Join-Path $env:LOCALAPPDATA 'Programs\Inno Setup 6'
+            New-Item -ItemType Directory -Path $directory -Force | Out-Null
+            Copy-Item -LiteralPath $helper -Destination (Join-Path $directory 'ISCC.exe')
+            function Has-Command([string]$Name) { return $false }
+            $tokens = $null; $errors = $null
+            $ast = [Management.Automation.Language.Parser]::ParseFile((Join-Path $root 'bin/setup-windows.ps1'), [ref]$tokens, [ref]$errors)
+            $command = $ast.Find({ param($node)
+                $node -is [Management.Automation.Language.CommandAst] -and
+                $node.GetCommandName() -eq 'Ensure-Package' -and
+                $node.CommandElements.Count -gt 2 -and
+                $node.CommandElements[1].Extent.Text -eq "'JRSoftware.InnoSetup'"
+            }, $true)
+            if (!$command) { throw 'Missing setup Inno probe' }
+            $probe = $command.CommandElements[2].ScriptBlock.GetScriptBlock()
+            $global:LASTEXITCODE = 37
+            if (!(& $probe)) { throw 'Setup failed to detect a working per-user Inno compiler' }
+            $env:OMAWRITE_TEST_REJECT_PROBE = '1'
+            if (& $probe) { throw 'Setup accepted a compiler that rejects required features' }
+            Remove-Item Env:OMAWRITE_TEST_REJECT_PROBE
+            Write-Host 'PASS: actual setup probe detects per-user Inno in-process and rejects unsupported compilers.'
+        } finally {
+            foreach ($name in $names) { [Environment]::SetEnvironmentVariable($name, $saved[$name], 'Process') }
+        }
+    }
+    Test-SetupInnoProbe
     $env:OMAWRITE_TEST_REJECT_PROBE = '1'
     $ErrorActionPreference = 'Continue'
     & $engine -NoProfile -File $checker -Compiler $helper >$null 2>$null

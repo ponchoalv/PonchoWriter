@@ -29,10 +29,12 @@ ArchitecturesInstallIn64BitMode=x64compatible
 '@
     # PS 5.1 may promote redirected native stderr under Stop. Capture failures
     # as diagnostics and check the compiler exit status explicitly instead.
-    $LASTEXITCODE = 1
+    # Native commands update the global automatic variable. A local assignment
+    # shadows it when setup calls this script in-process, hiding successful exits.
+    $global:LASTEXITCODE = 1
     $ErrorActionPreference = 'Continue'
     $output = $script | & $Compiler - 2>&1
-    $compilerExit = $LASTEXITCODE
+    $compilerExit = $global:LASTEXITCODE
     $ErrorActionPreference = 'Stop'
     if ($compilerExit -ne 0) {
         throw "Compiler capability check failed for $Compiler. Inno Setup 6.3+ with x64compatible support is required.`n$($output -join "`n")"

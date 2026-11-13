@@ -77,6 +77,10 @@ set_target_properties(write_spell_backend PROPERTIES
 target_link_libraries(omawrite_core PUBLIC write_spell_backend)
 
 add_library(omawrite_resources OBJECT src/resources.qrc)
+# RCC-generated code references Qt Core data symbols. Compile it with Qt's
+# usage requirements and PIC to avoid protected-symbol copy relocations on ELF.
+target_link_libraries(omawrite_resources PRIVATE Qt6::Core)
+set_target_properties(omawrite_resources PROPERTIES POSITION_INDEPENDENT_CODE ON)
 function(write_resources target)
   target_sources(${target} PRIVATE $<TARGET_OBJECTS:omawrite_resources>)
 endfunction()

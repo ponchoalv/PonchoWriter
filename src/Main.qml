@@ -5,7 +5,7 @@ import QtQuick.Dialogs as Dialogs
 import QtQuick.Layouts
 import QtQuick.Window
 import "EditorMutations.js" as EditorMutations
-import PonchoWriter 1.0
+import Omawrite 1.0
 
 ApplicationWindow {
     id: win

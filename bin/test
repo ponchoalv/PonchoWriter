@@ -25,8 +25,8 @@ else
   QMAKE=qmake
 fi
 
-if { [ -z "${PONCHOWRITER_SYNTAX_PREFIX:-}" ] && [ ! -f "$ROOT/.deps/install/include/KF6/KSyntaxHighlighting/KSyntaxHighlighting/Repository" ]; } ||
-   { [ -z "${PONCHOWRITER_SPELL_PREFIX:-}" ] && [ ! -f "$ROOT/.deps/install/include/KF6/SonnetCore/Sonnet/Speller" ]; }; then
+if { [ -z "${OMAWRITE_SYNTAX_PREFIX:-}" ] && [ ! -f "$ROOT/.deps/install/include/KF6/KSyntaxHighlighting/KSyntaxHighlighting/Repository" ]; } ||
+   { [ -z "${OMAWRITE_SPELL_PREFIX:-}" ] && [ ! -f "$ROOT/.deps/install/include/KF6/SonnetCore/Sonnet/Speller" ]; }; then
   "$ROOT/bin/build-dependencies"
 fi
 
@@ -56,7 +56,7 @@ if [ "${1:-}" = --native-spelling ]; then
     Darwin) ;;
     *) echo "The optional native spelling smoke test currently supports macOS only." >&2; exit 2 ;;
   esac
-  PONCHOWRITER_NATIVE_SPELLCHECK=1 run_suite tests/spellchecking/native.pro tst_native_spellchecking "$BUILD_DIR/spellchecking-native" osDictionarySmoke
+  OMAWRITE_NATIVE_SPELLCHECK=1 run_suite tests/spellchecking/native.pro tst_native_spellchecking "$BUILD_DIR/spellchecking-native" osDictionarySmoke
   exit 0
 fi
 
@@ -64,7 +64,7 @@ if [ "${1:-}" = --rendered ]; then
   case "${QT_QPA_PLATFORM:-}" in
     offscreen|minimal) echo "Rendered tests require a native desktop platform, not $QT_QPA_PLATFORM." >&2; exit 2 ;;
   esac
-  run_suite tests/tests.pro tst_ponchowriter "$BUILD_DIR" rendersModeSwitchesWithDocumentImages
+  run_suite tests/tests.pro tst_editor "$BUILD_DIR" rendersModeSwitchesWithDocumentImages
   run_suite tests/livepreview/livepreview.pro tst_livepreview "$BUILD_DIR/livepreview" sceneGraphModeSwitchWithImages
   exit 0
 fi

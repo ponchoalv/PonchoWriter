@@ -445,12 +445,12 @@ void Backend::discardRecovery() {
     suspendAutoSave();
 }
 
-// A file named on the command line need not exist yet: `ponchowriter new.md`
+// A file named on the command line need not exist yet: `omawrite new.md`
 // starts a blank document that the first save writes to that path. Opening
 // from the file picker or reloading still requires the file to be there.
 void Backend::openOrStartFile(const QUrl &requestedUrl) {
     QScopedValueRollback<bool> bypass(m_bypassRouting, true);
-    // A relative path names a file in the directory PonchoWriter was started
+    // A relative path names a file in the directory Write was started
     // from; a recovery draft must not resolve it against another one later.
     const QFileInfo info(requestedUrl.toLocalFile());
     const QUrl url = requestedUrl.isLocalFile()
@@ -844,7 +844,7 @@ bool Backend::updateAttachment(const QString &oldPath, const QString &newPath, c
     QStringList probeNames;
     const QString probeId = QUuid::createUuid().toString(QUuid::WithoutBraces);
     for (qsizetype i = 0; i < matches.size(); ++i) {
-        const QString probe = QStringLiteral("ponchowriter-probe-%1-%2.png").arg(probeId).arg(i);
+        const QString probe = QStringLiteral("omawrite-probe-%1-%2.png").arg(probeId).arg(i);
         probeNames.append(probe);
         probedText.replace(matches[i].start, matches[i].length, probe);
     }

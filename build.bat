@@ -119,13 +119,13 @@ set "DEPS=%ROOT%.deps\windows-%KIT%-qt%QT_VERSION%-%ARCH%"
 set "APP_BUILD=%ROOT%build\windows-%KIT%-qt%QT_VERSION%-%ARCH%"
 set "DIST=%APP_BUILD%\dist"
 rem These Windows-specific directories never reuse a macOS/Linux dependency cache.
-set "PONCHOWRITER_SYNTAX_PREFIX=%DEPS%\install"
-set "PONCHOWRITER_SPELL_PREFIX=%DEPS%\install"
-set "PONCHO_SIGNATURE=%QMAKE%|%QT_PREFIX%|%CXX%|%VCToolsVersion%|%ARCH%"
-set "PONCHO_STAMP=%DEPS%\poncho-toolchain.txt"
+set "OMAWRITE_SYNTAX_PREFIX=%DEPS%\install"
+set "OMAWRITE_SPELL_PREFIX=%DEPS%\install"
+set "OMAWRITE_SIGNATURE=%QMAKE%|%QT_PREFIX%|%CXX%|%VCToolsVersion%|%ARCH%"
+set "OMAWRITE_STAMP=%DEPS%\omawrite-toolchain.txt"
 call :checkToolchain
 if errorlevel 1 goto fail
-set "PONCHO_STAMP=%APP_BUILD%\poncho-toolchain.txt"
+set "OMAWRITE_STAMP=%APP_BUILD%\omawrite-toolchain.txt"
 call :checkToolchain
 if errorlevel 1 goto fail
 
@@ -138,7 +138,7 @@ if errorlevel 1 goto fail
 echo === Building Write ===
 pushd "%APP_BUILD%"
 if errorlevel 1 goto fail
-"%QMAKE%" "%ROOT%ponchowriter.pro" CONFIG+=release
+"%QMAKE%" "%ROOT%omawrite.pro" CONFIG+=release
 if errorlevel 1 goto buildFailed
 call :make
 if errorlevel 1 goto buildFailed
@@ -175,7 +175,7 @@ call :testProject
 if errorlevel 1 exit /b 1
 set "TEST_PROJECT=%ROOT%tests\tests.pro"
 set "TEST_DIR=%APP_BUILD%\tests-main"
-set "TEST_NAME=tst_ponchowriter.exe"
+set "TEST_NAME=tst_editor.exe"
 call :testProject
 exit /b %errorlevel%
 
@@ -237,7 +237,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "%ROOT%bin\package-windows.p
 exit /b %errorlevel%
 
 :checkToolchain
-powershell -NoProfile -Command "$ErrorActionPreference='Stop'; $p=$env:PONCHO_STAMP; if ((Test-Path -LiteralPath $p) -and ((Get-Content -LiteralPath $p -Raw).TrimEnd() -ne $env:PONCHO_SIGNATURE)) { Write-Error ('Toolchain changed. Move/remove this generated build directory: '+(Split-Path $p)); exit 1 }; New-Item -ItemType Directory -Force -Path (Split-Path $p) | Out-Null; [IO.File]::WriteAllText($p,$env:PONCHO_SIGNATURE)"
+rem Validate legacy stamps too, so a rename cannot bypass cache/toolchain safety.
+powershell -NoProfile -Command "$ErrorActionPreference='Stop'; $p=$env:OMAWRITE_STAMP; foreach ($s in @($p,(Join-Path (Split-Path $p) 'poncho-toolchain.txt'))) { if ((Test-Path -LiteralPath $s) -and ((Get-Content -LiteralPath $s -Raw).TrimEnd() -ne $env:OMAWRITE_SIGNATURE)) { Write-Error ('Toolchain changed. Move/remove this generated build directory: '+(Split-Path $p)); exit 1 } }; New-Item -ItemType Directory -Force -Path (Split-Path $p) | Out-Null; [IO.File]::WriteAllText($p,$env:OMAWRITE_SIGNATURE)"
 exit /b %errorlevel%
 
 :require

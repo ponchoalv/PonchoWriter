@@ -5,7 +5,7 @@ include(../syntax-highlighting.pri)
 include(../spellchecking.pri)
 
 TEMPLATE = app
-TARGET = tst_ponchowriter
+TARGET = tst_editor
 macx {
     OBJECTIVE_SOURCES += ../src/macapplicationreopen.mm macapplicationreopentest.mm
     LIBS += -framework AppKit
@@ -13,7 +13,7 @@ macx {
 
 INCLUDEPATH += ../src
 SOURCES += \
-    tst_ponchowriter.cpp \
+    tst_editor.cpp \
     ../src/backend.cpp \
     ../src/printdocument.cpp \
     ../src/windowmanager.cpp \

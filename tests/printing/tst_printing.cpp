@@ -231,11 +231,11 @@ private slots:
         QCOMPARE(bytes.count("/Type /Page\n"), job.pageCount());
         QVERIFY(bytes.contains("/MediaBox [0 0 595.000000 842.000000]"));
         QVERIFY(bytes.contains("/MediaBox [0 0 842.000000 595.000000]"));
-        const auto exportPath = qEnvironmentVariable("PONCHOWRITER_PRINT_TEST_PDF");
+        const auto exportPath = qEnvironmentVariable("OMAWRITE_PRINT_TEST_PDF");
         if (!exportPath.isEmpty()) QVERIFY(QFile::copy(pdfPath, exportPath));
         // Explicitly opt in to the native macOS print-to-file engine; never
         // address a physical printer or show a system dialog in this fixture.
-        if (QGuiApplication::platformName() == QStringLiteral("cocoa") && qEnvironmentVariableIsSet("PONCHOWRITER_NATIVE_PRINT_TEST")) {
+        if (QGuiApplication::platformName() == QStringLiteral("cocoa") && qEnvironmentVariableIsSet("OMAWRITE_NATIVE_PRINT_TEST")) {
             QPrinter native(QPrinter::HighResolution);
             native.setOutputFileName(dir.filePath("native.pdf"));
             native.setOutputFormat(QPrinter::NativeFormat);

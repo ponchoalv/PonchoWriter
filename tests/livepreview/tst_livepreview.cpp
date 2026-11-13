@@ -1200,7 +1200,7 @@ private slots:
         QString markdown = QStringLiteral("before\n\n    ```cpp\n    /*\n    ```\n\n");
         for (const auto &fence : fences)
             markdown += QStringLiteral("```%1\n%2\n```\n").arg(fence.first, fence.second.join(QLatin1Char('\n')));
-        markdown += QStringLiteral("\n> ```js\n> let quoted = false;\n> ```\n\n- item\n\n  ```cpp\n  int nested = 17;\n  ```\n\n```unknown-ponchowriter-language\nplain _code_\n```\n\n```\nuntyped_var = 99\n```\n\n```cpp\n```\n\nafter\n\n```js\nconst unfinished = 19;\n");
+        markdown += QStringLiteral("\n> ```js\n> let quoted = false;\n> ```\n\n- item\n\n  ```cpp\n  int nested = 17;\n  ```\n\n```unknown-omawrite-language\nplain _code_\n```\n\n```\nuntyped_var = 99\n```\n\n```cpp\n```\n\nafter\n\n```js\nconst unfinished = 19;\n");
         for (bool dark : {false, true}) {
             viewItem->setProperty("previewDark", dark);
             sourceItem->setProperty("text", markdown);

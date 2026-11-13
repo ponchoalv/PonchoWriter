@@ -56,7 +56,7 @@ int main(int argc, char *argv[]) {
         for (const char *weight : {"Regular", "Italic", "Bold", "BoldItalic"})
             QFontDatabase::addApplicationFont(QStringLiteral(":/fonts/IBMPlexMono-%1.ttf").arg(QLatin1String(weight)));
         QQuickStyle::setStyle(QStringLiteral("Material"));
-        qmlRegisterType<LivePreview>("PonchoWriter", 1, 0, "LivePreview");
+        qmlRegisterType<LivePreview>("Omawrite", 1, 0, "LivePreview");
         windows = std::make_unique<WindowManager>();
         QObject::connect(&translator, &Translator::changed, windows.get(), &WindowManager::retranslate);
         QObject::connect(windows.get(), &WindowManager::noWindowsRemaining, &app, &QCoreApplication::quit);

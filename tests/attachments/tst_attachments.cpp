@@ -16,7 +16,7 @@
 #include <QTextBlock>
 #include <QTextImageFormat>
 
-class PonchoWriterTest : public QObject {
+class OmawriteAttachmentsTest : public QObject {
     Q_OBJECT
     static void bind(Backend &backend, QTextDocument &document) {
         backend.m_document = &document;
@@ -41,7 +41,7 @@ class PonchoWriterTest : public QObject {
 private slots:
     void initTestCase() {
         QStandardPaths::setTestModeEnabled(true);
-        QCoreApplication::setOrganizationName(QStringLiteral("PonchoWriterAttachmentTests"));
+        QCoreApplication::setOrganizationName(QStringLiteral("OmawriteAttachmentTests"));
         QCoreApplication::setApplicationName(QUuid::createUuid().toString(QUuid::WithoutBraces));
     }
     void cleanupTestCase() {
@@ -389,5 +389,5 @@ private slots:
         QVERIFY(!QFileInfo::exists(dir.filePath("outside/image.png")));
     }
 };
-QTEST_MAIN(PonchoWriterTest)
+QTEST_MAIN(OmawriteAttachmentsTest)
 #include "tst_attachments.moc"

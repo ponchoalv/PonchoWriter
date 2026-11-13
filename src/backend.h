@@ -174,7 +174,8 @@ signals:
     void externalChangeDetected(bool deleted, bool locallyModified);
 
 private:
-    friend class PonchoWriterTest;
+    friend class OmawriteEditorTest;
+    friend class OmawriteAttachmentsTest;
     friend class OmawriteTest;
 
     void loadDocumentText(const QString &text);

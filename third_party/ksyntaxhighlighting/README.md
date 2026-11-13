@@ -1,6 +1,6 @@
 # KSyntaxHighlighting 6.13.0: provenance and distribution status
 
-PonchoWriter builds the standalone KDE syntax engine, not Kate or KTextEditor. The engine source is MIT-licensed; **this does not mean all bundled syntax definitions are MIT**. `QRC_SYNTAX=ON` embeds upstream language definitions and themes in the private static library.
+Write builds the standalone KDE syntax engine, not Kate or KTextEditor. The engine source is MIT-licensed; **this does not mean all bundled syntax definitions are MIT**. `QRC_SYNTAX=ON` embeds upstream language definitions and themes in the private static library.
 
 ## Pinned source
 

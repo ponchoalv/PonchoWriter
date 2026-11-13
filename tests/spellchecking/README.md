@@ -11,8 +11,8 @@ From the repository root, use a separate shadow directory for each target:
 
 ```sh
 root="$PWD"
-mkdir -p /tmp/ponchowriter-spellchecking-tests
-cd /tmp/ponchowriter-spellchecking-tests
+mkdir -p /tmp/omawrite-spellchecking-tests
+cd /tmp/omawrite-spellchecking-tests
 qmake6 "$root/tests/spellchecking/spellchecking.pro"
 make -j4
 ./tst_spellchecking
@@ -34,7 +34,7 @@ settings. The controller-only suite requires no display server. Native smoke
 needs a normal macOS GUI-capable session and is skipped by default:
 
 ```sh
-PONCHOWRITER_NATIVE_SPELLCHECK=1 ./tst_native_spellchecking
+OMAWRITE_NATIVE_SPELLCHECK=1 ./tst_native_spellchecking
 ```
 
 It skips if no English OS dictionary is installed (`en`, `en_US`, or a regional

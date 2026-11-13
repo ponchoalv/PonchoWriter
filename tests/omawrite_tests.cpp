@@ -269,7 +269,7 @@ private slots:
         QStandardPaths::setTestModeEnabled(true);
         QVERIFY(m_settingsDirectory.isValid());
         QQuickStyle::setStyle(QStringLiteral("Material"));
-        qmlRegisterType<LivePreview>("PonchoWriter", 1, 0, "LivePreview");
+        qmlRegisterType<LivePreview>("Omawrite", 1, 0, "LivePreview");
         QSettings::setDefaultFormat(QSettings::IniFormat);
         QSettings::setPath(QSettings::IniFormat, QSettings::UserScope,
                            m_settingsDirectory.path());

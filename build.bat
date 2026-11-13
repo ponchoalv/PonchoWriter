@@ -220,16 +220,22 @@ if not "%ARCH%"=="x64" if not "%ARCH%"=="x86_64-w64-mingw32" (
     echo ERROR: The installer currently supports x64 targets only.
     exit /b 1
 )
+rem Accept both set ISCC="path" and set "ISCC=path". Embedded quotes would
+rem break the IF EXIST argument and can accidentally execute setup.bat.
+if defined ISCC set "ISCC=%ISCC:"=%"
 if not defined ISCC for /f "delims=" %%I in ('where ISCC.exe 2^>nul') do if not defined ISCC set "ISCC=%%I"
 if not defined ISCC if exist "%ProgramFiles(x86)%\Inno Setup 6\ISCC.exe" set "ISCC=%ProgramFiles(x86)%\Inno Setup 6\ISCC.exe"
+if not defined ISCC if exist "%ProgramFiles%\Inno Setup 6\ISCC.exe" set "ISCC=%ProgramFiles%\Inno Setup 6\ISCC.exe"
 if not defined ISCC if exist "%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe" set "ISCC=%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe"
 if not defined ISCC goto missingIscc
 if not exist "%ISCC%" goto missingIscc
-powershell -NoProfile -Command "$v=(Get-Item -LiteralPath $env:ISCC).VersionInfo; if ($v.FileMajorPart -lt 6 -or ($v.FileMajorPart -eq 6 -and $v.FileMinorPart -lt 3)) { exit 1 }"
-if errorlevel 1 goto missingIscc
+powershell -NoProfile -ExecutionPolicy Bypass -File "%ROOT%bin\check-inno-compiler.ps1"
+if errorlevel 1 exit /b 1
 exit /b 0
 :missingIscc
-echo ERROR: Inno Setup 6.3+ is required. Run setup.bat -Install -Installer or set ISCC.
+if defined ISCC echo ERROR: Inno Setup compiler not found at "%ISCC%".
+if not defined ISCC echo ERROR: ISCC.exe was not found on PATH or in the standard Inno Setup folders.
+echo Run setup.bat -Install -Installer, or set ISCC to the full ISCC.exe path.
 exit /b 1
 
 :installer

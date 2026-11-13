@@ -310,6 +310,25 @@ private slots:
         QVERIFY(!view->begin().blockFormat().nonBreakableLines());
         QVERIFY(!view->begin().blockFormat().hasProperty(QTextFormat::UserProperty + 120));
     }
+    void escapesAndBacktickRunsSurviveModeSwitches() {
+        const QString text = QStringLiteral(R"(\*literal\* and `` C-x ` ``
+
+\# not a heading)");
+        source->setPlainText(text); source->clearUndoRedoStacks(); flush();
+        for (int n = 0; n < 3; ++n) {
+            controller->setReadMode(true); flush();
+            QCOMPARE(view->toPlainText(), QStringLiteral("*literal* and C-x `\n# not a heading"));
+            controller->setReadMode(false); flush();
+            QCOMPARE(view->toPlainText(), text);
+            QCOMPARE(source->toPlainText(), text);
+            QVERIFY(!source->isUndoAvailable());
+        }
+        QTextCursor change(source); change.movePosition(QTextCursor::End);
+        change.insertText(QStringLiteral(" changed")); flush();
+        source->undo(); flush();
+        QCOMPARE(source->toPlainText(), text);
+        QVERIFY(!source->isUndoAvailable());
+    }
     void modeSwitchesRetainEditBlocksHighlighterAndCachedRead() {
         const QString text = QString("Ordinary paragraph with **strong** text.\n\n").repeated(800)
             + "```cpp\nint answer = 42;\n```\n\nlast";
@@ -544,14 +563,61 @@ private slots:
         QCOMPARE(nested.blockFormat().intProperty(MarkdownHighlighter::QuotePrefixProperty), 4);
         QVERIFY(nested.blockFormat().leftMargin() > block.blockFormat().leftMargin());
     }
+    void readUsesStandardMarkdownLineBreaks_data() {
+        QTest::addColumn<QString>("markdown");
+        QTest::addColumn<QString>("expectedRaw");
+        const QString hard = QString(QChar::LineSeparator);
+        const QString paragraph = QString(QChar::ParagraphSeparator);
+        QTest::newRow("soft") << QString("first\nsecond") << QString("first second");
+        QTest::newRow("backslash") << QString("first\\\nsecond") << QString("first" + hard + "second");
+        QTest::newRow("two-spaces") << QString("first  \nsecond") << QString("first" + hard + "second");
+        QTest::newRow("paragraph") << QString("first\n\nsecond") << QString("first" + paragraph + "second");
+        QTest::newRow("indented-continuation") << QString("first\\\n   second") << QString("first" + hard + "second");
+        QTest::newRow("consecutive-hard-breaks") << QString("first\\\nsecond  \nthird") << QString("first" + hard + "second" + hard + "third");
+        QTest::newRow("one-space-is-soft") << QString("first \nsecond") << QString("first second");
+        QTest::newRow("hard-break-before-blank") << QString("first\\\n\nsecond") << QString("first\\" + paragraph + "second");
+        QTest::newRow("quote-soft") << QString("> first\n> second") << QString("first second");
+        QTest::newRow("quote-backslash") << QString("> first\\\n> second") << QString("first" + hard + "second");
+        QTest::newRow("quote-two-spaces") << QString("> first  \n> second") << QString("first" + hard + "second");
+        QTest::newRow("quote-paragraph") << QString("> first\n>\n> second") << QString("first" + paragraph + "second");
+        QTest::newRow("escaped-backslash") << QString("first\\\\\nsecond") << QString("first\\ second");
+        QTest::newRow("inline-code") << QString("``first\nsecond``") << QString("first second");
+        QTest::newRow("fenced-code") << QString("```text\nfirst\nsecond\n```") << QString("first" + paragraph + "second");
+        QTest::newRow("literal-break-in-code") << QString("```text\nfirst\\\nsecond  \nthird\n```") << QString("first\\" + paragraph + "second  " + paragraph + "third");
+        QTest::newRow("nested-quote") << QString("> > first\\\n> > second") << QString("first" + hard + "second");
+        QTest::newRow("reference-link-after-break") << QString("first\\\n[second][id]\n\n[id]: https://example.invalid") << QString("first" + hard + "second");
+        QTest::newRow("reference-link-before-break") << QString("[first][id]\\\nsecond\n\n[id]: https://example.invalid") << QString("first" + hard + "second");
+        QTest::newRow("reference-link-before-space-break") << QString("[first][id]  \nsecond\n\n[id]: https://example.invalid") << QString("first" + hard + "second");
+        QTest::newRow("multiline-code-after-break") << QString("first\\\n`second\nthird`") << QString("first" + hard + "second third");
+    }
+    void readUsesStandardMarkdownLineBreaks() {
+        QFETCH(QString, markdown);
+        QFETCH(QString, expectedRaw);
+        source->setPlainText(markdown); source->clearUndoRedoStacks(); flush();
+        for (int n = 0; n < 2; ++n) {
+            controller->setReadMode(true); flush();
+            QCOMPARE(view->toRawText(), expectedRaw);
+            QCOMPARE(view->blockCount(), expectedRaw.count(QChar::ParagraphSeparator) + 1);
+            if (expectedRaw.contains(QChar::LineSeparator)) {
+                view->documentLayout()->documentSize();
+                QVERIFY(view->begin().layout()->lineCount() >= 2);
+            }
+            if (QTest::currentDataTag() == QByteArrayLiteral("paragraph"))
+                QVERIFY(view->begin().blockFormat().bottomMargin() > 0);
+            controller->setReadMode(false); flush();
+            QCOMPARE(view->toPlainText(), markdown);
+            QCOMPARE(source->toPlainText(), markdown);
+            QVERIFY(!source->isUndoAvailable());
+        }
+    }
     void readQuoteBreaksAndJustificationSurviveHtmlRoundTrip() {
         const QString text = "ordinary first\nordinary second\n\n> quote first\n> quote second\n>\n> next paragraph\n> last line  \n> existing break\n\nafter\n";
         source->setPlainText(text); source->clearUndoRedoStacks(); select(sourceItem, text.size(), text.size());
         controller->setReadMode(true); flush();
         const QString raw = view->toRawText();
-        QVERIFY2(raw.contains(QString("quote first") + QChar::LineSeparator + "quote second"), qPrintable(raw));
+        QVERIFY2(raw.contains(QString("quote first quote second")), qPrintable(raw));
         QVERIFY(raw.contains("ordinary first ordinary second"));
-        QVERIFY(raw.contains(QString("next paragraph") + QChar::LineSeparator + "last line" + QChar::LineSeparator + "existing break"));
+        QVERIFY(raw.contains(QString("next paragraph last line") + QChar::LineSeparator + "existing break"));
         int quotes = 0;
         for (auto block = view->begin(); block.isValid(); block = block.next()) {
             if (block.text().startsWith("quote first") || block.text().startsWith("next paragraph")) {
@@ -563,15 +629,15 @@ private slots:
         // Angle autolinks and literal comparisons are prose, not HTML blocks.
         source->setPlainText("> first\n> one < two\n> visit <https://example.invalid>\n> last\n"); flush();
         controller->setReadMode(true); flush();
-        QVERIFY(view->toRawText().contains(QString("first") + QChar::LineSeparator + "one < two" + QChar::LineSeparator + "visit https://example.invalid" + QChar::LineSeparator + "last"));
+        QVERIFY(view->toRawText().contains(QString("first one < two visit https://example.invalid last")));
         bool anchor = false;
         for (auto block = view->begin(); block.isValid(); block = block.next())
             for (auto it = block.begin(); !it.atEnd(); ++it) anchor |= it.fragment().charFormat().anchorHref() == "https://example.invalid";
-        QVERIFY(anchor); QVERIFY(!view->toPlainText().contains("PWQUOTE"));
+        QVERIFY(anchor); QVERIFY(!view->toPlainText().contains("PWHARDBREAK"));
     }
     void quoteClassificationAndReadPreparationStayConservative() {
         const QString prose = "> first\n> second\n> > nested first\n> > nested second\n";
-        QCOMPARE(ListPreview::readQuoteBreaks(prose), QString("> first  \n> second\n> > nested first  \n> > nested second\n"));
+        QCOMPARE(ListPreview::readHardBreaks(prose), prose);
         const QStringList untouched = {
             "```text\n> literal\n> also literal\n```\n",
             "    > indented\n    > literal\n",
@@ -593,11 +659,11 @@ private slots:
             "\\> escaped\n\\> literal\n"
         };
         for (const auto &text : untouched) {
-            QCOMPARE(ListPreview::readQuoteBreaks(text), text);
+            QCOMPARE(ListPreview::readHardBreaks(text), text);
             QStringList markers;
-            const auto prepared = ListPreview::readQuoteBreaks(text, &markers);
+            const auto prepared = ListPreview::readHardBreaks(text, &markers);
             QTextDocument original, restored; original.setMarkdown(text); restored.setMarkdown(prepared);
-            QVERIFY(ListPreview::restoreReadQuoteBreaks(restored, markers));
+            QVERIFY(ListPreview::restoreReadHardBreaks(restored, markers));
             QCOMPARE(restored.toHtml(), original.toHtml()); // Includes multiline link/image identity.
         }
         source->setPlainText(prose + "\nafter\n"); flush();

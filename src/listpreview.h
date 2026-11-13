@@ -147,7 +147,7 @@ inline QList<Item> step(State &state, const QString &line, const QString &next, 
         const bool beforeInline = state.quoteTicks || state.quoteBrackets || state.quoteDestination || state.quoteLabel;
         for (int i = 0; i < body.size(); ++i) {
             const auto c = body[i];
-            if (c == '\\' && !state.quoteTicks) { ++i; continue; }
+            if (c == '\\' && !state.quoteTicks) { state.quoteLabel = false; ++i; continue; }
             if (c == '`' && !state.quoteDestination) {
                 int end = i + 1; while (end < body.size() && body[end] == '`') ++end;
                 if (!state.quoteTicks) state.quoteTicks = end - i;
@@ -171,6 +171,8 @@ inline QList<Item> step(State &state, const QString &line, const QString &next, 
             if (c == '[') ++state.quoteBrackets;
             else if (c == ']' && state.quoteBrackets && !--state.quoteBrackets) state.quoteLabel = true;
         }
+        // Explicit hard-break spaces cannot continue a pending link label.
+        if (body.endsWith("  ")) state.quoteLabel = false;
         if (content.isEmpty()) {
             state.quoteTicks = state.quoteBrackets = state.quoteDestination = 0;
             state.quoteLabel = state.quoteAngle = false; state.quoteTitle = {};
@@ -227,35 +229,46 @@ inline QList<Item> parse(const QString &text) {
     for (int n = 0; n < lines.size(); ++n) items.append(step(state, lines[n], lines.value(n + 1), n));
     return items;
 }
-// Read-only preparation after source-offset object replacements. Preserve
-// explicit quote prose soft breaks, never mutate saved Markdown or code/HTML.
-inline QString readQuoteBreaks(const QString &source, QStringList *markers = nullptr) {
+// Read/print-only preparation after source-offset object replacements. Never
+// promote soft breaks: only explicit Markdown hard breaks need Qt's repair.
+inline QString readHardBreaks(const QString &source, QStringList *markers = nullptr) {
+    if (!markers) return source;
+    markers->clear();
     auto lines = source.split('\n');
-    const auto items = parse(source);
+    // A disposable outer quote lets the same conservative prose classifier
+    // handle ordinary paragraphs and actual quotes, including nested fences,
+    // HTML, tables and multiline inline constructs. Prefixes gain two chars.
+    QString framed = source;
+    framed.replace(QLatin1Char('\n'), QStringLiteral("\n> "));
+    framed.prepend(QStringLiteral("> "));
+    const auto items = parse(framed);
     QString name;
-    if (markers) {
-        markers->clear();
-        do { name = "PWQUOTE" + QUuid::createUuid().toString(QUuid::Id128); } while (source.contains(name));
-    }
+    do { name = "PWHARDBREAK" + QUuid::createUuid().toString(QUuid::Id128); } while (source.contains(name));
     for (int i = 0; i + 1 < items.size(); ++i) {
         const auto &a = items[i]; const auto &b = items[i + 1];
-        if (!a.quote || !a.soft || !b.quote || !b.soft || b.block != a.block + 1 || a.depth != b.depth) continue;
-        if (markers) {
-            const QString marker = name + QString::number(markers->size()) + "END";
-            markers->append(marker);
-            lines[b.block].insert(b.prefix, marker + ' ');
-            continue;
-        }
-        auto &line = lines[a.block];
+        if (!a.quote || !a.soft || !b.quote || b.block != a.block + 1 || a.depth != b.depth) continue;
+        // Only the next line's prefix is changed. Inline constructs may open
+        // later on that line; requiring b.soft would miss reference links and
+        // multiline code spans even though the sentinel is outside them.
+        if (lines[b.block].mid(b.prefix - 2).trimmed().isEmpty()) continue;
+        const auto &line = lines[a.block];
         int slashes = 0; for (int j = line.size() - 1; j >= 0 && line[j] == '\\'; --j) ++slashes;
-        if (!line.endsWith("  ") && !(slashes % 2)) line += QStringLiteral("  ");
+        if (!line.endsWith("  ") && !(slashes % 2)) continue;
+        const QString marker = name + QString::number(markers->size()) + "END";
+        markers->append(marker);
+        int prefix = b.prefix - 2;
+        // Keep continuation indentation before the sentinel, where Markdown
+        // strips it, rather than turning it into visible spaces after <br>.
+        while (prefix < lines[b.block].size()
+               && (lines[b.block][prefix] == ' ' || lines[b.block][prefix] == '\t')) ++prefix;
+        lines[b.block].insert(prefix, marker + ' ');
     }
     return lines.join('\n');
 }
 // Qt's Markdown hard breaks can import as separate paragraphs. Exact disposable
 // sentinels let us restore native line separators without guessing nth blocks,
 // losing inline formatting, or adding a blank paragraph gap per source line.
-inline bool restoreReadQuoteBreaks(QTextDocument &document, const QStringList &markers) {
+inline bool restoreReadHardBreaks(QTextDocument &document, const QStringList &markers) {
     QList<QPair<int, int>> ranges;
     for (const auto &marker : markers) {
         const auto found = document.find(marker, 0, QTextDocument::FindCaseSensitively);

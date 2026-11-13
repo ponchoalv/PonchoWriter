@@ -1,12 +1,14 @@
 @echo off
 setlocal EnableExtensions DisableDelayedExpansion
-rem Native Windows build. See docs/windows-build.md for installation commands.
+rem Native Windows build. See docs/install.md; setup.bat -Install bootstraps x64 MSVC.
 set "ROOT=%~dp0"
 rem Ignore inherited compiler/Perl overrides: resolve this kit's tools explicitly.
 set "CXX="
 set "PERL_EXE="
 set "DEPLOY=0"
 set "RUN_TESTS=0"
+set "CHECK_ONLY=0"
+set "INSTALLER=0"
 :options
 if "%~1"=="" goto setup
 if /i "%~1"=="--deploy" (
@@ -19,6 +21,17 @@ if /i "%~1"=="--test" (
     shift
     goto options
 )
+if /i "%~1"=="--check" (
+    set "CHECK_ONLY=1"
+    shift
+    goto options
+)
+if /i "%~1"=="--installer" (
+    set "INSTALLER=1"
+    set "DEPLOY=1"
+    shift
+    goto options
+)
 if /i "%~1"=="--help" goto help
 echo ERROR: Unknown argument "%~1".
 goto helpError
@@ -28,6 +41,8 @@ if not defined JOBS set "JOBS=%NUMBER_OF_PROCESSORS%"
 if not defined JOBS set "JOBS=4"
 powershell -NoProfile -Command "if ($env:JOBS -notmatch '^[1-9][0-9]*$') { exit 1 }"
 if errorlevel 1 goto badJobs
+rem A successful setup may record its kit locally; explicit environment wins.
+if not defined QT_DIR if not defined QMAKE if exist "%ROOT%build\windows-setup.json" for /f "delims=" %%I in ('powershell -NoProfile -Command "(Get-Content -LiteralPath ($env:ROOT+'build\windows-setup.json') -Raw | ConvertFrom-Json).QtDir"') do set "QT_DIR=%%I"
 if defined QT_DIR set "QMAKE=%QT_DIR%\bin\qmake.exe"
 if defined QMAKE goto haveQmake
 for /f "delims=" %%I in ('where qmake6.exe 2^>nul') do if not defined QMAKE set "QMAKE=%%I"
@@ -92,6 +107,13 @@ if errorlevel 1 goto fail
 perl -e "exit($^O eq 'MSWin32' ? 0 : 1)"
 if errorlevel 1 goto missingPerl
 for /f "delims=" %%I in ('where perl.exe') do if not defined PERL_EXE set "PERL_EXE=%%I"
+if "%INSTALLER%"=="1" call :findIscc
+if errorlevel 1 goto fail
+if "%CHECK_ONLY%"=="1" (
+    echo CHECK OK: Qt %QT_VERSION%, %KIT%, target %ARCH%.
+    echo Compiler: "%CXX%". No dependency build or deployment performed.
+    exit /b 0
+)
 set "CMAKE_BUILD_PARALLEL_LEVEL=%JOBS%"
 set "DEPS=%ROOT%.deps\windows-%KIT%-qt%QT_VERSION%-%ARCH%"
 set "APP_BUILD=%ROOT%build\windows-%KIT%-qt%QT_VERSION%-%ARCH%"
@@ -127,6 +149,8 @@ popd
 if "%RUN_TESTS%"=="1" call :tests
 if errorlevel 1 goto fail
 if "%DEPLOY%"=="1" call :deploy
+if errorlevel 1 goto fail
+if "%INSTALLER%"=="1" call :installer
 if errorlevel 1 goto fail
 echo.
 echo SUCCESS: "%APP_EXE%"
@@ -191,6 +215,27 @@ rem Preserve license notices; this is not a release/redistribution clearance.
 powershell -NoProfile -Command "$ErrorActionPreference='Stop'; $d=Join-Path $env:DIST 'notices'; New-Item -ItemType Directory -Path $d | Out-Null; Copy-Item -LiteralPath ($env:ROOT+'LICENSE'),($env:ROOT+'COPYRIGHT.md') -Destination $d; foreach ($p in @('third_party','fonts')) { Copy-Item -LiteralPath (Join-Path $env:ROOT $p) -Destination $d -Recurse }"
 exit /b %errorlevel%
 
+:findIscc
+if not "%ARCH%"=="x64" if not "%ARCH%"=="x86_64-w64-mingw32" (
+    echo ERROR: The installer currently supports x64 targets only.
+    exit /b 1
+)
+if not defined ISCC for /f "delims=" %%I in ('where ISCC.exe 2^>nul') do if not defined ISCC set "ISCC=%%I"
+if not defined ISCC if exist "%ProgramFiles(x86)%\Inno Setup 6\ISCC.exe" set "ISCC=%ProgramFiles(x86)%\Inno Setup 6\ISCC.exe"
+if not defined ISCC if exist "%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe" set "ISCC=%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe"
+if not defined ISCC goto missingIscc
+if not exist "%ISCC%" goto missingIscc
+powershell -NoProfile -Command "$v=(Get-Item -LiteralPath $env:ISCC).VersionInfo; if ($v.FileMajorPart -lt 6 -or ($v.FileMajorPart -eq 6 -and $v.FileMinorPart -lt 3)) { exit 1 }"
+if errorlevel 1 goto missingIscc
+exit /b 0
+:missingIscc
+echo ERROR: Inno Setup 6.3+ is required. Run setup.bat -Install -Installer or set ISCC.
+exit /b 1
+
+:installer
+powershell -NoProfile -ExecutionPolicy Bypass -File "%ROOT%bin\package-windows.ps1" -DistDir "%DIST%" -Iscc "%ISCC%" -Kit "%KIT%"
+exit /b %errorlevel%
+
 :checkToolchain
 powershell -NoProfile -Command "$ErrorActionPreference='Stop'; $p=$env:PONCHO_STAMP; if ((Test-Path -LiteralPath $p) -and ((Get-Content -LiteralPath $p -Raw).TrimEnd() -ne $env:PONCHO_SIGNATURE)) { Write-Error ('Toolchain changed. Move/remove this generated build directory: '+(Split-Path $p)); exit 1 }; New-Item -ItemType Directory -Force -Path (Split-Path $p) | Out-Null; [IO.File]::WriteAllText($p,$env:PONCHO_SIGNATURE)"
 exit /b %errorlevel%
@@ -198,7 +243,7 @@ exit /b %errorlevel%
 :require
 where "%~1" >nul 2>&1
 if errorlevel 1 (
-    echo ERROR: Missing %~1 on PATH. See docs\windows-build.md.
+    echo ERROR: Missing %~1 on PATH. Run setup.bat -Install; see docs\install.md.
     exit /b 1
 )
 exit /b 0
@@ -230,13 +275,15 @@ goto fail
 echo ERROR: JOBS must be a positive integer.
 goto fail
 :help
- echo Usage: build.bat [--test] [--deploy]
+ echo Usage: build.bat [--check] [--test] [--deploy] [--installer]
  echo Set QT_DIR to your Qt desktop kit. MinGW also needs MINGW_DIR.
  echo Optional: JOBS, or an absolute QMAKE path instead of QT_DIR.
  echo Builds private dependencies, then the Release application. --test runs two suites.
  echo --deploy creates a new Qt runtime folder; MSVC needs VC++ Redistributable.
  echo Mermaid stays external.
- echo Installation and manual Windows checks: docs\windows-build.md
+ echo --installer implies --deploy; Inno Setup 6 creates an unsigned x64 per-user installer.
+ echo --check validates tools without building. setup.bat -Install -Installer installs prerequisites.
+ echo Installation and manual Windows checks: docs\install.md
  exit /b 0
 :helpError
 call :help

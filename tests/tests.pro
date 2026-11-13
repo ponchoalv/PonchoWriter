@@ -6,6 +6,10 @@ include(../spellchecking.pri)
 
 TEMPLATE = app
 TARGET = tst_ponchowriter
+macx {
+    OBJECTIVE_SOURCES += ../src/macapplicationreopen.mm macapplicationreopentest.mm
+    LIBS += -framework AppKit
+}
 
 INCLUDEPATH += ../src
 SOURCES += \

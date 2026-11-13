@@ -235,11 +235,11 @@ Job build(const QString &markdown, const Options &options, const ImageResolver &
     if (font.pointSizeF() <= 0) font.setPointSizeF(11);
     job.sections.push_back(section(options.pageLayout, font));
     auto &doc = *job.sections.front().document;
-    QStringList quoteMarkers;
-    const QString prepared = ListPreview::readQuoteBreaks(markdown, &quoteMarkers);
+    QStringList hardBreakMarkers;
+    const QString prepared = ListPreview::readHardBreaks(markdown, &hardBreakMarkers);
     const auto dialect = QTextDocument::MarkdownFeatures(QTextDocument::MarkdownDialectGitHub | QTextDocument::MarkdownNoHTML);
     doc.setMarkdown(prepared, dialect);
-    if (!ListPreview::restoreReadQuoteBreaks(doc, quoteMarkers)) doc.setMarkdown(markdown, dialect);
+    if (!ListPreview::restoreReadHardBreaks(doc, hardBreakMarkers)) doc.setMarkdown(markdown, dialect);
     QTextCursor all(&doc); all.select(QTextCursor::Document);
     QTextCharFormat ink; ink.setForeground(Qt::black); ink.setBackground(Qt::transparent); all.mergeCharFormat(ink);
 

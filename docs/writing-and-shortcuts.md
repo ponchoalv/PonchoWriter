@@ -4,15 +4,15 @@ This is the user guide for [PonchoWriter](https://github.com/ponchoalv/PonchoWri
 
 ## Files and windows
 
-Opening a file already owned by this app activates its existing window without reloading. A different file opens separately; the file picker no longer replaces or discards the originating draft. Cmd/Ctrl+N always opens a fresh untitled window. Save As cannot overwrite a file owned by another window. Recovery drafts retain independent slots and do not get consumed by New Window.
+Launching the app without a file opens a fresh untitled window, including from the macOS Dock/Finder. Recovered drafts remain separate. Simply switching back to the app does not create a window. Opening a file already owned by this app activates its existing window without reloading. A different file opens separately; the file picker no longer replaces or discards the originating draft. Cmd/Ctrl+N always opens a fresh untitled window. Save As cannot overwrite a file owned by another window. Recovery drafts retain independent slots and do not get consumed by New Window.
 
-On macOS, prefer `open -a "/path/to/ponchowriter.app" "/path/to/note.md"` rather than `-n` or `--args`. Windows/Linux executable launches forward file requests through the same local Qt broker. Quit older, un-routed copies before using this build. See the [cross-platform opening guide](opening-files-and-windows.md) for commands, failure/recovery behavior and test limits.
+On macOS, prefer `open -a "/path/to/ponchowriter.app" "/path/to/note.md"` rather than `-n` or `--args`. Windows/Linux executable launches forward file requests through the same local Qt broker. Quit older, un-routed copies before using this build. If forwarding fails, retry after closing old copies; do not delete recovery data or compatible lock files to force a second owner.
 
 An empty Edit document shows the decorative **# Start writing** hint even with the caret focused. Typing or IME preedit hides it; clearing/cancelling restores it. Read mode hides it. It is never inserted into Markdown or undo history.
 
 ## Printing and PDF
 
-**Cmd+P / Ctrl+P** opens **Print layout**, then the system print/PDF dialog. The default **Move wide tables to appendix** keeps long narrow tables inline with repeating headers, moves too-wide tables into landscape appendices and repeats column 1 across extra-wide column groups. Original staged/local images print without saving first. This uses a separate canonical Markdown snapshot, not the viewport or virtualized grid. Source/undo are unchanged; missing images require explicit placeholder confirmation. See [printing, limits and verification](printing.md). Native drivers/physical printers and Windows/Linux remain unverified; QtPDF output was checked independently.
+**Cmd+P / Ctrl+P** opens **Print layout**, then the system print/PDF dialog. The default **Move wide tables to appendix** keeps long narrow tables inline with repeating headers, moves too-wide tables into landscape appendices and repeats column 1 across extra-wide column groups. Original staged/local images print without saving first. This uses a separate canonical Markdown snapshot, not the viewport or virtualized grid. Source/undo are unchanged; missing images require explicit placeholder confirmation. Mermaid prints as source; page ranges apply to the complete job, including appendices. Native drivers/physical printers and Windows/Linux remain unverified; QtPDF output was checked independently.
 
 ## macOS key names
 
@@ -62,7 +62,19 @@ In **Edit**, ordinary clicking keeps editing. **Cmd-click on macOS / Ctrl-click 
 
 **Cmd/Ctrl+T** toggles inline code around the selection; **Cmd/Ctrl+Shift+T** toggles a fenced code block. Empty selections put the caret inside a new pair/block. Fences occupy separate lines, adding newlines around a mid-paragraph selection when needed. Longer backtick delimiters protect literal backticks in the body. Both are Edit-only, retain the body selection and use one canonical undo. Multiple unrelated spans/blocks are wrapped safely rather than having outer delimiters stripped.
 
-Typing `[` / `{` and straight quotes pairs them conservatively. Selections are surrounded; an existing closer is skipped; Backspace inside an empty pair deletes both. Word-interior apostrophes/escapes, paste and IME commit text are not automatically transformed. See [behavior, implementation and verification](mode-transitions-and-code-shortcuts.md).
+Typing `[` / `{` and straight quotes pairs them conservatively. Selections are surrounded; an existing closer is skipped; Backspace inside an empty pair deletes both. Word-interior apostrophes/escapes, paste and IME commit text are not automatically transformed.
+
+### Literal punctuation and backticks
+
+Outside code, a backslash escapes ASCII punctuation: `\*literal\*`, `\_name\_`, `\# not a heading`, and `\\` (one literal backslash). Letters and spaces are **not** backslash escapes. Use code for literal spacing rather than `\ `.
+
+Inside inline code, backslashes are literal. To include backticks, choose a longer matching delimiter run; for example:
+
+~~~markdown
+`` C-x ` ``
+~~~
+
+This renders as a code span containing **C-x followed by a backtick**. The one padding space at each end is removed. Closing runs must match the opening length exactly; single and double backticks are not interchangeable. Edit keeps the original code/escape syntax available, and switching to Read never rewrites the Markdown.
 
 ## Existing writing behavior
 
@@ -80,19 +92,19 @@ Typing `[` / `{` and straight quotes pairs them conservatively. Selections are s
 
 Use the upper-right **book/pencil** button or Cmd+Shift+M (Ctrl+Shift+M on Linux).
 
-**Edit** keeps ordinary Markdown text editable. Supported pipe tables appear as native editable grids: click a cell, use Tab/Shift+Tab, or choose row/column actions from **⋯**, including left/center/right alignment of the current column. Drag a rectangular cell selection, type a value and Enter/Tab to fill all selected cells with that value (one undo); Backspace/Delete with grid focus clears it. IME-first input uses the same native editor, and stale source revisions invalidate rectangle coordinates safely. Cells expand as you type and hide their rendered label while being edited. **Source** reveals the original pipe Markdown; **Grid** or moving outside returns to the grid. Standalone local image paragraphs remain native visual blocks: click to reveal their source and move away to render them again. See [table editing, draft recovery and horizontal scrolling](tables-and-horizontal-overflow.md). Selections crossing a block reveal source rather than copying an opaque picture. Standalone `---` separators (at the start or after a blank line) also render as full-width rules while inactive; clicking/navigating onto the line or selecting across it reveals the original Markdown. Code/HTML literals and Setext heading underlines are not converted into rules. Headings and existing inline emphasis retain caret-aware markers.
+**Edit** keeps ordinary Markdown text editable. Supported pipe tables appear as native editable grids: click a cell, use Tab/Shift+Tab, or choose row/column actions from **⋯**, including left/center/right alignment of the current column. Drag a rectangular cell selection, type a value and Enter/Tab to fill all selected cells with that value (one undo); Backspace/Delete with grid focus clears it. IME-first input uses the same native editor, and stale source revisions invalidate rectangle coordinates safely. Cells expand as you type and hide their rendered label while being edited. **Source** reveals the original pipe Markdown; **Grid** or moving outside returns to the grid. Standalone local image paragraphs remain native visual blocks: click to reveal their source and move away to render them again. Selections crossing a block reveal source rather than copying an opaque picture. Standalone `---` separators (at the start or after a blank line) also render as full-width rules while inactive; clicking/navigating onto the line or selecting across it reveals the original Markdown. Code/HTML literals and Setext heading underlines are not converted into rules. Headings and existing inline emphasis retain caret-aware markers.
 
-Ordinary explicit blockquotes hide `>` while inactive; click anywhere in that paragraph to reveal its exact source prefix (no replacement fringe). Quote prose is justified in both modes, and Read preserves consecutive explicit quote-prose line breaks without adding a paragraph gap per line. Selection/search reveal markers too; styling never changes saved Markdown or undo. Code/HTML/list/table/ambiguous quote contexts conservatively retain fallback. This is automatic quote styling, not a global justification command. See [blockquote behavior and verification](blockquotes.md).
+Ordinary explicit blockquotes hide `>` while inactive; click anywhere in that paragraph to reveal its exact source prefix (no replacement fringe). Quote prose is justified in both modes, and Read follows standard Markdown line breaks in quotes, just as in ordinary prose. Selection/search reveal markers too; styling never changes saved Markdown or undo. Code/HTML/list/table/ambiguous quote contexts conservatively retain fallback. This is automatic quote styling, not a global justification command.
 
 Ordinary ordered/unordered lists now keep native hanging indentation in Edit, including wrapped lines and supported nested/continuation paragraphs. Inactive prefixes show bullets or automatic numbering; placing the caret in the prefix (or selecting/searching across it) reveals the exact source marker. The body column stays fixed even while editing that marker. This is view-only paragraph spacing and passive marker decoration: text, source positions and undo are unchanged. Ambiguous/tab-prefixed, quoted, code, HTML and table contexts conservatively retain source rather than pretending to be a complete Markdown parser; task checkboxes are not newly rendered.
 
 Body paragraphs use softer, theme-aware contrast while headings retain the stronger theme foreground. Text stays regular-weight unless Markdown calls for emphasis; links and selections keep their own colors rather than being faded with the whole editor.
 
-**Read** renders supported Markdown without an editing caret. Switching back with the book/pencil button or shortcut preserves the reading viewport and places a new caret near its center, instead of returning to the previous editing caret. Paragraphs and headings retain Edit's blank-line breathing room; wrapped lines, code lines and tight list items stay compact. Links use the same theme accent, and bold, italic and code backgrounds match Edit. Links are clickable. This uses Qt's Markdown/HTML subset, not a web browser: arbitrary web CSS/layout is not supported. Remote images are deliberately not fetched. Unsupported or unavailable visual blocks remain usable source; rendering is never a Markdown conversion on save. One canonical source document owns saving, search, formatting and undo.
+**Read** renders supported Markdown without an editing caret. Switching back with the book/pencil button or shortcut preserves the reading viewport and places a new caret near its center, instead of returning to the previous editing caret. A single source newline joins the surrounding prose; a blank line starts a new paragraph. End a prose line with a backslash or two spaces for an explicit line break without a paragraph gap. Paragraphs and headings retain Edit's blank-line breathing room; wrapped lines, code lines and tight list items stay compact. Links use the same theme accent, and bold, italic and code backgrounds match Edit. Links are clickable. This uses Qt's Markdown/HTML subset, not a web browser: arbitrary web CSS/layout is not supported. Remote images are deliberately not fetched. Unsupported or unavailable visual blocks remain usable source; rendering is never a Markdown conversion on save. One canonical source document owns saving, search, formatting and undo.
 
-Edit now retains its native document during ordinary typing, updates affected parser/style regions and patches only changed visual objects. Decorations and native glyph rendering are viewport-aware for long documents. Source undo, save format and IME safeguards remain; global operations and Read import can still take document-sized work. See the [incremental editing guide and measured 10,000-line result](incremental-native-editing.md), not a blanket constant-latency promise.
+Edit now retains its native document during ordinary typing, updates affected parser/style regions and patches only changed visual objects. Decorations and native glyph rendering are viewport-aware for long documents. Source undo, save format and IME safeguards remain; global operations and Read import can still take document-sized work. This is not a blanket constant-latency promise.
 
-Mode switches now retain the native Edit document/highlighter and reuse unchanged Read content. First Read after an edit still performs conversion. An independent viewport-safe caret avoids Qt's offscreen-cursor visibility latch without disabling long-document rendering optimization. See the [mode-switch measurement and limits](mode-transitions-and-code-shortcuts.md).
+Mode switches now retain the native Edit document/highlighter and reuse unchanged Read content. First Read after an edit still performs conversion. An independent viewport-safe caret avoids Qt's offscreen-cursor visibility latch without disabling long-document rendering optimization.
 
 Try [preview-example.md](preview-example.md) for tables, images, Mermaid and fallback cases.
 
@@ -120,7 +132,7 @@ Fenced code now sits on **one continuous full-column panel**, including empty an
 
 Hover over a fenced-code panel in either mode to show **Copy** at its top right. It copies only the native code body as plain text through Qt's clipboard: no opening/closing fences or language tag, and no dependence on the current selection. Read mode also shows the first language token to the left of Copy; untagged blocks say `text`. Unknown language tags remain visible. A reserved header keeps these controls off the code; clicking Copy retains editor focus and selection.
 
-Read validates its source/import alignment before baking colors into HTML; complex parser disagreements fall back to plain code rather than coloring the wrong text. See the [syntax guide](syntax-highlighting.md), [example document](code-highlighting-example.md), and [dependency/license status](../third_party/ksyntaxhighlighting/README.md). Highlighting needs no Node/browser/runtime download.
+Read validates its source/import alignment before baking colors into HTML; complex parser disagreements fall back to plain code rather than coloring the wrong text. See the [example document](code-highlighting-example.md) and [dependency/license status](../third_party/ksyntaxhighlighting/README.md). Highlighting needs no Node/browser/runtime download.
 
 ## Paste screenshots without saving them manually
 
@@ -168,7 +180,7 @@ selection. Read has no spelling squiggles.
 Sonnet Core uses NSSpellChecker on macOS, ISpellChecker on Windows and installed
 Hunspell dictionaries on Linux. Code fences/inline code, Mermaid, URLs and image
 paths are excluded. Rendered objects are never underlined. See the
-[spelling guide](spellchecking.md) and [example](spellchecking-example.md).
+[spelling example](spellchecking-example.md).
 Windows/Linux runtime verification remains pending; macOS uses its installed
 system service, with no dictionary download.
 
@@ -183,28 +195,12 @@ command -v mmdc
 
 Launching from Finder may give a different PATH than your shell. Restart the app after changing renderer availability. PonchoWriter does **not** install or download the renderer. Mermaid CLI normally needs its own Node/Puppeteer/Chromium setup: no embedded WebEngine does not mean no external browser runtime.
 
-Rendering uses an external CLI on macOS/Linux and Windows. Windows resolves standard npm installs to direct Node invocation and contains the process tree in a kill-on-close Job Object; native Windows validation is pending (see [setup/checklist](windows-build.md)). Missing tools or failed containment keep Mermaid source. Document-provided configuration, HTML labels, click actions, styling directives, encoded escapes and remote-resource syntax are rejected by the constrained renderer. This conservative syntax filter is not an OS/browser sandbox; do not treat an external renderer as a general untrusted-code execution boundary. Missing CLI, invalid/incomplete/unsupported syntax and render failures leave source usable. There is no drag-node editor, whiteboard or arbitrary Mermaid graphical round-trip support.
+Rendering uses an external CLI on macOS/Linux and Windows. Windows resolves standard npm installs to direct Node invocation and contains the process tree in a kill-on-close Job Object; native Windows validation is pending (see [setup/checklist](install.md#windows)). Missing tools or failed containment keep Mermaid source. Document-provided configuration, HTML labels, click actions, styling directives, encoded escapes and remote-resource syntax are rejected by the constrained renderer. This conservative syntax filter is not an OS/browser sandbox; do not treat an external renderer as a general untrusted-code execution boundary. Missing CLI, invalid/incomplete/unsupported syntax and render failures leave source usable. There is no drag-node editor, whiteboard or arbitrary Mermaid graphical round-trip support.
 
-## Build on macOS
+## Limits and upgrades
 
-Install **Qt 6.7 or newer** and a C++17 compiler; this development checkout used Homebrew Qt 6.12.0 and Apple's command-line tools. See the [step-by-step installation guide](install.md) for Windows, macOS and Linux.
+Oversized or unsupported tables retain source rather than risking unbounded grid allocation. The grid is limited to 50,000 cells, 1,024 columns, 4 Mi UTF-16 units / 8 MiB UTF-8 per table and 65,536 units per cell. Unresolved cell drafts block Save/close; copy or explicitly discard them rather than assuming they were committed.
 
-```sh
-./bin/build
-./bin/test
-open build/ponchowriter.app
-```
+Quit older copies before upgrading. Existing drafts, attachments, settings and compatible instance locks may still use legacy application-data locations: retain them, and never delete them as part of build cleanup. Theme/font availability depends on the host desktop.
 
-The macOS bundle includes an original multi-resolution PonchoWriter journal/P `.icns` icon. No icon-generation tool is required for a normal build.
-
-Open a file directly:
-
-```sh
-./build/ponchowriter.app/Contents/MacOS/ponchowriter /absolute/path/notes.md
-```
-
-On Linux, the executable is `./build/ponchowriter`. `--help` and `--version` work without opening a window. Native macOS file dialogs replace the Linux desktop portal; do not install a portal on macOS just for this app.
-
-## Design reference
-
-See [Native live preview: design and boundaries](live-preview-design.md) for source/presentation separation, attachment safety and Mermaid dependency tradeoffs.
+For dependencies, building and deployment use the single [build guide](install.md).

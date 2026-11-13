@@ -769,8 +769,9 @@ private slots:
             QVERIFY(QMetaObject::invokeMethod(source, "undo"));
             QTRY_COMPARE(source->property("text").toString(), text);
             QVERIFY(QMetaObject::invokeMethod(root.data(), "toggleReadMode")); QTRY_VERIFY(root->property("readMode").toBool());
-            QTRY_VERIFY(document()->toRawText().contains(QString(QChar::LineSeparator) + "second line"));
-            QVERIFY(!document()->toPlainText().contains("PWQUOTE"));
+            QTRY_VERIFY(document()->toRawText().contains(QString(" second line")));
+            QVERIFY(!document()->toRawText().contains(QChar::LineSeparator));
+            QVERIFY(!document()->toPlainText().contains("PWHARDBREAK"));
             QCOMPARE(source->property("text").toString(), text);
             QVERIFY(QMetaObject::invokeMethod(root.data(), "toggleReadMode")); QTRY_VERIFY(!root->property("readMode").toBool());
             QTRY_COMPARE(document()->toPlainText(), text);
@@ -1390,6 +1391,109 @@ private slots:
         QTRY_COMPARE(requests.count(), 2);
         QTest::qWait(450);
         QCOMPARE(idle.count(), 1);
+    }
+
+    void macReopenAppleEventsRequestBlankWindows() {
+#ifdef Q_OS_MACOS
+        if (QGuiApplication::platformName() != "cocoa") QSKIP("Requires native Cocoa Apple events");
+        QTest::qWait(1); // Finish AppKit launch before installing the handler.
+        FileOpenRequests events(qApp);
+        events.activate(false);
+        installMacReopenHandler(&events);
+        QSignalSpy requests(&events, &FileOpenRequests::filesRequested);
+        extern bool dispatchMacReopenForTest();
+        QVERIFY(dispatchMacReopenForTest());
+        QTRY_COMPARE(requests.count(), 1);
+        QVERIFY(requests.first()[0].toStringList().isEmpty());
+        QVERIFY(dispatchMacReopenForTest());
+        QTRY_COMPARE(requests.count(), 2);
+#else
+        QSKIP("macOS-only Apple events");
+#endif
+    }
+
+    void forwardsReopensAsDistinctBlankRequestsButIgnoresActivation() {
+        QObject application;
+        FileOpenRequests events(&application);
+        QSignalSpy requests(&events, &FileOpenRequests::filesRequested);
+        events.requestReopen(); events.requestReopen();
+        QCOMPARE(requests.count(), 0);
+        events.activate(false);
+        QTRY_COMPARE(requests.count(), 2);
+        QVERIFY(requests[0][0].toStringList().isEmpty());
+        QVERIFY(requests[1][0].toStringList().isEmpty());
+        QEvent activation(QEvent::ApplicationActivate);
+        QCoreApplication::sendEvent(&application, &activation);
+        QCoreApplication::processEvents();
+        QCOMPARE(requests.count(), 2);
+        const QString path = QDir::temp().absoluteFilePath("native file request.md");
+        QFileOpenEvent file(path);
+        QCoreApplication::sendEvent(&application, &file);
+        QTRY_COMPARE(requests.count(), 3);
+        QCOMPARE(requests.last()[0].toStringList(), QStringList{path});
+        events.requestReopen();
+        QTRY_COMPARE(requests.count(), 4);
+        QVERIFY(requests.last()[0].toStringList().isEmpty());
+    }
+
+    void emptyLaunchesAlwaysCreateBlankWindowsAndKeepFileOwners() {
+        const QString oldName = QCoreApplication::applicationName();
+        QCoreApplication::setApplicationName(oldName + "-routing-blank");
+        const QString state = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+        const auto cleanup = qScopeGuard([&] { QDir(state).removeRecursively(); QCoreApplication::setApplicationName(oldName); });
+        QTemporaryDir directory; QVERIFY(directory.isValid());
+        const QString path = directory.filePath("saved.md");
+        { QFile file(path); QVERIFY(file.open(QIODevice::WriteOnly)); file.write("saved source"); }
+        WindowManager manager;
+        manager.start({path});
+        QCOMPARE(manager.windows().size(), 1);
+        auto *owner = manager.windows().first();
+        auto *saved = manager.backendFor(owner);
+        QVERIFY(!saved->modified());
+        for (int count = 2; count <= 3; ++count) {
+            manager.openFiles({});
+            QCOMPARE(manager.windows().size(), count);
+            auto *blank = manager.backendFor(manager.windows().last());
+            QVERIFY(blank); QVERIFY(blank->fileUrl().isEmpty()); QVERIFY(!blank->modified());
+            QCOMPARE(blank->m_document->toPlainText(), QString());
+        }
+        auto *source = owner->findChild<QObject *>("sourceEditor");
+        QVERIFY(source);
+        source->setProperty("text", "unsaved source");
+        QTRY_VERIFY(saved->modified());
+        manager.openFiles({});
+        QCOMPARE(manager.windows().size(), 4);
+        auto *blank = manager.backendFor(manager.windows().last());
+        QVERIFY(blank->fileUrl().isEmpty()); QVERIFY(!blank->modified());
+        QCOMPARE(blank->m_document->toPlainText(), QString());
+        manager.openFiles({path});
+        QCOMPARE(manager.windows().size(), 4);
+        QCOMPARE(manager.openFile(QUrl::fromLocalFile(path)), owner);
+        QCOMPARE(saved->m_document->toPlainText(), QString("unsaved source"));
+        QVERIFY(saved->modified());
+        QFile file(path); QVERIFY(file.open(QIODevice::ReadOnly));
+        QCOMPARE(file.readAll(), QByteArray("saved source"));
+    }
+
+    void emptyStartupKeepsABlankWindowAlongsideRecoveredDrafts() {
+        const QString oldName = QCoreApplication::applicationName();
+        QCoreApplication::setApplicationName(oldName + "-routing-blank-recovery");
+        const QString state = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+        const auto cleanup = qScopeGuard([&] { QDir(state).removeRecursively(); QCoreApplication::setApplicationName(oldName); });
+        QVERIFY(QDir().mkpath(state));
+        QFile snapshot(QDir(state).filePath("recovery-0.json"));
+        QVERIFY(snapshot.open(QIODevice::WriteOnly));
+        snapshot.write(QJsonDocument(QJsonObject{{"fileUrl", ""}, {"text", "recovered draft"}}).toJson());
+        snapshot.close();
+        WindowManager manager;
+        manager.start({});
+        QCOMPARE(manager.windows().size(), 2);
+        auto *recovered = manager.backendFor(manager.windows().first());
+        QCOMPARE(recovered->m_document->toPlainText(), QString("recovered draft"));
+        QVERIFY(recovered->modified());
+        auto *blank = manager.backendFor(manager.windows().last());
+        QVERIFY(blank->fileUrl().isEmpty()); QVERIFY(!blank->modified());
+        QCOMPARE(blank->m_document->toPlainText(), QString());
     }
 
     void routesFilesWithoutReplacingDraftsAndReleasesAcceptedWindows() {
@@ -3128,6 +3232,66 @@ private slots:
             QStringLiteral(R"(`code\` *italic*)"));
         QCOMPARE(afterCode.size(), 1);
         QCOMPARE(afterCode.constFirst().kind, MarkdownHighlighter::InlineKind::Italic);
+    }
+
+    void matchesExactBacktickRuns_data() {
+        QTest::addColumn<QString>("text");
+        QTest::addColumn<QString>("expected");
+        QTest::newRow("shortcut") << QStringLiteral("`` C-x ` ``") << QStringLiteral("`` C-x ` ``");
+        QTest::newRow("three-ticks") << QStringLiteral("```a `` b ` c```") << QStringLiteral("```a `` b ` c```");
+        QTest::newRow("mismatched") << QStringLiteral("``a`") << QString();
+        QTest::newRow("backslash-does-not-split-closer") << QStringLiteral(R"(`C-x \``)") << QString();
+        QTest::newRow("no-partial-run") << QStringLiteral("`a``") << QString();
+        QTest::newRow("unmatched-then-valid") << QStringLiteral("before ``` unmatched ``*literal*``") << QStringLiteral("``*literal*``");
+        QTest::newRow("escaped-opener") << QStringLiteral(R"(\`*italic*\`)") << QString();
+        QTest::newRow("escaped-first-of-two") << QStringLiteral(R"(\``*literal*`)") << QStringLiteral("`*literal*`");
+        QTest::newRow("literal-backslash-before-closer") << QStringLiteral(R"(``code\``)") << QStringLiteral(R"(``code\``)");
+        QTest::newRow("even-slashes") << QStringLiteral(R"(\\``*literal*``)") << QStringLiteral("``*literal*``");
+        QTest::newRow("space-only") << QStringLiteral("`` ``") << QStringLiteral("`` ``");
+    }
+
+    void matchesExactBacktickRuns() {
+        QFETCH(QString, text);
+        QFETCH(QString, expected);
+        const auto spans = MarkdownHighlighter::codeSpans(text);
+        QCOMPARE(spans.size(), expected.isEmpty() ? 0 : 1);
+        if (!expected.isEmpty()) {
+            QCOMPARE(text.mid(spans.first().start, spans.first().length), expected);
+            QCOMPARE(spans.first().start, text.indexOf(expected));
+        }
+    }
+
+    void keepsLongDelimitedCodeLiteralAndSeparate() {
+        QVERIFY(MarkdownHighlighter::inlineMarkup(
+            QStringLiteral("``*literal* _literal_ [literal](url) ` tick``")).isEmpty());
+        const QString first = QStringLiteral("``one ` tick``");
+        const QString second = QStringLiteral("```two `` ticks```");
+        const QString text = first + QStringLiteral(" and ") + second;
+        const auto spans = MarkdownHighlighter::codeSpans(text);
+        QCOMPARE(spans.size(), 2);
+        QCOMPARE(spans.at(0).start, 0);
+        QCOMPARE(spans.at(0).length, first.size());
+        QCOMPARE(spans.at(1).start, first.size() + 5);
+        QCOMPARE(spans.at(1).length, second.size());
+    }
+
+    void rendersMarkdownEscapesAndLiteralBackticks() {
+        // CommonMark permits escapes for all ASCII punctuation, not spaces or letters.
+        for (ushort ch = 33; ch <= 126; ++ch) {
+            if (QChar(ch).isLetterOrNumber())
+                continue;
+            QTextDocument rendered;
+            rendered.setMarkdown(QString(QLatin1Char('\\')) + QChar(ch));
+            QCOMPARE(rendered.toPlainText(), QString(QChar(ch)));
+        }
+        QTextDocument rendered;
+        rendered.setMarkdown(QStringLiteral("`` C-x ` ``"));
+        QCOMPARE(rendered.toPlainText(), QStringLiteral("C-x `"));
+        rendered.setMarkdown(QStringLiteral(R"(`C-x \``)"));
+        // The final two adjacent ticks form a run of two, not a single closer.
+        QCOMPARE(rendered.toPlainText(), QStringLiteral("`C-x ``"));
+        rendered.setMarkdown(QStringLiteral(R"(\a and a\ b)"));
+        QCOMPARE(rendered.toPlainText(), QStringLiteral(R"(\a and a\ b)"));
     }
 
     void keepsEnclosedCodeStyling_data() {

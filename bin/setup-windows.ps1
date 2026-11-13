@@ -90,7 +90,7 @@ try {
     }
     if ($Installer) {
         Ensure-Package 'JRSoftware.InnoSetup' {
-            $candidates = @("${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe", "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe")
+            $candidates = @("${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe", "$env:ProgramFiles\Inno Setup 6\ISCC.exe", "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe")
             if (Has-Command 'ISCC.exe') { $candidates = @((Get-Command 'ISCC.exe').Source) + $candidates }
             foreach ($candidate in $candidates) {
                 if (Test-Path -LiteralPath $candidate) {

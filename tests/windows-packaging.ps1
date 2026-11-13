@@ -6,6 +6,7 @@ $temp = Join-Path ([IO.Path]::GetTempPath()) ('omawrite packaging ' + [guid]::Ne
 $engine = (Get-Process -Id $PID).Path
 $previousStamp = $env:OMAWRITE_STAMP
 $previousSignature = $env:OMAWRITE_SIGNATURE
+$previousIscc = $env:ISCC
 try {
     foreach ($file in @('bin/setup-windows.ps1', 'bin/package-windows.ps1', 'tests/windows-packaging.ps1')) {
         $tokens = $null; $errors = $null
@@ -40,6 +41,7 @@ try {
         Add-Type -OutputAssembly $helper -OutputType ConsoleApplication -TypeDefinition @'
 using System;
 using System.IO;
+[assembly: System.Reflection.AssemblyFileVersion("6.3.0.0")]
 public static class PackagingHelper {
     public static int Main(string[] args) {
         if (args.Length == 1 && args[0] == "--version") {
@@ -57,6 +59,35 @@ public static class PackagingHelper {
     }
 }
 '@
+        # Run the actual CMD discovery routine, not a PowerShell reimplementation.
+        $findIscc = [regex]::Match($batch, '(?ms)^:findIscc\r?\n.*?(?=^:installer\r?$)').Value
+        if (!$findIscc) { throw 'Missing compiler discovery routine' }
+        $probe = Join-Path $temp 'find-iscc.cmd'
+        $body = "@echo off`nsetlocal EnableExtensions DisableDelayedExpansion`nset ARCH=x64`ncall :findIscc`nexit /b %errorlevel%`n" + $findIscc
+        $body.Replace("`r`n", "`n").Replace("`n", "`r`n") | Set-Content -LiteralPath $probe -Encoding ASCII
+        # A malformed IF must never dispatch our real setup script by accident.
+        @('@echo off', 'echo unexpected>setup-was-called.txt', 'exit /b 73') |
+            Set-Content -LiteralPath (Join-Path $temp 'setup.bat') -Encoding ASCII
+        $compilerDir = Join-Path $temp 'Inno Setup 6'
+        New-Item -ItemType Directory -Path $compilerDir | Out-Null
+        $compiler = Join-Path $compilerDir 'ISCC.exe'
+        Copy-Item -LiteralPath $helper -Destination $compiler
+        Push-Location $temp
+        try {
+            foreach ($value in @($compiler, ('"' + $compiler + '"'))) {
+                $env:ISCC = $value
+                & $env:ComSpec /d /c $probe
+                if ($LASTEXITCODE -ne 0) { throw "CMD rejected compiler path: $value" }
+            }
+            $env:ISCC = '"' + (Join-Path $temp 'Missing Inno Setup 6\ISCC.exe') + '"'
+            $ErrorActionPreference = 'Continue'
+            & $env:ComSpec /d /c $probe >$null 2>$null
+            $code = $LASTEXITCODE
+            $ErrorActionPreference = 'Stop'
+            if ($code -eq 0) { throw 'Missing compiler was not refused' }
+            if (Test-Path -LiteralPath 'setup-was-called.txt') { throw 'Compiler discovery accidentally executed setup.bat' }
+            Write-Host 'PASS: native CMD compiler discovery accepts quoted/unquoted paths and safely rejects missing compilers.'
+        } finally { Pop-Location }
     } else {
         # Portable mock permits local validation on macOS/Linux without Windows tools.
         @'
@@ -99,6 +130,7 @@ else:
 } finally {
     [Environment]::SetEnvironmentVariable('OMAWRITE_STAMP', $previousStamp, 'Process')
     [Environment]::SetEnvironmentVariable('OMAWRITE_SIGNATURE', $previousSignature, 'Process')
+    [Environment]::SetEnvironmentVariable('ISCC', $previousIscc, 'Process')
     Remove-Item Env:OMAWRITE_TEST_RUNTIME -ErrorAction SilentlyContinue
     if (Test-Path -LiteralPath $temp) { Remove-Item -LiteralPath $temp -Recurse -Force }
 }

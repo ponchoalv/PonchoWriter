@@ -1,9 +1,11 @@
 # Run with powershell -NoProfile -File tests/windows-packaging.ps1 (or pwsh).
-# Uses fake app/compiler helpers; does NOT compile or exercise a real installer.
+# Uses fake app/compiler helpers. On hosted Windows, also compiles the actual
+# installer script with real Inno for both kits; NEVER executes an installer.
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent
 $temp = Join-Path ([IO.Path]::GetTempPath()) ('omawrite packaging ' + [guid]::NewGuid())
 $engine = (Get-Process -Id $PID).Path
+$real = $null
 $previousStamp = $env:OMAWRITE_STAMP
 $previousSignature = $env:OMAWRITE_SIGNATURE
 $previousIscc = $env:ISCC
@@ -228,6 +230,17 @@ public static class GuiVersionHelper {
         $ErrorActionPreference = 'Stop'
         if ($code -eq 0) { throw 'Existing installer was not refused' }
         Remove-Item -LiteralPath $artifact
+        if ($real) {
+            # Compile our actual .iss, not just the capability probe. CLI /D
+            # definitions are strings; fake compilers cannot detect type errors.
+            & $engine -NoProfile -File $packager -DistDir "$temp/dist" -Iscc $real -Kit $kit
+            if ($LASTEXITCODE -ne 0) { throw "Real Inno compilation failed for $kit" }
+            if (!(Test-Path -LiteralPath $artifact) -or (Get-Item -LiteralPath $artifact).Length -eq 0) {
+                throw "Real Inno did not produce the expected $kit installer"
+            }
+            Write-Host "PASS: actual windows.iss compiled with real Inno for $kit; installer not executed."
+            Remove-Item -LiteralPath $artifact
+        }
     }
     $env:OMAWRITE_TEST_VERSION_FAILURE = '1'
     $ErrorActionPreference = 'Continue'

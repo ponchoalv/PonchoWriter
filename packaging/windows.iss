@@ -37,7 +37,8 @@ var
   Installed: Cardinal;
 begin
   Result := True;
-#if NeedsVCRuntime == 1
+// /D preprocessor definitions are strings, including /DNeedsVCRuntime=1.
+#if NeedsVCRuntime == "1"
   Result := RegQueryDWordValue(HKLM64, 'SOFTWARE\Microsoft\VisualStudio\14.0\VC\Runtimes\x64', 'Installed', Installed) and (Installed = 1);
   if not Result then
     MsgBox('Install the latest Microsoft Visual C++ 2015-2022 x64 Redistributable, then run this installer again:' + #13#10 + 'https://aka.ms/vs/17/release/vc_redist.x64.exe', mbError, MB_OK);

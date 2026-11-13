@@ -63,9 +63,70 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Windows PowerShell 5.1, not pwsh. Fake packaging helpers plus a syntax-
-      # only probe of the preinstalled real compiler; no installer execution.
-      # This is not a substitute for native application/installation tests.
+      # Windows PowerShell 5.1, not pwsh. Compile the actual installer script
+      # for both compiler kits using real Inno and a fake GUI app payload.
+      # No installer execution; not a substitute for installation tests.
       - name: Check PowerShell scripts, upgrade guards and packaging
         shell: powershell
         run: .\tests\windows-packaging.ps1
+
+  windows-editor:
+    name: Windows Qt 6.8.3 editor regressions
+    runs-on: windows-2022
+    timeout-minutes: 25
+    env:
+      CMAKE_BUILD_PARALLEL_LEVEL: 2
+      QT_QUICK_BACKEND: software
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ilammy/msvc-dev-cmd@v1
+      - uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.8.3'
+          arch: win64_msvc2022_64
+          cache: true
+
+      - name: Build native editor tests with the pinned dependencies
+        shell: pwsh
+        run: |
+          cmake -S dependencies -B .deps/windows-ci -G Ninja "-DCMAKE_PREFIX_PATH=$env:QT_ROOT_DIR" -DCMAKE_BUILD_TYPE=Release
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          cmake --build .deps/windows-ci
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          cmake -S . -B build/windows-ci -G Ninja "-DCMAKE_PREFIX_PATH=$env:QT_ROOT_DIR" "-DWRITE_DEPENDENCY_PREFIX=$PWD/.deps/windows-ci/install" -DCMAKE_BUILD_TYPE=Release
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          cmake --build build/windows-ci --target omawrite_editor_tests
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+
+      # Native Windows platform and real clipboard/shortcuts, not offscreen.
+      # Include the preceding clipboard fixtures to expose cross-test state.
+      - name: Test Windows clipboard, mode shortcuts and theme paths
+        shell: pwsh
+        run: |
+          & build/windows-ci/omawrite_editor_tests.exe `
+            codePanelHoverCopyAndReadLanguageUseQtClipboard `
+            codePanelsHaveNativePaddingInBothModesAtDifferentZooms `
+            quotePreviewPhysicalClickImeAndReadBreaks `
+            horizontalRulesRevealMarkdownOnPhysicalClick `
+            codeBlockPanelsAreContinuousDecorationsInBothThemes `
+            resumesEditingAtTheReadingViewport `
+            pastesScreenshotThroughVisibleEditorAndPreservesSourceInReadMode `
+            themePathsSupportUnicodeWithoutChangingHome `
+            takesTheCodePanelFromTheTheme `
+            reportsThemeChangesOnlyWhenTheyHappen `
+            loadsCurrentOmarchyTheme `
+            fallsBackForSelectionColors `
+            keepsDefaultsForColorsItCannotParse `
+            takesItsDefaultsFromTheModeTheThemeAsksFor `
+            -o build/windows-ci/editor-tests.txt,txt -o -,txt
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+
+      - name: Preserve Windows editor diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-editor-logs
+          path: |
+            build/windows-ci/editor-tests.txt
+            build/windows-ci/CMakeFiles/CMakeConfigureLog.yaml
+          if-no-files-found: ignore

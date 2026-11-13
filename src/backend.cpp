@@ -153,6 +153,7 @@ Backend::Backend(QObject *parent, bool recoverDraft)
 
 Backend::Backend(std::unique_ptr<SpellingDictionary> dictionary, QObject *parent, bool recoverDraft)
     : QObject(parent), m_recoverDraft(recoverDraft) {
+    m_themeHome = QDir::homePath();
     connect(QGuiApplication::clipboard(), &QClipboard::dataChanged, this, &Backend::clipboardChanged);
     m_spelling = dictionary ? new SpellingController(std::move(dictionary), this)
                             : new SpellingController(this);
@@ -1596,7 +1597,7 @@ QString Backend::tomlValue(const QString &text) {
 }
 
 void Backend::loadOmarchyTheme() {
-    const QString colorsPath = QDir::homePath()
+    const QString colorsPath = m_themeHome
         + QStringLiteral("/.local/state/omarchy/current/theme/colors.toml");
     QString themeMode;
     QString background;
@@ -1715,7 +1716,7 @@ void Backend::watchOmarchyTheme() {
     if (!watched.isEmpty())
         m_themeWatcher.removePaths(watched);
 
-    const QString currentDir = QDir::homePath()
+    const QString currentDir = m_themeHome
         + QStringLiteral("/.local/state/omarchy/current");
     const QString themeDir = currentDir + QStringLiteral("/theme");
     const QString colorsPath = themeDir + QStringLiteral("/colors.toml");

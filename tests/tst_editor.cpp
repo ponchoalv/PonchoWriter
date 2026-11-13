@@ -87,11 +87,21 @@ public slots:
 class OmawriteEditorTest : public QObject {
     Q_OBJECT
 
+    static void activateInputWindow(QQuickWindow *window) {
+        // QML shortcuts use the native focus window, not just item.activeFocus.
+        // Windows need not activate a newly created/re-exposed fixture window.
+        if (QGuiApplication::platformName() == QStringLiteral("windows")) {
+            window->requestActivate();
+            QVERIFY(QTest::qWaitForWindowActive(window));
+        }
+    }
+
     static void editorKeyClick(QQuickWindow *window, Qt::Key key,
                                Qt::KeyboardModifiers modifiers = Qt::NoModifier) {
         // Tests set the canonical source directly. Let its disposable view
         // catch up, then send physical input to the actual visible editor.
         QCoreApplication::processEvents();
+        activateInputWindow(window);
         QObject *view = window->findChild<QObject *>(QStringLiteral("previewEditor"));
         QVERIFY(view);
         QVERIFY(QMetaObject::invokeMethod(view, "forceActiveFocus"));
@@ -872,6 +882,7 @@ private slots:
                 QCOMPARE(border->property("width").toReal(), 0.5);
                 if (QGuiApplication::platformName() != "offscreen") {
                     QVERIFY(QTest::qWaitForWindowExposed(window));
+                    activateInputWindow(window);
                     const auto fillIsRendered = [&] {
                         if (panels().size() != 1) return false;
                         const auto *panel = panels().first();
@@ -901,6 +912,7 @@ private slots:
                                 QTest::mouseClick(window, Qt::LeftButton, Qt::NoModifier,
                                     view->mapToScene(cursor.center() + QPointF(2, 0)).toPoint());
                                 QTest::qWait(30);
+                                QCOMPARE(source->property("text").toString(), text);
                                 QTRY_COMPARE(panels().size(), 1);
                                 QTRY_VERIFY(fillIsRendered());
                                 QVERIFY(stayedVisible); // No transient removal followed by recovery.
@@ -2253,7 +2265,7 @@ private slots:
             // separate focused tests cover the physical mode shortcut.
             if (!window->isActive() && QGuiApplication::platformName() == QLatin1String("cocoa"))
                 return QMetaObject::invokeMethod(window, "toggleReadMode");
-            QTest::keyClick(window, Qt::Key_M, Qt::ControlModifier | Qt::ShiftModifier);
+            editorKeyClick(window, Qt::Key_M, Qt::ControlModifier | Qt::ShiftModifier);
             return true;
         };
         QVERIFY(toggleMode());
@@ -3549,22 +3561,30 @@ private slots:
         QCOMPARE(document.firstBlock().layout()->formats().constFirst().format.fontPointSize(), 1.0);
     }
 
-    void themeHomeRedirectSupportsUnicodeAndRestoresEnvironment() {
+    void themePathsSupportUnicodeWithoutChangingHome() {
         QTemporaryDir directory; QVERIFY(directory.isValid());
         const QString path = directory.filePath(QStringLiteral("home-\u00e9-\u6f22"));
         QVERIFY(QDir().mkpath(path));
+        const QString osHome = QDir::homePath();
         const QString previousHome = qEnvironmentVariable("HOME");
         const bool hadHome = qEnvironmentVariableIsSet("HOME");
 #ifdef Q_OS_WIN
         const QString previousProfile = qEnvironmentVariable("USERPROFILE");
         const bool hadProfile = qEnvironmentVariableIsSet("USERPROFILE");
 #endif
-        {
-            ScopedHome redirect(path);
-            QVERIFY(redirect.ok);
-            QCOMPARE(QFileInfo(QDir::homePath()).canonicalFilePath(),
-                     QFileInfo(path).canonicalFilePath());
-        }
+        const QString themeDirectory = path + QStringLiteral("/.local/state/omarchy/current/theme");
+        QVERIFY(QDir().mkpath(themeDirectory));
+        const QString colorsPath = themeDirectory + QStringLiteral("/colors.toml");
+        writeFile(colorsPath, "mode = \"light\"\nbackground = \"#123456\"\n");
+        Backend backend;
+        useThemeHome(backend, path);
+        QCOMPARE(backend.themeBackground(), QStringLiteral("#123456"));
+        QVERIFY(!backend.darkMode());
+        QVERIFY(backend.m_themeWatcher.files().contains(colorsPath));
+        writeFile(colorsPath, "mode = \"dark\"\nbackground = \"#654321\"\n");
+        QTRY_COMPARE(backend.themeBackground(), QStringLiteral("#654321"));
+        QVERIFY(backend.darkMode());
+        QCOMPARE(QDir::homePath(), osHome);
         QCOMPARE(qEnvironmentVariable("HOME"), previousHome);
         QCOMPARE(qEnvironmentVariableIsSet("HOME"), hadHome);
 #ifdef Q_OS_WIN
@@ -3576,14 +3596,12 @@ private slots:
     void takesTheCodePanelFromTheTheme() {
         QTemporaryDir homeDirectory;
         QVERIFY(homeDirectory.isValid());
-        ScopedHome restoreHome(homeDirectory.path());
-        QVERIFY(restoreHome.ok);
-
         const QString themeDirectory = homeDirectory.path()
             + QStringLiteral("/.local/state/omarchy/current/theme");
         QVERIFY(QDir().mkpath(themeDirectory));
 
         Backend backend;
+        useThemeHome(backend, homeDirectory.path());
         const auto codePanelFor = [&themeDirectory, &backend](const QByteArray &palette) {
             QFile colorsFile(themeDirectory + QStringLiteral("/colors.toml"));
             if (!colorsFile.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text))
@@ -3729,6 +3747,7 @@ private slots:
         ScopedTheme theme("mode = \"dark\"\nbackground = \"#111111\"\n");
         QVERIFY(theme.ok);
         Backend backend;
+        useThemeHome(backend, theme.home.path());
         QSignalSpy colorsSpy(&backend, &Backend::themeColorsChanged);
         QSignalSpy modeSpy(&backend, &Backend::darkModeChanged);
 
@@ -3864,6 +3883,7 @@ private slots:
         QVERIFY(theme.ok);
 
         Backend backend;
+        useThemeHome(backend, theme.home.path());
         QCOMPARE(backend.themeBackground(), QStringLiteral("#fefefe"));
         QCOMPARE(backend.themeForeground(), QStringLiteral("#101010"));
         QCOMPARE(backend.themeAccent(), QStringLiteral("#112233"));
@@ -3914,9 +3934,6 @@ private slots:
 
         QTemporaryDir homeDirectory;
         QVERIFY(homeDirectory.isValid());
-        ScopedHome restoreHome(homeDirectory.path());
-        QVERIFY(restoreHome.ok);
-
         const QString themeDirectory = homeDirectory.path()
             + QStringLiteral("/.local/state/omarchy/current/theme");
         QVERIFY(QDir().mkpath(themeDirectory));
@@ -3927,6 +3944,7 @@ private slots:
         colorsFile.close();
 
         Backend backend;
+        useThemeHome(backend, homeDirectory.path());
         QCOMPARE(backend.themeSelection(), selection);
         QCOMPARE(backend.themeSelectionForeground(), selectionForeground);
     }
@@ -3956,6 +3974,7 @@ private slots:
         QVERIFY(theme.ok);
 
         Backend backend;
+        useThemeHome(backend, theme.home.path());
         QCOMPARE(backend.themeBackground(), QStringLiteral("#1a1b17"));
         QCOMPARE(backend.themeAccent(), QStringLiteral("#112233"));
         QCOMPARE(backend.themeSelection(), QStringLiteral("#445566"));
@@ -3971,6 +3990,7 @@ private slots:
         QVERIFY(theme.ok);
 
         Backend backend;
+        useThemeHome(backend, theme.home.path());
         QVERIFY(!backend.darkMode());
         QCOMPARE(backend.themeForeground(), QStringLiteral("#222324"));
     }
@@ -5721,60 +5741,25 @@ private:
         return formats;
     }
 
-    // QDir::homePath uses USERPROFILE on Windows, not just HOME. Preserve
-    // unset variables as well as their values, including on assertion failure.
-    struct ScopedHome {
-        static bool setHomeVariable(const char *name, const QString &value) {
-#ifdef Q_OS_WIN
-            // Keep both the CRT and OS environment Unicode-safe on Windows.
-            return _wputenv_s(QString::fromLatin1(name).toStdWString().c_str(),
-                              value.toStdWString().c_str()) == 0;
-#else
-            return qputenv(name, value.toUtf8());
-#endif
-        }
-        explicit ScopedHome(const QString &path) {
-            ok = setHomeVariable("HOME", path);
-#ifdef Q_OS_WIN
-            ok = setHomeVariable("USERPROFILE", path) && ok;
-#endif
-            ok = ok && QFileInfo(QDir::homePath()).canonicalFilePath()
-                == QFileInfo(path).canonicalFilePath();
-        }
-        ~ScopedHome() {
-            if (hadHome) setHomeVariable("HOME", originalHome);
-            else {
-#ifdef Q_OS_WIN
-                setHomeVariable("HOME", QString());
-#else
-                qunsetenv("HOME");
-#endif
-            }
-#ifdef Q_OS_WIN
-            setHomeVariable("USERPROFILE", hadProfile ? originalProfile : QString());
-#endif
-        }
-        QString originalHome = qEnvironmentVariable("HOME");
-        bool hadHome = qEnvironmentVariableIsSet("HOME");
-#ifdef Q_OS_WIN
-        QString originalProfile = qEnvironmentVariable("USERPROFILE");
-        bool hadProfile = qEnvironmentVariableIsSet("USERPROFILE");
-#endif
-        bool ok = false;
-    };
+    // Windows Qt resolves the OS account's profile before HOME/USERPROFILE.
+    // Redirect only our private theme path, never the process/user environment.
+    static void useThemeHome(Backend &backend, const QString &path) {
+        backend.m_themeHome = path;
+        backend.loadOmarchyTheme();
+        backend.watchOmarchyTheme();
+    }
 
-    // Points Qt's home at a scratch theme tree and restores it on the way out.
+    // Builds a scratch theme tree; each backend opts into it explicitly.
     struct ScopedTheme {
         explicit ScopedTheme(const QByteArray &palette) {
             const QString themeDirectory = home.path()
                 + QStringLiteral("/.local/state/omarchy/current/theme");
             QFile colorsFile(themeDirectory + QStringLiteral("/colors.toml"));
-            ok = home.isValid() && redirect.ok && QDir().mkpath(themeDirectory)
+            ok = home.isValid() && QDir().mkpath(themeDirectory)
                 && colorsFile.open(QIODevice::WriteOnly | QIODevice::Text)
                 && colorsFile.write(palette) == qint64(palette.size());
         }
         QTemporaryDir home;
-        ScopedHome redirect{home.path()};
         bool ok = false;
     };
 

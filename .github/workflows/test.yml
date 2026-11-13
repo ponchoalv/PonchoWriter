@@ -129,6 +129,9 @@ jobs:
         shell: pwsh
         env:
           QT_QPA_PLATFORM: offscreen
+          # Offscreen uses the generic font database, not Windows' native one.
+          # Qt no longer ships lib/fonts; supply the runner's installed fonts.
+          QT_QPA_FONTDIR: C:/Windows/Fonts
         run: |
           $global:LASTEXITCODE = 1
           & build/windows-ci/omawrite_editor_tests.exe -o build/windows-ci/editor-all-tests.txt,txt | Out-Host

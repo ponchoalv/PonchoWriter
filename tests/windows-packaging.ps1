@@ -7,8 +7,9 @@ $engine = (Get-Process -Id $PID).Path
 $previousStamp = $env:OMAWRITE_STAMP
 $previousSignature = $env:OMAWRITE_SIGNATURE
 $previousIscc = $env:ISCC
+$previousReject = $env:OMAWRITE_TEST_REJECT_PROBE
 try {
-    foreach ($file in @('bin/setup-windows.ps1', 'bin/package-windows.ps1', 'tests/windows-packaging.ps1')) {
+    foreach ($file in @('bin/setup-windows.ps1', 'bin/check-inno-compiler.ps1', 'bin/package-windows.ps1', 'tests/windows-packaging.ps1')) {
         $tokens = $null; $errors = $null
         [void][Management.Automation.Language.Parser]::ParseFile((Join-Path $root $file), [ref]$tokens, [ref]$errors)
         if ($errors) { throw ($errors | Out-String) }
@@ -37,13 +38,20 @@ try {
     if ((Invoke-StampCheck) -eq 0) { throw 'Current toolchain mismatch bypassed guard' }
     Set-Content -LiteralPath "$temp/dist/notices/COPYRIGHT.md" -Value 'test notice'
     $helper = Join-Path $temp 'helper.exe'
+    Remove-Item Env:OMAWRITE_TEST_REJECT_PROBE -ErrorAction SilentlyContinue
     if ($env:OS -eq 'Windows_NT') {
         Add-Type -OutputAssembly $helper -OutputType ConsoleApplication -TypeDefinition @'
 using System;
 using System.IO;
-[assembly: System.Reflection.AssemblyFileVersion("6.3.0.0")]
+[assembly: System.Reflection.AssemblyFileVersion("0.0.0.0")]
 public static class PackagingHelper {
     public static int Main(string[] args) {
+        if (args.Length == 1 && args[0] == "-") {
+            string probe = Console.In.ReadToEnd();
+            if (!probe.Contains("Output=no") || !probe.Contains("OutputDir=\n") && !probe.Contains("OutputDir=\r\n") ||
+                !probe.Contains("ArchitecturesAllowed=x64compatible") || Environment.GetEnvironmentVariable("OMAWRITE_TEST_REJECT_PROBE") == "1") return 2;
+            Console.WriteLine("Compiler engine version: Inno Setup 6.3.0"); return 0;
+        }
         if (args.Length == 1 && args[0] == "--version") {
             Console.WriteLine("omawrite 1.2.3"); return 0;
         }
@@ -63,7 +71,7 @@ public static class PackagingHelper {
         $findIscc = [regex]::Match($batch, '(?ms)^:findIscc\r?\n.*?(?=^:installer\r?$)').Value
         if (!$findIscc) { throw 'Missing compiler discovery routine' }
         $probe = Join-Path $temp 'find-iscc.cmd'
-        $body = "@echo off`nsetlocal EnableExtensions DisableDelayedExpansion`nset ARCH=x64`ncall :findIscc`nexit /b %errorlevel%`n" + $findIscc
+        $body = "@echo off`nsetlocal EnableExtensions DisableDelayedExpansion`nset ARCH=x64`nset `"ROOT=$root\`"`ncall :findIscc`nexit /b %errorlevel%`n" + $findIscc
         $body.Replace("`r`n", "`n").Replace("`n", "`r`n") | Set-Content -LiteralPath $probe -Encoding ASCII
         # A malformed IF must never dispatch our real setup script by accident.
         @('@echo off', 'echo unexpected>setup-was-called.txt', 'exit /b 73') |
@@ -86,14 +94,31 @@ public static class PackagingHelper {
             $ErrorActionPreference = 'Stop'
             if ($code -eq 0) { throw 'Missing compiler was not refused' }
             if (Test-Path -LiteralPath 'setup-was-called.txt') { throw 'Compiler discovery accidentally executed setup.bat' }
-            Write-Host 'PASS: native CMD compiler discovery accepts quoted/unquoted paths and safely rejects missing compilers.'
+            if ($env:GITHUB_ACTIONS -eq 'true') {
+                # The Windows 2022 image includes Inno Setup. Exercise the real
+                # compiler as well: fake file versions missed this regression.
+                $real = @("${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe", "$env:ProgramFiles\Inno Setup 6\ISCC.exe") |
+                    Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
+                if (!$real) { throw 'Expected the hosted Windows image to provide Inno Setup.' }
+                $env:ISCC = $real
+                & $env:ComSpec /d /c $probe
+                if ($LASTEXITCODE -ne 0) { throw 'The installed real Inno compiler failed the capability check.' }
+                Write-Host 'PASS: real hosted Inno compiler syntax-only probe; no installer created or executed.'
+            }
+            Write-Host 'PASS: native CMD compiler discovery accepts quoted/unquoted zero-file-version paths and safely rejects missing compilers.'
         } finally { Pop-Location }
     } else {
         # Portable mock permits local validation on macOS/Linux without Windows tools.
         @'
 #!/usr/bin/env python3
 import os, sys
-if sys.argv[1:] == ['--version']:
+if sys.argv[1:] == ['-']:
+    probe = sys.stdin.read()
+    assert 'Output=no' in probe and 'OutputDir=\n' in probe
+    assert 'ArchitecturesAllowed=x64compatible' in probe
+    assert os.environ.get('OMAWRITE_TEST_REJECT_PROBE') != '1'
+    print('Compiler engine version: Inno Setup 6.3.0')
+elif sys.argv[1:] == ['--version']:
     print('omawrite 1.2.3')
 else:
     assert '/DNeedsVCRuntime=' + os.environ['OMAWRITE_TEST_RUNTIME'] in sys.argv
@@ -104,6 +129,16 @@ else:
         & chmod +x $helper
         if ($LASTEXITCODE -ne 0) { throw 'Could not mark mock executable.' }
     }
+    $checker = Join-Path $root 'bin/check-inno-compiler.ps1'
+    & $engine -NoProfile -File $checker -Compiler $helper
+    if ($LASTEXITCODE -ne 0) { throw 'Supported compiler capability probe failed' }
+    $env:OMAWRITE_TEST_REJECT_PROBE = '1'
+    $ErrorActionPreference = 'Continue'
+    & $engine -NoProfile -File $checker -Compiler $helper >$null 2>$null
+    $code = $LASTEXITCODE
+    $ErrorActionPreference = 'Stop'
+    Remove-Item Env:OMAWRITE_TEST_REJECT_PROBE
+    if ($code -eq 0) { throw 'Unsupported compiler was not refused' }
     Copy-Item -LiteralPath $helper -Destination "$temp/dist/omawrite.exe"
     $packager = Join-Path $root 'bin/package-windows.ps1'
     foreach ($kit in @('win32-msvc', 'win32-g++')) {
@@ -131,6 +166,7 @@ else:
     [Environment]::SetEnvironmentVariable('OMAWRITE_STAMP', $previousStamp, 'Process')
     [Environment]::SetEnvironmentVariable('OMAWRITE_SIGNATURE', $previousSignature, 'Process')
     [Environment]::SetEnvironmentVariable('ISCC', $previousIscc, 'Process')
+    [Environment]::SetEnvironmentVariable('OMAWRITE_TEST_REJECT_PROBE', $previousReject, 'Process')
     Remove-Item Env:OMAWRITE_TEST_RUNTIME -ErrorAction SilentlyContinue
     if (Test-Path -LiteralPath $temp) { Remove-Item -LiteralPath $temp -Recurse -Force }
 }

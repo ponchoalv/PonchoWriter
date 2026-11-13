@@ -94,8 +94,8 @@ try {
             if (Has-Command 'ISCC.exe') { $candidates = @((Get-Command 'ISCC.exe').Source) + $candidates }
             foreach ($candidate in $candidates) {
                 if (Test-Path -LiteralPath $candidate) {
-                    $v = (Get-Item -LiteralPath $candidate).VersionInfo
-                    if ($v.FileMajorPart -gt 6 -or ($v.FileMajorPart -eq 6 -and $v.FileMinorPart -ge 3)) { return $true }
+                    & (Join-Path $PSScriptRoot 'check-inno-compiler.ps1') -Compiler $candidate -Quiet
+                    if ($LASTEXITCODE -eq 0) { return $true }
                 }
             }
             return $false

@@ -229,7 +229,7 @@ if not defined ISCC if exist "%ProgramFiles%\Inno Setup 6\ISCC.exe" set "ISCC=%P
 if not defined ISCC if exist "%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe" set "ISCC=%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe"
 if not defined ISCC goto missingIscc
 if not exist "%ISCC%" goto missingIscc
-powershell -NoProfile -Command "$ErrorActionPreference='Stop'; $v=(Get-Item -LiteralPath $env:ISCC).VersionInfo; Write-Host ('Inno Setup compiler: '+$env:ISCC+' [file version '+$v.FileVersion+']'); if ($v.FileMajorPart -lt 6 -or ($v.FileMajorPart -eq 6 -and $v.FileMinorPart -lt 3)) { Write-Host 'ERROR: This compiler is older than the required Inno Setup 6.3. Upgrade it or set ISCC to a newer compiler.'; exit 1 }"
+powershell -NoProfile -ExecutionPolicy Bypass -File "%ROOT%bin\check-inno-compiler.ps1"
 if errorlevel 1 exit /b 1
 exit /b 0
 :missingIscc

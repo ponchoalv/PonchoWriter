@@ -63,8 +63,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Windows PowerShell 5.1, not pwsh. Uses fake helpers: no downloads or
-      # installer execution, and not a substitute for native application tests.
+      # Windows PowerShell 5.1, not pwsh. Fake packaging helpers plus a syntax-
+      # only probe of the preinstalled real compiler; no installer execution.
+      # This is not a substitute for native application/installation tests.
       - name: Check PowerShell scripts, upgrade guards and packaging
         shell: powershell
         run: .\tests\windows-packaging.ps1

@@ -145,6 +145,12 @@ jobs:
 
       - name: Run the complete native Windows editor suite
         shell: pwsh
+        env:
+          QT_QUICK_BACKEND: ''
+          QSG_RHI_BACKEND: d3d11
+          QSG_RENDER_LOOP: threaded
+          # WARP provides D3D11 on hosted VMs, including the render-thread test.
+          QSG_RHI_PREFER_SOFTWARE_RENDERER: '1'
         run: |
           $global:LASTEXITCODE = 1
           & build/windows-ci/omawrite_editor_tests.exe -o build/windows-ci/editor-native-all-tests.txt,txt | Out-Host

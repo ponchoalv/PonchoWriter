@@ -600,8 +600,13 @@ private slots:
             QVERIFY(bar && bar->isVisible());
             const qreal length = horizontal ? bar->width() : bar->height();
             const auto point = [&](qreal p) { return bar->mapToScene(horizontal ? QPointF(p, bar->height()/2) : QPointF(bar->width()/2, p)).toPoint(); };
-            const auto start = point(length * (bar->property("position").toReal() + bar->property("size").toReal()/2));
-            const auto finish = point(length + 40), back = point(-40);
+            auto *thumb = qvariant_cast<QQuickItem *>(bar->property("contentItem"));
+            QVERIFY(thumb && thumb->width() > 0 && thumb->height() > 0);
+            const auto start = thumb->mapToScene(QPointF(thumb->width()/2, thumb->height()/2)).toPoint();
+            // Native styles can pad the track and enforce a minimum thumb size.
+            // Drag the actual thumb to both track edges, without synthesizing
+            // coordinates outside a window clamped to the available screen.
+            const auto finish = point(length - 1), back = point(1);
             const auto details = [&] {
                 return QString("%1 read=%2 position=%3 size=%4 content=%5 origin=%6 first=%7 last=%8 press=(%9,%10) end=(%11,%12) window=%13x%14 length=%15 pressed=%16")
                     .arg(name).arg(panel->property("readOnly").toBool())
@@ -617,9 +622,10 @@ private slots:
             qInfo().noquote() << "Before drag:" << details();
             QTest::mousePress(window, Qt::LeftButton, Qt::NoModifier, start);
             QScopeGuard release([&] { QTest::mouseRelease(window, Qt::LeftButton, Qt::NoModifier, back); });
-            QTest::mouseMove(window, finish, 20); QTest::qWait(20);
+            QTRY_VERIFY2(bar->property("pressed").toBool(), qPrintable(details()));
+            QTest::mouseMove(window, finish - (horizontal ? QPoint(1, 0) : QPoint(0, 1)), 20); QTest::qWait(20);
             const char *content = horizontal ? "contentX" : "contentY", *origin = horizontal ? "originX" : "originY";
-            QTest::mouseMove(window, finish + (horizontal ? QPoint(30, 0) : QPoint(0, 30)), 20); QTest::qWait(20);
+            QTest::mouseMove(window, finish, 20); QTest::qWait(20);
             QTRY_VERIFY2(bar->property("position").toReal() + bar->property("size").toReal() > .999, qPrintable(details()));
             QVERIFY(grid->property(horizontal ? "atXEnd" : "atYEnd").toBool());
             QTRY_COMPARE(grid->property(horizontal ? "rightColumn" : "bottomRow").toInt(), horizontal ? model->columnCount() - 1 : model->rowCount() - 1);

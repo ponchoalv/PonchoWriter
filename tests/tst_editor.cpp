@@ -628,13 +628,21 @@ private slots:
             QTest::mousePress(window, Qt::LeftButton, Qt::NoModifier, start);
             QScopeGuard release([&] { QTest::mouseRelease(window, Qt::LeftButton, Qt::NoModifier, back); });
             QTRY_VERIFY2(bar->property("pressed").toBool(), qPrintable(details()));
-            QTest::mouseMove(window, finish - (horizontal ? QPoint(1, 0) : QPoint(0, 1)), 20); QTest::qWait(20);
+            // Keep neighboring rows/columns loaded while crossing the track.
+            // Teleporting across a virtualized TableView makes it estimate a
+            // new origin/end extent after the final mouse move.
+            const auto drag = [&](const QPoint &from, const QPoint &to) {
+                for (int step = 1; step <= 16; ++step) {
+                    QTest::mouseMove(window, from + (to - from) * step / 16, 10);
+                    QTest::qWait(20);
+                }
+            };
+            drag(start, finish);
             const char *content = horizontal ? "contentX" : "contentY", *origin = horizontal ? "originX" : "originY";
-            QTest::mouseMove(window, finish, 20); QTest::qWait(20);
             QTRY_VERIFY2(bar->property("position").toReal() + bar->property("size").toReal() > .999, qPrintable(details()));
             QVERIFY(grid->property(horizontal ? "atXEnd" : "atYEnd").toBool());
             QTRY_COMPARE(grid->property(horizontal ? "rightColumn" : "bottomRow").toInt(), horizontal ? model->columnCount() - 1 : model->rowCount() - 1);
-            QTest::mouseMove(window, back, 20);
+            drag(finish, back);
             QTRY_VERIFY2(qAbs(grid->property(content).toReal() - grid->property(origin).toReal()) < 2, qPrintable(details()));
             QTRY_VERIFY2(grid->property(horizontal ? "leftColumn" : "topRow").toInt() == 0, qPrintable(details()));
             QTest::mouseRelease(window, Qt::LeftButton, Qt::NoModifier, back); release.dismiss();

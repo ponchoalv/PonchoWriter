@@ -582,7 +582,11 @@ private slots:
         }
         text += "\nafter"; source->setProperty("text", text); source->setProperty("cursorPosition", 0);
         QTRY_COMPARE(projection->tablePanels().size(), 1); QTest::qWait(30);
-        if (QGuiApplication::platformName() != "offscreen") QVERIFY(QTest::qWaitForWindowExposed(window));
+        if (QGuiApplication::platformName() != "offscreen") {
+            QVERIFY(QTest::qWaitForWindowExposed(window));
+            window->requestActivate();
+            QVERIFY(QTest::qWaitForWindowActive(window));
+        }
         QQuickItem *panel = nullptr, *grid = nullptr;
         for (auto *item : visualDescendants(view->parentItem())) if (item->objectName() == "markdownTableGrid") panel = item;
         QVERIFY(panel);
@@ -598,21 +602,35 @@ private slots:
             const auto point = [&](qreal p) { return bar->mapToScene(horizontal ? QPointF(p, bar->height()/2) : QPointF(bar->width()/2, p)).toPoint(); };
             const auto start = point(length * (bar->property("position").toReal() + bar->property("size").toReal()/2));
             const auto finish = point(length + 40), back = point(-40);
+            const auto details = [&] {
+                return QString("%1 read=%2 position=%3 size=%4 content=%5 origin=%6 first=%7 last=%8 press=(%9,%10) end=(%11,%12) window=%13x%14")
+                    .arg(name).arg(panel->property("readOnly").toBool())
+                    .arg(bar->property("position").toReal()).arg(bar->property("size").toReal())
+                    .arg(grid->property(horizontal ? "contentX" : "contentY").toReal())
+                    .arg(grid->property(horizontal ? "originX" : "originY").toReal())
+                    .arg(grid->property(horizontal ? "leftColumn" : "topRow").toInt())
+                    .arg(grid->property(horizontal ? "rightColumn" : "bottomRow").toInt())
+                    .arg(start.x()).arg(start.y()).arg(finish.x()).arg(finish.y())
+                    .arg(window->width()).arg(window->height());
+            };
             QTest::mousePress(window, Qt::LeftButton, Qt::NoModifier, start);
             QScopeGuard release([&] { QTest::mouseRelease(window, Qt::LeftButton, Qt::NoModifier, back); });
             QTest::mouseMove(window, finish, 20); QTest::qWait(20);
             const char *content = horizontal ? "contentX" : "contentY", *origin = horizontal ? "originX" : "originY";
             QTest::mouseMove(window, finish + (horizontal ? QPoint(30, 0) : QPoint(0, 30)), 20); QTest::qWait(20);
-            QTRY_VERIFY(bar->property("position").toReal() + bar->property("size").toReal() > .999);
+            QTRY_VERIFY2(bar->property("position").toReal() + bar->property("size").toReal() > .999, qPrintable(details()));
             QVERIFY(grid->property(horizontal ? "atXEnd" : "atYEnd").toBool());
             QTRY_COMPARE(grid->property(horizontal ? "rightColumn" : "bottomRow").toInt(), horizontal ? model->columnCount() - 1 : model->rowCount() - 1);
             QTest::mouseMove(window, back, 20);
-            QTRY_VERIFY(qAbs(grid->property(content).toReal() - grid->property(origin).toReal()) < 2);
-            QTRY_COMPARE(grid->property(horizontal ? "leftColumn" : "topRow").toInt(), 0);
+            QTRY_VERIFY2(qAbs(grid->property(content).toReal() - grid->property(origin).toReal()) < 2, qPrintable(details()));
+            QTRY_VERIFY2(grid->property(horizontal ? "leftColumn" : "topRow").toInt() == 0, qPrintable(details()));
             QTest::mouseRelease(window, Qt::LeftButton, Qt::NoModifier, back); release.dismiss();
             QVERIFY(bar); QTest::qWait(20);
         };
-        endpoints("blockHorizontalScrollBar", true); endpoints("tableVerticalScrollBar", false);
+        endpoints("blockHorizontalScrollBar", true);
+        if (QTest::currentTestFailed()) return;
+        endpoints("tableVerticalScrollBar", false);
+        if (QTest::currentTestFailed()) return;
         auto cellPoint = [&](int r, int c) {
             for (auto *item : visualDescendants(grid)) if (item->objectName() == "tableCellDelegate"
                 && item->property("row").toInt() == r && item->property("column").toInt() == c)

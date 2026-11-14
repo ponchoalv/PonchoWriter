@@ -570,6 +570,12 @@ private slots:
         QQmlComponent component(&engine, QUrl::fromLocalFile(QFINDTESTDATA("../src/Main.qml")));
         QVERIFY2(component.isReady(), qPrintable(component.errorString())); QScopedPointer<QObject> root(component.create());
         auto *window = qobject_cast<QQuickWindow *>(root.data()); QVERIFY(window);
+        if (QGuiApplication::platformName() == "windows") {
+            // Leave room for native frames at fractional DPI instead of letting
+            // the OS repeatedly clamp the default 1280x820 during the gesture.
+            const QSize available = window->screen()->availableGeometry().size() - QSize(64, 64);
+            window->resize(QSize(1000, 700).boundedTo(available));
+        }
         auto *source = root->findChild<QObject *>("sourceEditor"); auto *view = root->findChild<QQuickItem *>("previewEditor");
         auto *projection = root->findChild<LivePreview *>(); QVERIFY(source && view && projection);
         QString text = "before\n\n| A | B | C";
@@ -582,7 +588,10 @@ private slots:
         }
         text += "\nafter"; source->setProperty("text", text); source->setProperty("cursorPosition", 0);
         QTRY_COMPARE(projection->tablePanels().size(), 1); QTest::qWait(30);
-        if (QGuiApplication::platformName() != "offscreen") QVERIFY(QTest::qWaitForWindowExposed(window));
+        if (QGuiApplication::platformName() != "offscreen")
+            QVERIFY(QTest::qWaitForWindowExposed(window));
+        activateInputWindow(window);
+        if (QTest::currentTestFailed()) return;
         QQuickItem *panel = nullptr, *grid = nullptr;
         for (auto *item : visualDescendants(view->parentItem())) if (item->objectName() == "markdownTableGrid") panel = item;
         QVERIFY(panel);
@@ -596,23 +605,53 @@ private slots:
             QVERIFY(bar && bar->isVisible());
             const qreal length = horizontal ? bar->width() : bar->height();
             const auto point = [&](qreal p) { return bar->mapToScene(horizontal ? QPointF(p, bar->height()/2) : QPointF(bar->width()/2, p)).toPoint(); };
-            const auto start = point(length * (bar->property("position").toReal() + bar->property("size").toReal()/2));
-            const auto finish = point(length + 40), back = point(-40);
+            auto *thumb = qvariant_cast<QQuickItem *>(bar->property("contentItem"));
+            QVERIFY(thumb && thumb->width() > 0 && thumb->height() > 0);
+            const auto start = thumb->mapToScene(QPointF(thumb->width()/2, thumb->height()/2)).toPoint();
+            // Native styles can pad the track and enforce a minimum thumb size.
+            // Drag the actual thumb to both track edges, without synthesizing
+            // coordinates outside a window clamped to the available screen.
+            const auto finish = point(length - 1), back = point(1);
+            const auto details = [&] {
+                return QString("%1 read=%2 position=%3 size=%4 content=%5 origin=%6 first=%7 last=%8 press=(%9,%10) end=(%11,%12) window=%13x%14 length=%15 pressed=%16")
+                    .arg(name).arg(panel->property("readOnly").toBool())
+                    .arg(bar->property("position").toReal()).arg(bar->property("size").toReal())
+                    .arg(grid->property(horizontal ? "contentX" : "contentY").toReal())
+                    .arg(grid->property(horizontal ? "originX" : "originY").toReal())
+                    .arg(grid->property(horizontal ? "leftColumn" : "topRow").toInt())
+                    .arg(grid->property(horizontal ? "rightColumn" : "bottomRow").toInt())
+                    .arg(start.x()).arg(start.y()).arg(finish.x()).arg(finish.y())
+                    .arg(window->width()).arg(window->height())
+                    .arg(horizontal ? bar->width() : bar->height()).arg(bar->property("pressed").toBool());
+            };
+            qInfo().noquote() << "Before drag:" << details();
             QTest::mousePress(window, Qt::LeftButton, Qt::NoModifier, start);
             QScopeGuard release([&] { QTest::mouseRelease(window, Qt::LeftButton, Qt::NoModifier, back); });
-            QTest::mouseMove(window, finish, 20); QTest::qWait(20);
+            QTRY_VERIFY2(bar->property("pressed").toBool(), qPrintable(details()));
+            // Keep neighboring rows/columns loaded while crossing the track.
+            // Teleporting across a virtualized TableView makes it estimate a
+            // new origin/end extent after the final mouse move.
+            const auto drag = [&](const QPoint &from, const QPoint &to) {
+                for (int step = 1; step <= 16; ++step) {
+                    QTest::mouseMove(window, from + (to - from) * step / 16, 10);
+                    QTest::qWait(20);
+                }
+            };
+            drag(start, finish);
             const char *content = horizontal ? "contentX" : "contentY", *origin = horizontal ? "originX" : "originY";
-            QTest::mouseMove(window, finish + (horizontal ? QPoint(30, 0) : QPoint(0, 30)), 20); QTest::qWait(20);
-            QTRY_VERIFY(bar->property("position").toReal() + bar->property("size").toReal() > .999);
+            QTRY_VERIFY2(bar->property("position").toReal() + bar->property("size").toReal() > .999, qPrintable(details()));
             QVERIFY(grid->property(horizontal ? "atXEnd" : "atYEnd").toBool());
             QTRY_COMPARE(grid->property(horizontal ? "rightColumn" : "bottomRow").toInt(), horizontal ? model->columnCount() - 1 : model->rowCount() - 1);
-            QTest::mouseMove(window, back, 20);
-            QTRY_VERIFY(qAbs(grid->property(content).toReal() - grid->property(origin).toReal()) < 2);
-            QTRY_COMPARE(grid->property(horizontal ? "leftColumn" : "topRow").toInt(), 0);
+            drag(finish, back);
+            QTRY_VERIFY2(qAbs(grid->property(content).toReal() - grid->property(origin).toReal()) < 2, qPrintable(details()));
+            QTRY_VERIFY2(grid->property(horizontal ? "leftColumn" : "topRow").toInt() == 0, qPrintable(details()));
             QTest::mouseRelease(window, Qt::LeftButton, Qt::NoModifier, back); release.dismiss();
             QVERIFY(bar); QTest::qWait(20);
         };
-        endpoints("blockHorizontalScrollBar", true); endpoints("tableVerticalScrollBar", false);
+        endpoints("blockHorizontalScrollBar", true);
+        if (QTest::currentTestFailed()) return;
+        endpoints("tableVerticalScrollBar", false);
+        if (QTest::currentTestFailed()) return;
         auto cellPoint = [&](int r, int c) {
             for (auto *item : visualDescendants(grid)) if (item->objectName() == "tableCellDelegate"
                 && item->property("row").toInt() == r && item->property("column").toInt() == c)

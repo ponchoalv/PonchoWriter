@@ -71,21 +71,45 @@ jobs:
         run: .\tests\windows-packaging.ps1
 
   windows-editor:
-    name: Windows Qt 6.8.3 editor regressions
+    name: Windows Qt ${{ matrix.qt }} editor regressions
     runs-on: windows-2022
     timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - qt: '6.8.3'
+            scale: '1'
+          - qt: '6.12.0'
+            scale: '1.5'
     env:
       CMAKE_BUILD_PARALLEL_LEVEL: 2
       QT_QUICK_BACKEND: software
+      QT_SCALE_FACTOR: ${{ matrix.scale }}
     steps:
       - uses: actions/checkout@v4
       - uses: ilammy/msvc-dev-cmd@v1
       - uses: jurplel/install-qt-action@v4
         with:
-          version: '6.8.3'
+          version: ${{ matrix.qt }}
+          # PyPI aqt 3.3 predates Qt 6.11's architecture-suffixed repositories.
+          # Pin the upstream support fix rather than following its moving master.
+          aqtsource: ${{ matrix.qt == '6.12.0' && 'git+https://github.com/miurahr/aqtinstall.git@5a49f2b391ae8ee1d3c0dd87f8b33c1d49a4deb7' || '' }}
           arch: win64_msvc2022_64
           cache: true
 
+      - name: Configure the native test desktop
+        shell: powershell
+        run: |
+          # At 150% scaling the runner's default desktop is smaller than the
+          # table fixture: native clicks would land below the actual window.
+          Set-DisplayResolution -Width 1920 -Height 1080 -Force
+          Add-Type -AssemblyName System.Windows.Forms
+          $bounds = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+          Write-Host "Native test desktop: $bounds"
+          if ($bounds.Width -lt 1920 -or $bounds.Height -lt 1080) {
+            throw 'Native GUI tests require a 1920x1080 desktop.'
+          }
       - name: Build native editor tests with the pinned dependencies
         shell: pwsh
         run: |
@@ -105,6 +129,7 @@ jobs:
         run: |
           $global:LASTEXITCODE = 1
           & build/windows-ci/omawrite_editor_tests.exe `
+            tableRectangleDragTypingImeClearAndUndo `
             codePanelHoverCopyAndReadLanguageUseQtClipboard `
             codePanelsHaveNativePaddingInBothModesAtDifferentZooms `
             quotePreviewPhysicalClickImeAndReadBreaks `
@@ -128,6 +153,21 @@ jobs:
             -o build/windows-ci/editor-tests.txt,txt | Out-Host
           $testExit = $LASTEXITCODE
           if (Test-Path build/windows-ci/editor-tests.txt) { Get-Content build/windows-ci/editor-tests.txt }
+          exit $testExit
+
+      - name: Run the complete native Windows editor suite
+        shell: pwsh
+        env:
+          QT_QUICK_BACKEND: ''
+          QSG_RHI_BACKEND: d3d11
+          QSG_RENDER_LOOP: threaded
+          # WARP provides D3D11 on hosted VMs, including the render-thread test.
+          QSG_RHI_PREFER_SOFTWARE_RENDERER: '1'
+        run: |
+          $global:LASTEXITCODE = 1
+          & build/windows-ci/omawrite_editor_tests.exe -o build/windows-ci/editor-native-all-tests.txt,txt | Out-Host
+          $testExit = $LASTEXITCODE
+          if (Test-Path build/windows-ci/editor-native-all-tests.txt) { Get-Content build/windows-ci/editor-native-all-tests.txt }
           exit $testExit
 
       - name: Run the complete portable editor suite on Windows
@@ -154,9 +194,10 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: windows-editor-logs
+          name: windows-editor-logs-qt-${{ matrix.qt }}
           path: |
             build/windows-ci/editor-tests.txt
             build/windows-ci/editor-all-tests.txt
+            build/windows-ci/editor-native-all-tests.txt
             build/windows-ci/CMakeFiles/CMakeConfigureLog.yaml
           if-no-files-found: ignore

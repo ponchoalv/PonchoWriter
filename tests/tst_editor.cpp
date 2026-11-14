@@ -217,6 +217,69 @@ private slots:
         QVERIFY(QMetaObject::invokeMethod(source, "redo")); QTRY_VERIFY(!hint->isVisible());
         QTRY_COMPARE(document->toPlainText(), QString::fromUtf8("かな"));
     }
+    void tableScreenshotRegression() {
+        QTemporaryDir directory; QVERIFY(directory.isValid());
+        Backend backend; backend.m_recoveryPath = directory.filePath("recovery.json");
+        QQmlEngine engine; engine.rootContext()->setContextProperty("backend", &backend);
+        QQmlComponent component(&engine, QUrl::fromLocalFile(QFINDTESTDATA("../src/Main.qml")));
+        QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+        QScopedPointer<QObject> root(component.create());
+        auto *window = qobject_cast<QQuickWindow *>(root.data()); QVERIFY(window);
+        auto *source = root->findChild<QObject *>("sourceEditor");
+        auto *view = root->findChild<QQuickItem *>("previewEditor");
+        auto *projection = root->findChild<LivePreview *>(); QVERIFY(source && view && projection);
+        if (QGuiApplication::platformName() != "offscreen") QVERIFY(QTest::qWaitForWindowExposed(window));
+        const QString text = "# This is a beautiful app.\n\nI like how everything is displayed\n\n\nhere is a table\n\nasdsa\nasdsada\n\n\n| header 1 | header 2 | header 3 |\n| --- | :---: | --- |\n| pepe | pepe | pepe|";
+        source->setProperty("text", text);
+        source->setProperty("cursorPosition", 0);
+        QTRY_COMPARE(projection->tablePanels().size(), 1);
+        const auto panel = projection->tablePanels().first().toMap();
+        auto *model = qobject_cast<MarkdownTableModel *>(panel["model"].value<QObject *>()); QVERIFY(model);
+        QCOMPARE(model->rowCount(), 2);
+        QCOMPARE(model->data(model->index(1, 2), MarkdownTableModel::MarkdownRole).toString(), QString("pepe"));
+        auto *document = qvariant_cast<QQuickTextDocument *>(view->property("textDocument"))->textDocument();
+        // The blinking caret is unrelated to stale glyphs; exclude it from
+        // pixel comparisons without changing the editor's focus/selection.
+        auto *caret = root->findChild<QQuickItem *>("visibleEditorCaret"); QVERIFY(caret);
+        caret->setOpacity(0);
+        QImage baseline;
+        const auto headingImage = [window, view] {
+            const QPoint p = view->mapToScene(QPointF(0, 0)).toPoint();
+            const QImage image = window->grabWindow();
+            const qreal scale = image.devicePixelRatio();
+            return image.copy(QRect(p.x() * scale, p.y() * scale, view->width() * scale, 80 * scale));
+        };
+        QTest::qWait(80);
+        if (QGuiApplication::platformName() != "offscreen") {
+            baseline = headingImage();
+            QVERIFY2(!baseline.isNull(), "Native heading capture is required for the glyph regression");
+        }
+        for (int i = 0; i < 3; ++i) {
+            projection->setTableSource(panel["id"].toInt(), true);
+            QTRY_VERIFY(projection->tablePanels().isEmpty());
+            QTRY_VERIFY(document->toPlainText().contains("| --- | :---: | --- |"));
+            QTest::qWait(40);
+            source->setProperty("cursorPosition", 0);
+            // Leaving the source table should restore the grid automatically.
+            QTRY_COMPARE(projection->tablePanels().size(), 1);
+            QTRY_VERIFY(!document->toPlainText().contains("| --- |"));
+            auto *grid = root->findChild<QQuickItem *>("tableCellView"); QVERIFY(grid);
+            const qreal row = std::ceil(QFontMetricsF(qvariant_cast<QFont>(view->property("font"))).height()) + 16;
+            QVERIFY(grid->height() >= row * 2);
+            QVERIFY(grid->x() >= 12);
+            QTest::qWait(80);
+            int bodyCells = 0;
+            for (auto *item : visualDescendants(grid)) {
+                if (item->objectName() != "tableCellDisplay" || !item->property("text").toString().contains("pepe")) continue;
+                const QPointF p = item->mapToItem(grid, QPointF());
+                QVERIFY(p.y() >= 0 && p.y() + item->height() <= grid->height());
+                ++bodyCells;
+            }
+            QCOMPARE(bodyCells, 3);
+            if (!baseline.isNull()) QCOMPARE(headingImage(), baseline);
+            QCOMPARE(source->property("text").toString(), text);
+        }
+    }
     void tableGridEditsTabImeAndViewportKeepCanonicalUndo() {
         QTemporaryDir directory; QVERIFY(directory.isValid());
         Backend backend; backend.m_recoveryPath = directory.filePath("recovery.json");

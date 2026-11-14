@@ -549,7 +549,7 @@ QImage LivePreview::imageFor(const PreviewBlocks::Block &block) {
     if (block.kind == PreviewBlocks::Kind::Table) {
         const auto t = std::find_if(m_tables.cbegin(), m_tables.cend(), [&](const auto &item) { return item.start == block.start; });
         if (t == m_tables.cend() || !t->model || !t->model->rowCount()) return {};
-        const int height = qMin(480, 46 + (int(std::ceil(QFontMetricsF(font).height())) + 16) * t->model->rowCount());
+        const int height = qMin(480, 68 + (int(std::ceil(QFontMetricsF(font).height())) + 16) * t->model->rowCount());
         const QString slot = QStringLiteral("table-slot/%1/%2").arg(width).arg(height);
         if (m_images.contains(slot)) return m_images.value(slot);
         QImage image(width, height, QImage::Format_ARGB32_Premultiplied);
@@ -1308,6 +1308,18 @@ void LivePreview::syncEditProjection(bool revealBoundary) {
         ++image;
     }
     batch.endEditBlock();
+    if (!patches.isEmpty() && ranges != oldRanges) {
+        // Qt Quick can retain glyph nodes for paragraphs removed by an object
+        // collapse, even though QTextDocument/layout contain only the image.
+        // markContentsDirty() does not clear that scenegraph cache. Use the
+        // TextEdit image-resource invalidation hook, without replacing the
+        // document or disturbing native cursors/undo. This is a private Qt
+        // slot: keep the native screenshot regression when upgrading Qt.
+        // Queue it so subsequent highlighting/layout cannot downgrade UpdateAll.
+        // Ordinary prose keystrokes (unchanged object topology) stay incremental.
+        if (!QMetaObject::invokeMethod(m_viewItem, "q_invalidate", Qt::QueuedConnection))
+            qWarning("TextEdit scenegraph invalidation hook unavailable");
+    }
     for (const auto &url : m_resourceNames) if (!resources.contains(url))
         m_view->addResource(QTextDocument::ImageResource, url, QVariant());
     m_resourceNames = resources;

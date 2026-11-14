@@ -258,7 +258,7 @@ void LivePreview::updateTablePanels() {
         if (position < 0 || m_view->characterAt(position) != QChar::ObjectReplacementCharacter) continue;
         const auto block = m_view->findBlock(position);
         const auto bounds = layout->blockBoundingRect(block);
-        const qreal height = qMin(qreal(480), 32 + 14 + rowHeight(m_viewItem) * table.model->rowCount());
+        const qreal height = qMin(qreal(480), 68 + rowHeight(m_viewItem) * table.model->rowCount());
         panels.append(QVariantMap{{"id", table.id}, {"model", QVariant::fromValue(static_cast<QObject *>(table.model))},
             {"inViewport", block.blockNumber() >= visible.first && block.blockNumber() <= visible.second},
             {"x", 4.0}, {"y", top + bounds.top()}, {"width", width}, {"height", height}});

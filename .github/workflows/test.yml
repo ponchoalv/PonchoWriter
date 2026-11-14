@@ -98,6 +98,18 @@ jobs:
           arch: win64_msvc2022_64
           cache: true
 
+      - name: Configure the native test desktop
+        shell: powershell
+        run: |
+          # At 150% scaling the runner's default desktop is smaller than the
+          # table fixture: native clicks would land below the actual window.
+          Set-DisplayResolution -Width 1920 -Height 1080 -Force
+          Add-Type -AssemblyName System.Windows.Forms
+          $bounds = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+          Write-Host "Native test desktop: $bounds"
+          if ($bounds.Width -lt 1920 -or $bounds.Height -lt 1080) {
+            throw 'Native GUI tests require a 1920x1080 desktop.'
+          }
       - name: Build native editor tests with the pinned dependencies
         shell: pwsh
         run: |

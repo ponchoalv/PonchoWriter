@@ -71,8 +71,9 @@ Rectangle {
     y: modelData.y
     width: modelData.width
     height: modelData.height
-    color: backgroundColor
-    radius: 4
+    // Keep the frame distinct from the cells, in both light and dark themes.
+    color: Qt.tint(backgroundColor, Qt.rgba(foreground.r, foreground.g, foreground.b, 0.04))
+    radius: 8
     border.color: borderColor
     clip: true
     function discardCell() {
@@ -109,7 +110,8 @@ Rectangle {
     Row {
         anchors.top: parent.top
         anchors.right: parent.right
-        anchors.margins: 3
+        anchors.topMargin: 8
+        anchors.rightMargin: 12
         height: 26
         spacing: 4
         Label { text: panel.error || "Table"; color: panel.foreground; height: 26; verticalAlignment: Text.AlignVCenter; font.pixelSize: 12 }
@@ -174,10 +176,11 @@ Rectangle {
     TableView {
         id: grid
         objectName: "tableCellView"
-        x: 1
-        y: 32
-        width: parent.width - 2
-        height: parent.height - y - 14
+        // Keep these in sync with the 68px slot overhead in LivePreview.
+        x: 12
+        y: 44
+        width: Math.max(1, parent.width - 24)
+        height: Math.max(1, parent.height - y - 24)
         clip: true
         model: panel.tableModel
         reuseItems: true
@@ -270,7 +273,7 @@ Rectangle {
             implicitWidth: 100
             implicitHeight: Math.ceil(metrics.height) + 16
             color: selected && !panel.readOnly ? Qt.rgba(panel.foreground.r, panel.foreground.g, panel.foreground.b, 0.18)
-                                              : current ? Qt.rgba(panel.foreground.r, panel.foreground.g, panel.foreground.b, 0.08) : panel.backgroundColor
+                                              : current || header ? Qt.tint(panel.backgroundColor, Qt.rgba(panel.foreground.r, panel.foreground.g, panel.foreground.b, 0.08)) : panel.backgroundColor
             border.width: 0.5
             border.color: panel.borderColor
             clip: true

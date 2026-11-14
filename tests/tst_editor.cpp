@@ -570,6 +570,12 @@ private slots:
         QQmlComponent component(&engine, QUrl::fromLocalFile(QFINDTESTDATA("../src/Main.qml")));
         QVERIFY2(component.isReady(), qPrintable(component.errorString())); QScopedPointer<QObject> root(component.create());
         auto *window = qobject_cast<QQuickWindow *>(root.data()); QVERIFY(window);
+        if (QGuiApplication::platformName() != "offscreen") {
+            // Leave room for native frames at fractional DPI instead of letting
+            // the OS repeatedly clamp the default 1280x820 during the gesture.
+            const QSize available = window->screen()->availableGeometry().size() - QSize(64, 64);
+            window->resize(QSize(1000, 700).boundedTo(available));
+        }
         auto *source = root->findChild<QObject *>("sourceEditor"); auto *view = root->findChild<QQuickItem *>("previewEditor");
         auto *projection = root->findChild<LivePreview *>(); QVERIFY(source && view && projection);
         QString text = "before\n\n| A | B | C";

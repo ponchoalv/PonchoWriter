@@ -603,7 +603,7 @@ private slots:
             const auto start = point(length * (bar->property("position").toReal() + bar->property("size").toReal()/2));
             const auto finish = point(length + 40), back = point(-40);
             const auto details = [&] {
-                return QString("%1 read=%2 position=%3 size=%4 content=%5 origin=%6 first=%7 last=%8 press=(%9,%10) end=(%11,%12) window=%13x%14")
+                return QString("%1 read=%2 position=%3 size=%4 content=%5 origin=%6 first=%7 last=%8 press=(%9,%10) end=(%11,%12) window=%13x%14 length=%15 pressed=%16")
                     .arg(name).arg(panel->property("readOnly").toBool())
                     .arg(bar->property("position").toReal()).arg(bar->property("size").toReal())
                     .arg(grid->property(horizontal ? "contentX" : "contentY").toReal())
@@ -611,8 +611,10 @@ private slots:
                     .arg(grid->property(horizontal ? "leftColumn" : "topRow").toInt())
                     .arg(grid->property(horizontal ? "rightColumn" : "bottomRow").toInt())
                     .arg(start.x()).arg(start.y()).arg(finish.x()).arg(finish.y())
-                    .arg(window->width()).arg(window->height());
+                    .arg(window->width()).arg(window->height())
+                    .arg(horizontal ? bar->width() : bar->height()).arg(bar->property("pressed").toBool());
             };
+            qInfo().noquote() << "Before drag:" << details();
             QTest::mousePress(window, Qt::LeftButton, Qt::NoModifier, start);
             QScopeGuard release([&] { QTest::mouseRelease(window, Qt::LeftButton, Qt::NoModifier, back); });
             QTest::mouseMove(window, finish, 20); QTest::qWait(20);

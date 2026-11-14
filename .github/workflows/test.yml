@@ -92,6 +92,9 @@ jobs:
       - uses: jurplel/install-qt-action@v4
         with:
           version: ${{ matrix.qt }}
+          # PyPI aqt 3.3 predates Qt 6.11's architecture-suffixed repositories.
+          # Pin the upstream support fix rather than following its moving master.
+          aqtsource: ${{ matrix.qt == '6.12.0' && 'git+https://github.com/miurahr/aqtinstall.git@5a49f2b391ae8ee1d3c0dd87f8b33c1d49a4deb7' || '' }}
           arch: win64_msvc2022_64
           cache: true
 
